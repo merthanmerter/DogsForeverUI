@@ -1,4 +1,4 @@
--- Taking the game's player, target, focus and target-of-target frames off
+-- Taking the game's player, target, focus, target-of-target and pet frames off
 -- screen, and giving them back.
 --
 -- The game's unit frames are protected: showing or hiding one from addon code is
@@ -15,15 +15,20 @@
 -- What is faded, and what is deliberately not:
 --
 --   * The player frame's two content frames, and not the frame itself, because
---     the pet frame is a child of the frame rather than of either of them and
---     has to stay visible.
+--     the totem icons live in a child of the frame (the frame the game lays
+--     its pet and totems out in) and have to stay visible - see Totems.lua.
+--   * The pet frame whole - it is drawn by the addon's pet plate now - with
+--     its two parts that take the mouse on their own: its aura row, hidden
+--     (a plain frame nothing of the game's shows again), and its happiness
+--     face, which the plate carries a copy of, with its mouse off. The game
+--     puts the pet frame's alpha back itself (the managed-frame container's
+--     AnimInManagedFrames, after anything that hides the whole UI), so it is
+--     taken down again the moment it does - see HookPetAlpha.
 --   * The target and focus frames' artwork and main content - portrait, bars,
---     name, level - but **not** their *contextual* content, where their buffs
---     and debuffs live. Those are left alone deliberately and always: this
---     client will not let an addon read a unit's auras, so it cannot draw them
---     itself, and fading the only display of them that works would lose them.
---     Instead the target and focus frames are moved to sit on their plates,
---     which brings the auras they carry with them -- see PlaceAuraCarriers.
+--     name, level - and the badges in their contextual content. Their buffs
+--     and debuffs, also in there, are the addon's own now (UnitAuras.lua); the
+--     game's rows are retired with the frame that holds them -- see
+--     PlaceAuraCarriers.
 --   * The two target-of-target frames whole: they are frames of their own,
 --     children of the target and focus frames rather than of their content, and
 --     nothing else lives inside them.
@@ -88,6 +93,7 @@ do -- private scope
         { root = "FocusFrame", parts = TargetStyleParts() },
         { root = "TargetFrameToT", parts = { {} } },
         { root = "FocusFrameToT", parts = { {} } },
+        { root = "PetFrame", parts = { {} } },
     }
 
     -- The cast bars the game draws for the target and the focus, which this
@@ -142,281 +148,116 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- CARRYING THE GAME'S AURAS TO THE PLATE
+    -- RETIRING THE GAME'S AURA ROWS
     --
-    -- The target's buffs and debuffs are the game's to draw here - see the
-    -- README - and they are drawn where the game's target frame is, which is
-    -- nowhere near this addon's plate. They cannot be moved directly: the aura
+    -- The target's and the focus's buffs and debuffs are drawn by the addon's
+    -- own rows now (UnitAuras.lua), each with its Below / Above / Off setting.
+    -- The game's rows are still there, in the target and focus frames'
+    -- contextual content, and cannot be switched off directly: the aura
     -- container is declared inside a
     --
     --     <ScopedModifier useForbiddenObjectTable="true">
     --
     -- in Blizzard_UnitFrame/Shared/TargetFrameAuraContainer.xml, which makes it
-    -- a forbidden object. An addon may not anchor one, size one, or even read a
-    -- field of one; it also carries a ForbiddenAspect barring untrusted layout
-    -- script from running on it at all.
+    -- a forbidden object - an addon may not hide it, anchor it or even read a
+    -- field of it.
     --
-    -- But TargetFrameMixin:AnchorAuraContainer anchors it to
-    -- `self.TargetFrameContainer.FrameTexture` - the frame's own artwork. So
-    -- the auras go where the *frame* goes, and the frame is an ordinary
-    -- protected frame that this addon has already faded to nothing. Moving it
-    -- moves the auras with it and shows nothing else, because there is nothing
-    -- else left to see. The frame becomes an invisible carrier.
+    -- So the frame that holds it is retired: faded to nothing and shrunk to a
+    -- hundredth of its size. Faded alone, its auras would still take the mouse
+    -- and pop tooltips up over empty screen; shrunk, they are a pixel wide.
+    -- Alpha and scale are the frame's own - the container is not touched - and
+    -- the game sets neither on these frames except through Edit Mode's "Frame
+    -- Size" and the focus frame's small/large switch, both followed below.
     --
-    -- The artwork is far taller than the plate, so it is not simply laid over
-    -- it: the auras would float well clear of the bars. Instead the frame is
-    -- parked so the aura row itself lands against the plate, the same distance
-    -- from its border whichever side the game stacks them on - above with
-    -- "Buffs on top", below without - and its left edge on the plate's. That
-    -- takes the game's own offsets from the artwork
-    -- (TargetFrameMixin:AnchorAuraContainer), mirrored below, and which side it
-    -- is on: `buffsOnTop`, a plain field the frame keeps, is only read. The
-    -- plate's castbar moves to the other side (see UnitCastbar), so the two
-    -- never meet.
+    -- Until 2026-09-27 the frames were parked on the plates instead, so the
+    -- game's rows landed against them. But which side they went on was then
+    -- Edit Mode's "Buffs on top" alone, and the frames are out of Edit Mode;
+    -- writing the field it sets from an addon would taint the game's aura code.
     --
-    -- Edit Mode's "Frame Size" would scale the carrier, and the auras with it,
-    -- so the carrier is held at its own size: after the game scales it, it is
-    -- put back to 1. The slider is still there - hiding it would mean replacing
-    -- Edit Mode's own code - but it does nothing while this addon carries the
-    -- frame, and the game's size is handed back when it stops.
-    --
-    -- Edit Mode wraps SetPoint, ClearAllPoints and SetScale on its frames with
-    -- Lua that also snaps frames and flags the layout as changed. The plain
-    -- widget methods it keeps as SetPointBase and the rest are what is called
-    -- here, so none of that code runs from this addon.
-    --
-    -- Moving a protected frame is refused in combat, so it waits; the position
-    -- sticks once set, and the original is kept so turning the addon off puts
-    -- the frame back where the game had it.
+    -- Edit Mode wraps SetScale on its frames with Lua that also flags the
+    -- layout as changed; the plain widget method it keeps as SetScaleBase is
+    -- what is called here. Scale is a protected call on these frames, so it
+    -- waits for the end of combat (the core file asks again then); alpha does
+    -- not. Both are handed back when the addon's frames are switched off.
     ---------------------------------------------------------------------------
 
-    -- The two frames that carry auras, and the plate each one is parked on.
-    local CARRIERS = {
-        { root = "TargetFrame", plate = "target" },
-        { root = "FocusFrame", plate = "focus" },
-    }
+    local CARRIERS = { "TargetFrame", "FocusFrame" }
+    local RETIRED_SCALE = 0.01
 
-    local carrierHome = {}     -- where the game had each one, before we moved it
-    local carrierHooked = {}   -- whose re-anchoring we have already hooked
-
-    local function RememberHome(name, frame)
-        if carrierHome[name] ~= nil then return end
-        local ok, point, relativeTo, relativePoint, x, y = pcall(frame.GetPoint, frame, 1)
-        if ok and point then
-            carrierHome[name] = { point, relativeTo, relativePoint, x, y }
-        else
-            carrierHome[name] = false    -- it had none; there is nothing to put back
-        end
-    end
-
-    -- Where the game puts the aura container against the artwork, from
-    -- Blizzard_UnitFrame/Mainline/TargetFrame.lua (locals there, so copied):
-    -- AURA_START_X in from its left; with buffs on top the row's bottom sits
-    -- AURA_MIRRORED_START_Y from the artwork's top (raised by the threat
-    -- number's height while that shows), otherwise its top sits AURA_START_Y
-    -- above the artwork's bottom.
-    local AURA_START_X = 5
-    local AURA_START_Y = 9
-    local AURA_MIRRORED_START_Y = -6
-
-    -- Daylight between the plate's border (or its name row) and the aura row,
-    -- either side. It was 2; the player asked for 5 more.
-    local AURA_GAP = 7
-
-    local function ThreatNumberHeight(frame)
-        local ok, height = pcall(function()
-            local indicator = frame.threatNumericIndicator
-            if indicator and indicator:IsShown() then return indicator:GetHeight() end
-            return 0
-        end)
-        return ok and type(height) == "number" and height or 0
-    end
+    local gameScale = {}       -- the size the game last gave each frame
+    local carrierHooked = {}   -- whose resizing we have already hooked
 
     -- A widget method without Edit Mode's wrapper round it, where it has one.
     local function Plain(frame, method)
         return frame[method .. "Base"] or frame[method]
     end
 
-    local parkedAs = {}        -- the layout each carrier was last parked for
-    local gameScale = {}       -- the size the game last gave each carrier
-
-    -- Put a carrier back to its own size after the game has scaled it,
-    -- remembering the game's size to hand back later. A protected frame's
-    -- call, so out of combat only; the end of combat catches it up.
-    local function HoldScale(name, frame)
+    local function Retire(name, frame)
+        pcall(frame.SetAlpha, frame, 0)
         if InCombatLockdown() then return end
         local ok, scale = pcall(frame.GetScale, frame)
-        if not ok or type(scale) ~= "number" or scale == 1 then return end
-        gameScale[name] = scale
-        pcall(Plain(frame, "SetScale"), frame, 1)
+        -- Anything clearly above the retired size is the game's own.
+        if ok and type(scale) == "number" and scale > RETIRED_SCALE * 2 then
+            gameScale[name] = scale
+            pcall(Plain(frame, "SetScale"), frame, RETIRED_SCALE)
+        end
     end
 
-    local function ReleaseScale(name, frame)
+    local function Release(name, frame)
+        pcall(frame.SetAlpha, frame, 1)
         local scale = gameScale[name]
         if scale == nil or InCombatLockdown() then return end
         gameScale[name] = nil
         pcall(Plain(frame, "SetScale"), frame, scale)
     end
 
-    local function ParkOnPlate(name, frame, plate)
-        local texture = frame.TargetFrameContainer and frame.TargetFrameContainer.FrameTexture
-        if type(texture) ~= "table" or type(texture.GetLeft) ~= "function" then return end
-
-        -- Where the artwork sits inside its own frame. Measured rather than
-        -- assumed, so the auras land on the plate whatever the frame's internal
-        -- layout is, and asked for fresh each time because a frame that has
-        -- never been laid out answers nil.
-        local ok, left, top, bottom = pcall(function()
-            return texture:GetLeft() - frame:GetLeft(),
-                   frame:GetTop() - texture:GetTop(),
-                   texture:GetBottom() - frame:GetBottom()
-        end)
-        if not ok or type(left) ~= "number" or type(top) ~= "number"
-           or type(bottom) ~= "number" then
-            return
-        end
-
-        local onTop = frame.buffsOnTop == true
-        local threat = onTop and ThreatNumberHeight(frame) or 0
-        -- Below the plate the auras clear its border; above it, its name and
-        -- level row, which sits over the border.
-        local clear = (onTop and DogsForeverUI.Frames.UnitPlate.TopRoom()
-            or DogsForeverUI.Style.BORDER_INSET) + AURA_GAP
-        local x = -left - AURA_START_X
-
-        pcall(Plain(frame, "ClearAllPoints"), frame)
-        if onTop then
-            -- Row bottom = artwork top + MIRRORED_START_Y + threat; wanted
-            -- `clear` above the plate's top edge.
-            pcall(Plain(frame, "SetPoint"), frame, "TOPLEFT", plate, "TOPLEFT",
-                x, clear - AURA_MIRRORED_START_Y - threat + top)
-        else
-            -- Row top = artwork bottom + START_Y; wanted `clear` under the
-            -- plate's bottom edge.
-            pcall(Plain(frame, "SetPoint"), frame, "BOTTOMLEFT", plate, "BOTTOMLEFT",
-                x, -clear - AURA_START_Y - bottom)
-        end
-        parkedAs[name] = (onTop and "top" or "bottom") .. ":" .. threat
-    end
-
     -- Whether the plate's auras are stacked under it, which is where its
     -- castbar would otherwise be: the castbar takes the other side.
-    local PLATE_CARRIER = { target = "TargetFrame", focus = "FocusFrame" }
-
     function BlizzardFrames.AurasBelow(unit)
-        local name = PLATE_CARRIER[unit]
-        local frame = name and _G[name]
-        if type(frame) ~= "table" or not BlizzardFrames.ShouldHide() then return false end
-        return frame.buffsOnTop ~= true
+        local auras = DogsForeverUI.Frames.UnitAuras
+        return auras ~= nil and auras.Side(unit) == "below"
     end
 
-    -- Edit Mode must not be able to drag a carrier off its plate, and must not
-    -- draw its big selection box over one either. Both are plain fields the game
-    -- already keeps for exactly this, so neither is a function replaced nor an
-    -- Edit Mode setting written:
-    --
-    --   * `isLocked` - EditModeSystemMixin:CanBeMoved() is
-    --     `self.isSelected and not self.isLocked`, and OnDragStart does nothing
-    --     when it is false. It is read there and nowhere else: an opt-out with
-    --     no setter.
-    --   * `defaultHideSelection` - OnEditModeEnter only highlights a system
-    --     `if not self.defaultHideSelection`. The pet bar, the stance bar and
-    --     the raid frame container all set it in their own XML.
-    --
-    -- Both are put back as they were when this addon is turned off
-    -- (DogsForeverUI.HoldEditMode).
+    -- Edit Mode must not be able to drag these frames or draw its selection
+    -- box where the plates are (DogsForeverUI.HoldEditMode: plain fields the
+    -- game keeps for exactly this, put back when the addon is turned off).
     local carrierEditMode = {}
+    local playerEditMode = {}
 
-    local PlaceAuraCarriers    -- forward: the hook below calls it back
-
-    -- Edit Mode owns these frames' positions and re-applies them - on a layout
-    -- change, on leaving Edit Mode, and whenever the player drags one. Left
-    -- alone, that would walk the auras off the plate. `ApplySystemAnchor` is the
-    -- one method every Edit Mode system goes through to position itself, so
-    -- following it and parking the frame again afterwards is what makes the
-    -- auras stay put.
-    --
-    -- `hooksecurefunc` runs after the original and cannot taint it, which is why
-    -- the frame is followed rather than replaced. There is no recursion: parking
-    -- is a SetPoint, and SetPoint does not anchor systems.
+    -- The two ways the game sizes these frames: Edit Mode's "Frame Size" (both)
+    -- and the focus frame's small/large switch. After either, the frame is
+    -- shrunk again.
     local function HookCarrier(name, frame)
-        if carrierHooked[name] or type(frame.ApplySystemAnchor) ~= "function" then
-            return
-        end
+        if carrierHooked[name] then return end
         carrierHooked[name] = true
-
-        pcall(hooksecurefunc, frame, "ApplySystemAnchor", function()
-            -- Reached through the table because ShouldHide is defined below
-            -- this block; by the time Edit Mode can fire this, it exists.
-            if BlizzardFrames.ShouldHide() then PlaceAuraCarriers(true) end
-        end)
-
-        -- The game re-anchors the aura row itself whenever its side can have
-        -- changed - "Buffs on top" in Edit Mode, the threat number coming or
-        -- going. The carrier is parked for one layout, so it is parked again
-        -- when that layout is a different one; on every other call (this runs
-        -- on aura updates too) nothing is touched.
-        if type(frame.AnchorAuraContainer) == "function" then
-            pcall(hooksecurefunc, frame, "AnchorAuraContainer", function()
-                if not BlizzardFrames.ShouldHide() or InCombatLockdown() then return end
-                local onTop = frame.buffsOnTop == true
-                local layout = (onTop and "top" or "bottom") .. ":"
-                    .. (onTop and ThreatNumberHeight(frame) or 0)
-                if layout ~= parkedAs[name] then PlaceAuraCarriers(true) end
-            end)
-        end
-
-        -- The two ways the game sizes these frames: Edit Mode's "Frame Size"
-        -- (both) and the focus frame's small/large switch. After either, the
-        -- carrier goes back to its own size and is parked again.
         for _, method in ipairs({ "UpdateSystemSettingFrameSize", "SetSmallSize" }) do
             if type(frame[method]) == "function" then
                 pcall(hooksecurefunc, frame, method, function()
-                    if BlizzardFrames.ShouldHide() then PlaceAuraCarriers(true) end
+                    if BlizzardFrames.ShouldHide() then Retire(name, frame) end
                 end)
             end
         end
     end
 
-    function PlaceAuraCarriers(hide)
-        local plates = DogsForeverUI.Frames.plates
-
-        for _, carrier in ipairs(CARRIERS) do
-            local frame = _G[carrier.root]
-            if type(frame) == "table" and type(frame.SetPoint) == "function" then
-                HookCarrier(carrier.root, frame)
+    local function PlaceAuraCarriers(hide)
+        for _, name in ipairs(CARRIERS) do
+            local frame = _G[name]
+            if type(frame) == "table" and type(frame.SetAlpha) == "function" then
+                HookCarrier(name, frame)
                 -- Writing a field is not a protected call, so the two Edit Mode
                 -- switches are set whatever else is going on.
                 DogsForeverUI.HoldEditMode(carrierEditMode, frame, hide)
+                if hide then Retire(name, frame) else Release(name, frame) end
             end
         end
 
-        -- Anchoring a protected frame, though, is refused while fighting. The
-        -- core file asks again on PLAYER_REGEN_ENABLED.
-        if InCombatLockdown() then return end
-
-        for _, carrier in ipairs(CARRIERS) do
-            local frame = _G[carrier.root]
-            if type(frame) == "table" and type(frame.SetPoint) == "function" then
-                RememberHome(carrier.root, frame)
-
-                local home = carrierHome[carrier.root]
-                local plate = plates and plates[carrier.plate]
-
-                if hide and plate then
-                    HoldScale(carrier.root, frame)
-                    ParkOnPlate(carrier.root, frame, plate)
-                    -- The castbar sits opposite the auras, and they may just
-                    -- have changed sides.
-                    if plate.castbar then plate.castbar:Refresh() end
-                elseif not hide then
-                    ReleaseScale(carrier.root, frame)
-                    if type(home) == "table" then
-                        pcall(Plain(frame, "ClearAllPoints"), frame)
-                        pcall(Plain(frame, "SetPoint"), frame, home[1], home[2], home[3],
-                            home[4], home[5])
-                    end
-                end
+        -- The castbars sit opposite the auras, which may just have changed
+        -- sides.
+        local plates = DogsForeverUI.Frames.plates
+        if plates then
+            for _, unit in ipairs({ "target", "focus" }) do
+                local plate = plates[unit]
+                if plate and plate.castbar then plate.castbar:Refresh() end
             end
         end
     end
@@ -430,6 +271,54 @@ do -- private scope
         return db and db.enabled and true or false
     end
     BlizzardFrames.ShouldHide = ShouldHide
+
+    ---------------------------------------------------------------------------
+    -- THE PET FRAME'S OWN PARTS. The frame is faded with the others (FRAMES);
+    -- this is what fading alone does not cover.
+    ---------------------------------------------------------------------------
+
+    local petEditMode = {}
+    local petAlphaHooked, refading = false, false
+
+    -- The managed-frame container sets the alpha of every frame it lays out
+    -- back to 1 whenever the whole UI comes back (ManagedFrameSystem.lua:
+    -- AnimInManagedFrames), and the pet frame is one of them. A post-hook
+    -- takes it straight down again; it changes nothing the game reads.
+    local function HookPetAlpha(frame)
+        if petAlphaHooked or type(frame.SetAlpha) ~= "function" then return end
+        petAlphaHooked = true
+        hooksecurefunc(frame, "SetAlpha", function(self, alpha)
+            if refading or alpha == 0 or not ShouldHide() then return end
+            refading = true
+            pcall(self.SetAlpha, self, 0)
+            refading = false
+        end)
+    end
+
+    local function HoldPetParts(hide)
+        local frame = _G.PetFrame
+        if type(frame) ~= "table" then return end
+        HookPetAlpha(frame)
+
+        -- Out of Edit Mode as well: the pet plate is what shows, and it is
+        -- placed with the rest of the UI.
+        DogsForeverUI.HoldEditMode(petEditMode, frame, hide)
+
+        -- Its aura buttons take the mouse, and pop tooltips up over empty
+        -- screen when their frame is invisible. The row is a plain frame (the
+        -- pet frame lays it out, and never shows or hides it), so it is simply
+        -- hidden - allowed in combat.
+        local auras = frame.AuraFrameContainer
+        if type(auras) == "table" and type(auras.SetShown) == "function" then
+            pcall(auras.SetShown, auras, not hide)
+        end
+
+        -- The happiness face shows and hides itself; only its mouse is ours.
+        local happiness = _G.PetFrameHappiness
+        if type(happiness) == "table" and type(happiness.EnableMouse) == "function" then
+            pcall(happiness.EnableMouse, happiness, not hide)
+        end
+    end
 
     function BlizzardFrames.Refresh()
         local hide = ShouldHide()
@@ -451,6 +340,14 @@ do -- private scope
         end
 
         SilenceCastbars(hide and DogsForeverUI.Frames.db.showCastbar and true or false)
+
+        -- Gone from Edit Mode as well: no box to see or drag where the plate
+        -- is. (The pet frame is an Edit Mode system of its own, held with its
+        -- parts; target and focus are held below, with the auras they carry.)
+        if type(PlayerFrame) == "table" then
+            DogsForeverUI.HoldEditMode(playerEditMode, PlayerFrame, hide)
+        end
+        HoldPetParts(hide)
 
         -- The target and focus frames are kept on top of their plates so the
         -- auras they carry land against them. Everything else on them is

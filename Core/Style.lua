@@ -412,11 +412,34 @@ do -- private scope
         texture:SetPoint(b, border, b, bx, by)
     end
 
+    -- A bevelled band's colour at one corner pixel. The top and left sides
+    -- are lit, the bottom and right shaded (light from the top left): the top
+    -- left corner is all light, the bottom right all shade, and the other two
+    -- turn from one to the other round the curve - a pixel's share of each is
+    -- how far along the top (or left) edge it lies against how far down the
+    -- right (or bottom) one. `x`, `y`: the pixel's place from the corner.
+    local function BevelColour(bevel, point, x, y)
+        local lit
+        if point == "TOPLEFT" then
+            lit = 1
+        elseif point == "BOTTOMRIGHT" then
+            lit = 0
+        elseif point == "TOPRIGHT" then
+            lit = (x + 0.5) / (x + y + 1)       -- far along the top: lit
+        else -- BOTTOMLEFT
+            lit = (y + 0.5) / (x + y + 1)       -- far up the left: lit
+        end
+        local l, s = bevel.light, bevel.shade
+        return l[1] * lit + s[1] * (1 - lit), l[2] * lit + s[2] * (1 - lit),
+            l[3] * lit + s[3] * (1 - lit)
+    end
+
     -- The corner pixels of one band, made as they are needed - how many there
     -- are depends on the screen - each at its share of the band's colour.
     -- Pixels a finer grid no longer needs are hidden.
     local function Dots(band, pixels, border, px)
         local colour = band.colour
+        local alpha = colour[4] or 1
         local index = 0
         for _, corner in ipairs(CORNERS) do
             local point, inX, inY = corner[1], corner[2], corner[3]
@@ -430,7 +453,9 @@ do -- private scope
                 dot:ClearAllPoints()
                 dot:SetPoint(point, border, point, inX * pixel[1] * px, inY * pixel[2] * px)
                 dot:SetSize(px, px)
-                dot:SetVertexColor(colour[1], colour[2], colour[3], (colour[4] or 1) * pixel[3])
+                local r, g, b = colour[1], colour[2], colour[3]
+                if band.bevel then r, g, b = BevelColour(band.bevel, point, pixel[1], pixel[2]) end
+                dot:SetVertexColor(r, g, b, alpha * pixel[3])
                 dot:Show()
             end
         end
@@ -506,6 +531,11 @@ do -- private scope
     -- unit's worth. A nameplate is small, and the frames' border - two pixels a
     -- line on a sharp screen - is heavy on it; at 1 it is the same three lines,
     -- one pixel each.
+    --
+    -- `spec.bevel = { light =, shade = }`, optional: the outermost line drawn
+    -- as a bevel, a slight 3D edge at no extra thickness - its colour times
+    -- `light` on the top and left, times `shade` on the bottom and right, the
+    -- corners turning between the two (BevelColour).
     function Style.AddBorder(bar, spec, ownScale, unitPixels)
         spec = spec or Style.DEFAULT_BORDER
         local border = CreateFrame("Frame", nil, bar)
@@ -523,6 +553,21 @@ do -- private scope
             end, colour)
         end
         local outer = border.lines[1]
+
+        if spec.bevel then
+            local base, a = outer.colour, outer.colour[4] or 1
+            local function Times(k)
+                return { math.min(1, base[1] * k), math.min(1, base[2] * k), math.min(1, base[3] * k) }
+            end
+            outer.bevel = { light = Times(spec.bevel.light), shade = Times(spec.bevel.shade) }
+            local light, shade = outer.bevel.light, outer.bevel.shade
+            for _, side in ipairs({ "top", "left" }) do
+                outer[side]:SetVertexColor(light[1], light[2], light[3], a)
+            end
+            for _, side in ipairs({ "bottom", "right" }) do
+                outer[side]:SetVertexColor(shade[1], shade[2], shade[3], a)
+            end
+        end
         border.top, border.bottom, border.left, border.right = outer.top, outer.bottom, outer.left, outer.right
         border.steps = outer.steps
 
@@ -537,11 +582,19 @@ do -- private scope
         return border
     end
 
+    -- Lay a border out again on the real pixels, for a bar whose scale the
+    -- addon has just changed itself: the rescale below only follows the UI's
+    -- own scale, and may run before the addon has caught up with it.
+    function Style.Refit(border) pcall(Fit, border) end
+
     local rescale = CreateFrame("Frame")
     rescale:RegisterEvent("UI_SCALE_CHANGED")
     rescale:RegisterEvent("DISPLAY_SIZE_CHANGED")
     rescale:SetScript("OnEvent", function()
-        for border in pairs(borders) do Fit(border) end
+        -- Guarded one by one: a border on a frame the game has since closed to
+        -- addon code (an aura button while auras are secret) must not stop
+        -- the rest.
+        for border in pairs(borders) do pcall(Fit, border) end
     end)
 
     ---------------------------------------------------------------------------
@@ -631,18 +684,10 @@ do -- private scope
         spark:SetHeight((bar:GetHeight() or 0) * Style.SPARK_HEIGHT)
     end
 
-    -- The two settings every bar follows, kept with the castbars' others on
-    -- their tab: a spark on the leading edge, and the seconds left on a bar
-    -- that counts down. On until the castbars' settings are there to say.
-    function Style.ShowSparks()
-        local db = DogsForeverUI.Castbar and DogsForeverUI.Castbar.db
-        return not db or db.showSpark ~= false
-    end
-
-    function Style.ShowTimes()
-        local db = DogsForeverUI.Castbar and DogsForeverUI.Castbar.db
-        return not db or db.showTime ~= false
-    end
+    -- Every bar has its spark on the leading edge, and every bar that counts
+    -- down shows the seconds left. They used to be two settings (Show spark,
+    -- Show time left); the player took them out - they are the look, not a
+    -- choice.
 
     -- Whether a spark shows, for a bar whose value is plain: only strictly
     -- between empty and full, where there is an edge to mark. At either end a

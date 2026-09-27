@@ -1,8 +1,10 @@
 -- MODULE: Frames  (DogsForeverUI.Frames, settings section "frames")
 --
--- The player, the target, the focus and the target's target as two plain bars
--- each -- health over power, one border round the pair and a hairline between
--- them -- with the level written before the name.
+-- The player, the target, the focus, the target's target and the pet as two
+-- plain bars each -- health over power, one border round the pair and a
+-- hairline between them -- with the level written before the name. The pet's
+-- frame hangs under the player's until it is put somewhere else, and the
+-- player's totems hang under the player's frame too (Totems.lua).
 --
 -- Only the look changes. Left-click targets, right-click opens the unit menu and
 -- hovering shows the tooltip, exactly as the game's frames do, because the click
@@ -53,6 +55,12 @@ do -- private scope
         classColors = true,
         frameStrata = "MEDIUM",
         styleNamePlates = true,  -- the game's nameplates in this look (NamePlates.lua)
+        -- Where each frame's buffs and debuffs go: "below", "above" or "off"
+        -- (UnitAuras.lua). The game has none on the target of target.
+        targetAuras = "below",
+        focusAuras = "below",
+        targettargetAuras = "off",
+        petAuras = "below",      -- the game's pet frame shows them too
     }
 
     -- Saved keys that are not settings: where each frame was put.
@@ -61,6 +69,7 @@ do -- private scope
         targetLeft = true, targetTop = true, targetPlaced = true,
         focusLeft = true, focusTop = true, focusPlaced = true,
         targettargetLeft = true, targettargetTop = true, targettargetPlaced = true,
+        petLeft = true, petTop = true, petPlaced = true,
     }
 
     -- SECRET VALUES
@@ -87,9 +96,9 @@ do -- private scope
     pcall(NS.RegisterUnitEvent, NS, "UNIT_SPELLCAST_INTERRUPTED", "target", "focus")
     -- Leaving combat is when anything that was refused in combat is done.
     NS:RegisterEvent("PLAYER_REGEN_ENABLED")
-    -- A layout change moves the game's frames, and two of those are parked on
-    -- plates to carry their auras. Following ApplySystemAnchor catches the rest;
-    -- this is the backstop for a layout swap that does not go through it.
+    -- A layout change re-applies the game's frames' sizes, and two of those are
+    -- held retired (faded and shrunk, their aura rows replaced by the addon's).
+    -- The hooks on their sizing catch most of it; this is the backstop.
     pcall(NS.RegisterEvent, NS, "EDIT_MODE_LAYOUTS_UPDATED")
     -- What a plate shows besides its bars: who the unit is, what level it is and
     -- what colour it should be. A client without one of these must not lose the
@@ -99,6 +108,9 @@ do -- private scope
                              "UNIT_TARGET" }) do
         pcall(NS.RegisterEvent, NS, event)
     end
+    -- A pet summoned, dismissed or swapped for another. Its argument is the
+    -- owner, not the pet.
+    pcall(NS.RegisterUnitEvent, NS, "UNIT_PET", "player")
     -- Who leads the group, for the crown over a frame. Neither names a unit.
     for _, event in ipairs({ "PARTY_LEADER_CHANGED", "GROUP_ROSTER_UPDATE" }) do
         pcall(NS.RegisterEvent, NS, event)
@@ -116,7 +128,8 @@ do -- private scope
     -- A first run, or a reset, leaves the frames without a position.
     function NS.Normalise(db)
         if db.playerLeft == nil or db.playerTop == nil
-           or db.targetLeft == nil or db.targetTop == nil then
+           or db.targetLeft == nil or db.targetTop == nil
+           or db.petLeft == nil or db.petTop == nil then
             PlaceFrames()
         end
     end
@@ -128,14 +141,16 @@ do -- private scope
     function BuildPlates()
         if NS.plates or InCombatLockdown() then return end
 
-        -- The target's target is drawn smaller, as the game draws it, and is
-        -- the one unit with no event worth the name behind it - see its plate.
+        -- The target's target and the pet are drawn smaller, as the game draws
+        -- them. The target's target is the one unit with no event worth the
+        -- name behind it - see its plate.
         NS.plates = {
             player = NS.UnitPlate.New("player", "Player"),
             target = NS.UnitPlate.New("target", "Target"),
             focus = NS.UnitPlate.New("focus", "Focus"),
             targettarget = NS.UnitPlate.New("targettarget", "TargetOfTarget",
                 NS.UnitPlate.SMALL_SCALE),
+            pet = NS.UnitPlate.New("pet", "Pet", NS.UnitPlate.SMALL_SCALE),
         }
     end
 
@@ -151,6 +166,7 @@ do -- private scope
     local ROW_TOP         = 0.70   -- share of the screen height, from the top
     local CENTRE_GAP      = 140    -- clear space each side of the middle
     local SIDE_GAP        = 8      -- between a frame and the one beside it
+    local PET_GAP         = 6      -- the player's border to the pet's name band
 
     -- The top of that row, as a TOPLEFT offset from the top of the screen.
     local function RowTop(screenHeight)
@@ -196,8 +212,25 @@ do -- private scope
                 db[unit .. "Left"], db[unit .. "Top"] = place[1], place[2]
             end
         end
+
+        NS.PlacePet()
     end
     NS.PlaceFrames = PlaceFrames
+
+    -- THE PET, by default right under the player's frame and lined up with its
+    -- left edge, its name band clear of the player's border - where the game
+    -- hangs its own pet frame. Worked out from wherever the player's frame is
+    -- now, so until the pet is put somewhere itself it goes with the player's
+    -- frame, dragged, typed or resized: Refresh asks again every time.
+    function NS.PlacePet()
+        local db = NS.db
+        if db.petPlaced or db.playerLeft == nil or db.playerTop == nil then return end
+        local height = (db.barHeight or NS.defaults.barHeight) + 1
+            + (db.powerHeight or NS.defaults.powerHeight)
+        db.petLeft = db.playerLeft
+        db.petTop = db.playerTop - height - DogsForeverUI.Style.BORDER_INSET - PET_GAP
+            - NS.UnitPlate.TopRoom() * NS.UnitPlate.SMALL_SCALE
+    end
 
     function onEvent(event, ...)
         if event == "PLAYER_ENTERING_WORLD" then
@@ -247,6 +280,10 @@ do -- private scope
         elseif event == "UNIT_TARGET" then
             -- Whose target changed. The only one drawn here is the target's.
             if ... == "target" then NS.plates.targettarget:Update() end
+        elseif event == "UNIT_PET" then
+            -- A new pet can arrive between two looks of the unit watch, with
+            -- no hide and show in between to repaint the plate.
+            NS.plates.pet:Update()
         elseif event == "PARTY_LEADER_CHANGED" or event == "GROUP_ROSTER_UPDATE" then
             for _, plate in pairs(NS.plates) do plate:Update() end
         else
@@ -285,6 +322,9 @@ do -- private scope
     -------------------------------------------------------------------------
 
     function Refresh()
+        -- The pet goes with the player's frame until it is placed itself.
+        NS.PlacePet()
+
         -- The plates may not exist yet - a /reload in the middle of a fight
         -- leaves them until it ends - but the game's frames are not waiting on
         -- them, so that half happens either way.
@@ -293,6 +333,8 @@ do -- private scope
         end
 
         NS.BlizzardFrames.Refresh()
+        NS.UnitAuras.Refresh()
+        NS.Totems.Refresh()
         NS.NamePlates.Refresh()
     end
 

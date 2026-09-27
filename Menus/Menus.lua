@@ -5,17 +5,24 @@
 --   * the micro menu (character, spellbook, quests, ...) loses its outer frame
 --     and plate, keeps its buttons as the game draws them, and is invisible
 --     until the mouse is over it;
---   * the bag bar shows the backpack and nothing else until a bag is open, and
---     then is the game's own bar again, exactly as it ships;
---   * any action bar opted in fades out, and fades back in under the mouse.
+--   * any action bar ticked - and the bag bar - auto-hides, and fades back in
+--     under the mouse (ActionBars.lua); the backpack's icon is repaired
+--     (BagsBar.lua);
+--   * every action button in the addon's look, the bars at 80% of the game's
+--     size and the end caps gone (ActionButtons.lua - the look, no setting);
+--   * the beta's Issue Reporter box and its tooltip hints hidden
+--     (IssueReporter.lua).
 --
--- Each can be switched off in the options, which hands it straight back.
+-- All but the action button look can be switched off in the options, which
+-- hands each straight back.
 --
 -- No script is replaced, no Lua field is written onto a Blizzard frame, no
 -- layout method is called and no Edit Mode setting is touched, so nothing here
--- can taint the menus. Art is faded; the bag slots are shown and hidden the way
--- the game's own collapse does it. `hooksecurefunc` and `HookScript` are the
--- only hooks, and both run after Blizzard's own code rather than instead of it.
+-- can taint the menus. (The one exception is the Issue Reporter's own
+-- SetCurrentTooltipReport, wrapped to drop its tooltip hints - see that file;
+-- the reporter is a beta tool, not part of the menus.) Art and bars are faded,
+-- never hidden. `hooksecurefunc` and `HookScript` are the only hooks, and both
+-- run after Blizzard's own code rather than instead of it.
 
 DogsForeverUI.Menus = {}
 
@@ -27,9 +34,9 @@ do -- private scope
 
     NS.defaults = {
         quietMicroMenu = true,   -- the micro menu shows only under the mouse
-        collapseBags = true,     -- the bag bar is the backpack until a bag opens
+        hideIssueReporter = true, -- the beta's Issue Reporter box and hints
     }
-    -- ActionBars.lua adds one switch per action bar, all off.
+    -- ActionBars.lua adds one switch per bar that can auto-hide.
 
     -- THE FADE, the one the micro menu and the action bars share: a wait after
     -- the mouse leaves, then a fade out; a quicker fade back in while it is
@@ -62,11 +69,16 @@ do -- private scope
     local function Refresh()
         if not applied then return end
         NS.MicroMenu:Refresh()
-        NS.BagsBar:Refresh()
         NS.ActionBars:Refresh()
+        NS.IssueReporter:Refresh()
     end
     NS.Refresh = Refresh
     NS.Init = Refresh
+
+    -- Once the saved settings are in: see ActionBars.lua.
+    function NS.Normalise(db)
+        NS.ActionBars.Normalise(db)
+    end
 
     local loader = CreateFrame("Frame")
     loader:RegisterEvent("PLAYER_LOGIN")
@@ -76,6 +88,7 @@ do -- private scope
         NS.MicroMenu:Apply()
         NS.BagsBar:Apply()
         NS.ActionBars:Apply()
+        NS.IssueReporter:Apply()
     end)
 
     DogsForeverUI:RegisterModule(NS)

@@ -80,11 +80,16 @@ do -- private scope
         return NS.db.enabled and Ours(container.shownBarIndex)
     end
 
+    local editMode = {}
+
     local function RefreshContainer(container)
         local hide = ShouldHide(container)
         for _, part in ipairs(Parts(container)) do
             if hide then Fade(part) else Restore(part) end
         end
+        -- Gone from Edit Mode too while what it shows is ours; a container
+        -- showing another bar (honor) is the game's to place as ever.
+        DogsForeverUI.HoldEditMode(editMode, container, hide and true or false)
         -- The XP or reputation bar the container no longer shows - the game
         -- has hidden it - is given its alpha back, ready for its next turn.
         for _, key in ipairs({ "Experience", "Reputation" }) do

@@ -9,8 +9,8 @@
 -- castbar goes until it is dragged somewhere of its own; it takes its size,
 -- strata, text padding, spark and seconds from the castbar's settings; it is
 -- unlocked and locked with the castbar; and its one
--- switch, Enable five second rule, sits on the castbar's tab. It has no tab
--- of its own.
+-- switch, Five second rule, sits in the options' Castbars section. It has no
+-- section of its own.
 
 DogsForeverUI.FiveSecondRule = CreateFrame("Frame")
 

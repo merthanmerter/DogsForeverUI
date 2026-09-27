@@ -12,8 +12,8 @@
 -- row as it - just above the castbar, under the swing bars - since the two are
 -- never wanted together: a rogue has no mana. It takes the castbar's size,
 -- strata and placement mode, goes wherever the castbar goes until it is
--- dragged somewhere of its own, and its one switch, Enable combo points, is on
--- the castbar's tab. It has no tab of its own.
+-- dragged somewhere of its own, and its one switch, Combo points, is in the
+-- options' Castbars section. It has no section of its own.
 --
 -- NOTHING IS READ. GetComboPoints is SecretWhenUnitPowerRestricted, so the
 -- count is never compared or counted with. Each segment is a status bar of its
@@ -254,7 +254,7 @@ do -- private scope
     end)
 
     NS.Init = Refresh
-    -- A switch flipped on the castbar's tab can take the row away from, or
+    -- A switch flipped in the Castbars section can take the row away from, or
     -- give it back to, the swing bars above it: the whole group is laid out
     -- again.
     NS.Refresh = function() DogsForeverUI.Castbar.Refresh() end

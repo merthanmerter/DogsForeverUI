@@ -1,13 +1,15 @@
 -- One unit's frame: a health bar over a resource bar, one border round the pair
 -- and a hairline between them. Above the frame, in the bold font: the unit's
--- level at the left, its name in the middle and a crown at the right when it
--- leads the group. On the bars, in white: "505K | 100%" and the same for the
+-- level at the left, its name in the middle and at the right a crown when it
+-- leads the group, or its elite, rare or boss emblem. On the bars, in white: "505K | 100%" and the same for the
 -- resource.
 --
--- Four of them are built: the player and the focus, whose badges sit on their
+-- Five of them are built: the player and the focus, whose badges sit on their
 -- left, and the target and the target's target, whose badges sit on their
--- right, so the row reads outwards from the middle of the screen. The target's
--- target is drawn at a fraction of the size, as the game draws it.
+-- right, so the row reads outwards from the middle of the screen; and the pet,
+-- under the player's. The target's target and the pet are drawn at a fraction
+-- of the size, as the game draws them. A hunter's pet wears the game's own
+-- happiness face on its right (see New).
 --
 -- Drawn in the addon's one look (Core\Style.lua): a flat fill with a soft
 -- sheen and shade, the black background, the rounded gold border and the
@@ -73,6 +75,9 @@ do -- private scope
     -- stays centred, which leaves room for the level and the crown.
     local NAME_Y = 6
     local NAME_SIZE, LEVEL_SIZE, CROWN_SIZE = 13, 11, 12
+    -- The elite emblem, in the crown's corner: a little larger than the crown
+    -- (the player asked), and smaller than the PvP circle.
+    local ELITE_SIZE = 15
     local NAME_SIDE = 34
     local SMALLEST_TEXT = 8
     local LEADER_ICON = "Interface\\GroupFrame\\UI-Group-LeaderIcon"
@@ -124,13 +129,15 @@ do -- private scope
         return math.max(CIRCLE_MIN, math.min(CIRCLE_MAX, math.floor(height * 0.85)))
     end
 
-    -- THE BADGES. Circles, a little shorter than the plate and centred on its
-    -- height. For the target:
+    -- THE BADGES. PvP is a circle, a little shorter than the plate and centred
+    -- on its height, on the plate's outer side - the target's right, the
+    -- focus's left:
     --
-    --     (elite)  [bars]  (pvp)
+    --     [bars]  (pvp)
     --
-    -- the elite badge on the plate's inner side, PvP on its outer side; the
-    -- focus is the mirror image. Each appears only when it applies.
+    -- The elite emblem is not a circle any more: it is the bare emblem at the
+    -- top right corner, where the crown goes (see UpdateBadges). Each appears
+    -- only when it applies.
     --
     -- The room a plate's badges take on either side, which is what the default
     -- placement leaves between frames: one circle and its gap.
@@ -197,6 +204,7 @@ do -- private scope
         target = "Target",
         focus = "Focus",
         targettarget = "ToT",   -- the small frame: the short name the game's players use
+        pet = "Pet",
     }
 
     local function Options()
@@ -572,6 +580,22 @@ do -- private scope
             plate.pvpBadge = NewBadge(plate)
         end
 
+        -- THE PET'S HAPPINESS: the game's own indicator (PetFrameHappiness-
+        -- Template, Blizzard_FrameXML/PetHappiness.xml), made on this plate
+        -- rather than the game's pet frame, which is not drawn any more. It
+        -- brings its face, its tooltip (mood, damage, loyalty, diet), its
+        -- events and its rule - it shows only for a hunter's pet - so nothing
+        -- here decides any of that. Not a secure frame, so the game may show
+        -- and hide it in combat.
+        if unit == "pet" then
+            local ok, happiness = pcall(CreateFrame, "Frame", nil, plate,
+                "PetFrameHappinessTemplate")
+            if ok and happiness then
+                happiness:SetFrameLevel(base + 4)
+                plate.happiness = happiness
+            end
+        end
+
         -- CLICKING. A real secure unit button, carrying what the game's own unit
         -- frames carry: left-click targets, right-click opens the unit menu.
         -- `togglemenu` is the action the game keeps for exactly this - see
@@ -764,6 +788,8 @@ do -- private scope
         self.leader:ClearAllPoints()
         self.leader:SetSize(crown, crown)
         self.leader:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", -2, y)
+        -- The elite emblem takes the same corner, a little larger (UpdateBadges).
+        self.eliteSize, self.cornerY = Sized(ELITE_SIZE), y
 
         -- THE VALUES, centred on their bars, in white.
         self.healthText:SetJustifyH("CENTER")
@@ -783,6 +809,14 @@ do -- private scope
         -- rather than as tall as them: a badge that matches the frame's full
         -- height reads as a third bar on the end of it.
         self.badgeDiameter = Diameter(healthHeight + DIVIDER + powerHeight)
+
+        -- The pet's happiness, on its outer side like a PvP badge, at the
+        -- game's own size - about the small plate's height.
+        if self.happiness then
+            self.happiness:ClearAllPoints()
+            self.happiness:SetPoint("LEFT", self, "RIGHT",
+                Style.BORDER_INSET + math.floor(CIRCLE_GAP * scale + 0.5), 0)
+        end
 
         self:Update()
     end
@@ -890,6 +924,11 @@ do -- private scope
 
         ShowLeader(self.leader, self.unit)
         self:UpdateBadges()
+        -- Its own events keep it right from here on; this is for a pet that
+        -- arrived before it was made, or while the plate was hidden.
+        if self.happiness and type(self.happiness.UpdateHappiness) == "function" then
+            pcall(self.happiness.UpdateHappiness, self.happiness)
+        end
     end
 
     -- The emblem inside a badge: the game's art, fitted inside `size` in its
@@ -915,16 +954,21 @@ do -- private scope
         local outside = self.badgeOnLeft and "LEFT" or "RIGHT"
         local inside = self.badgeOnLeft and "RIGHT" or "LEFT"
 
-        -- ELITE, on the plate's inner side - the target's left, the focus's
-        -- right - CIRCLE_GAP from the bars.
+        -- ELITE - elite, rare, rare elite, boss: the bare emblem, no ring and
+        -- no disc, in the name row at the frame's top right corner, in the
+        -- crown's place and a little larger than it (the player asked: the
+        -- circle beside the bars did not fit the look). A unit that is elite never
+        -- leads a group, so the two never meet.
         local elite = EliteBadge(self.unit)
         if elite and Style:HasAtlas(elite) then
             local badge = self.eliteBadge
+            local size = self.eliteSize or ELITE_SIZE
             badge:ClearAllPoints()
-            badge:SetSize(diameter, diameter)
-            badge:SetPoint(outside, self, inside,
-                self.badgeOnLeft and CIRCLE_GAP or -CIRCLE_GAP, 0)
-            SetEmblem(badge, elite, diameter * 0.72)
+            badge:SetSize(size, size)
+            badge:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", -2, self.cornerY or NAME_Y)
+            badge.ring:SetAlpha(0)
+            badge.disc:SetAlpha(0)
+            SetEmblem(badge, elite, size)
             badge:SetAlpha(1)
             badge:Show()
         else
@@ -1019,15 +1063,9 @@ do -- private scope
         self.power:SetValue(UnitPower(unit))
 
         -- Each spark shows only between empty and full, which the game works
-        -- out from the secret values and hands straight to the spark - and
-        -- only while sparks are on at all (Show spark, on the Castbars tab).
-        if Style.ShowSparks() then
-            self.healthSpark:SetAlpha(Style.HealthSparkAlpha(unit))
-            self.powerSpark:SetAlpha(Style.PowerSparkAlpha(unit))
-        else
-            self.healthSpark:SetAlpha(0)
-            self.powerSpark:SetAlpha(0)
-        end
+        -- out from the secret values and hands straight to the spark.
+        self.healthSpark:SetAlpha(Style.HealthSparkAlpha(unit))
+        self.powerSpark:SetAlpha(Style.PowerSparkAlpha(unit))
 
         if db.showHealthText then
             ShowValue(self.healthText, UnitHealth(unit, false), HealthPercent(unit))

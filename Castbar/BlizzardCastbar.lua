@@ -30,6 +30,7 @@ do -- private scope
 
     local frame          -- the one we found, once we have found it
     local hooked = false
+    local savedEditMode = {}
 
     -- A stray global of the same name would otherwise take the addon down on the
     -- first call, so this checks it really is a frame before believing it.
@@ -74,6 +75,9 @@ do -- private scope
         if ShouldHide() then
             pcall(bar.Hide, bar)
         end
+        -- Gone from Edit Mode too: Edit Mode shows the bar to be placed, and
+        -- its own "Cast Bar" box highlights it directly.
+        DogsForeverUI.HoldEditMode(savedEditMode, bar, ShouldHide())
         -- Nothing in the `else` branch: showing the bar is the game's decision,
         -- and it makes it at the start of the next cast. Forcing it visible here
         -- would put an empty casting bar on screen between casts.

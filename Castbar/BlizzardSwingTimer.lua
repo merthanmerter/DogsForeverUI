@@ -48,10 +48,10 @@ do -- private scope
     local holding = false        -- true while this file is the one calling SetAlpha
 
     -- The game's swing bars are this addon's to replace only while its own are
-    -- on: the castbar enabled, and the swing timers with it.
+    -- on: Swing timers, whatever the castbar's own switch says.
     local function ShouldHide()
         local db = DogsForeverUI.Castbar.db
-        return db and db.enabled and db.showSwing and true or false
+        return db and db.showSwing and true or false
     end
 
     local function Resolve(name)

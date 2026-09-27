@@ -236,7 +236,7 @@ do -- private scope
             end
             bar:SetMinMaxValues(0, rep.max)
             bar:SetValue(rep.value)
-            bar.spark:SetAlpha(Style.ShowSparks() and Style.SparkAlpha(rep.value, rep.max) or 0)
+            bar.spark:SetAlpha(Style.SparkAlpha(rep.value, rep.max))
             return
         end
 
@@ -261,7 +261,7 @@ do -- private scope
 
         bar:SetMinMaxValues(0, max)
         bar:SetValue(current)
-        bar.spark:SetAlpha(Style.ShowSparks() and Style.SparkAlpha(current, max) or 0)
+        bar.spark:SetAlpha(Style.SparkAlpha(current, max))
 
         local restedXP = db.showRested and GetXPExhaustion and GetXPExhaustion() or nil
         if IsSecret(restedXP) or type(restedXP) ~= "number" then restedXP = 0 end

@@ -20,7 +20,7 @@
 -- Between the two, in one row, sit the five-second countdown (FiveSecondRule\)
 -- and the combo points (ComboPoints\), which are part of the same group: the
 -- same size and look from this module's settings, placed and locked with it,
--- and shown on this module's tab - "Castbars". See RowInUse for the order.
+-- and shown in the options' Castbars section. See RowInUse for the order.
 
 DogsForeverUI.Castbar = CreateFrame("Frame")
 
@@ -35,14 +35,12 @@ do -- private scope
     NS.title = "Castbars"
 
     NS.defaults = {
-        enabled = true,
+        enabled = true,       -- the player castbar alone (Castbar, in the options)
         unlocked = false,
         barWidth = 130,
         barHeight = 20,
         textPadding = 0.15,
         showText = true,
-        showTime = true,      -- on every bar the addon draws, not only these
-        showSpark = true,     -- the same
         showSwing = true,     -- the swing bars; off, the game's own come back
         failedHold = 0.6,
         frameStrata = "MEDIUM",
@@ -135,13 +133,13 @@ do -- private scope
         if db.barLeft == nil or db.barTop == nil then CenterBar() end
     end
 
-    -- Default placement: centred horizontally, its top edge 65% of the way down
-    -- the screen - the whole group, since the swing bars and the countdown
-    -- hang off this bar. 65% is where the player put it: about 20 below the
-    -- old -756 on their UI 1200 units tall is 64.7%, rounded. A share of the
-    -- screen rather than a pixel count, so it lands in the same place at any
-    -- resolution or UI scale.
-    local TOP_SHARE       = 0.65
+    -- Default placement: centred horizontally, its top edge about 64% of the
+    -- way down the screen - the whole group, since the swing bars and the
+    -- countdown hang off this bar. Where the player put it: first 65% (about
+    -- 20 below the old -756 on their UI 1200 units tall), then 10 higher -
+    -- 770 of their 1200. A share of the screen rather than a pixel count, so
+    -- it lands in the same place at any resolution or UI scale.
+    local TOP_SHARE       = 770 / 1200
 
     -- The daylight between two bars of the group, and what it takes to get it.
     -- Every bar draws its border on a frame three pixels *outside* itself, so a
@@ -317,9 +315,11 @@ do -- private scope
             return
         end
 
-        if not NS.db.enabled then return end
-
+        -- The swing bars take theirs first: they run on their own switch, not
+        -- the castbar's.
         if NS.SwingBars.OnEvent(event, ...) then return end
+
+        if not NS.db.enabled then return end
 
         -- (unit, castGUID, spellID, ...) on every cast event this module takes.
         local _, castID, _, interruptedBy = ...
@@ -375,8 +375,8 @@ do -- private scope
         for _, module in ipairs({ DogsForeverUI.FiveSecondRule, DogsForeverUI.ComboPoints }) do
             if module and module.db and module.Redraw then module.Redraw() end
         end
-        -- Show spark is every bar's, and the XP bar only redraws on XP events;
-        -- the unit frames and their castbars pick it up on their next repaint.
+        -- The XP bar only redraws on XP events, so a size change here is
+        -- handed on to it now.
         local xp = DogsForeverUI.XPBar
         if xp and xp.db and xp.Update then xp.Update() end
     end

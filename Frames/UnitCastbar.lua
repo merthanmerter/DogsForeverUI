@@ -248,15 +248,13 @@ do -- private scope
         bar:SetTimerDuration(duration, IMMEDIATE, channel and REMAINING or ELAPSED)
         Style.PinSpark(bar.spark, bar)
         -- Where the edge is cannot be judged, so the spark is simply there.
-        bar.spark:SetAlpha(Style.ShowSparks() and 1 or 0)
+        bar.spark:SetAlpha(1)
 
         if Present(name) then bar.spellText:SetText(name) else bar.spellText:SetText("") end
         bar.timeText:SetText("")
-        if Style.ShowTimes() then
-            local okLeft, left = pcall(function() return duration:GetRemainingDuration() end)
-            if okLeft and (IsSecret(left) or type(left) == "number") then
-                bar.timeText:SetFormattedText("%.1f", left)
-            end
+        local okLeft, left = pcall(function() return duration:GetRemainingDuration() end)
+        if okLeft and (IsSecret(left) or type(left) == "number") then
+            bar.timeText:SetFormattedText("%.1f", left)
         end
         Style.FadeIn(bar)
     end
@@ -311,13 +309,9 @@ do -- private scope
         bar:SetValue(value)
         -- Pinned after the paint, which sets the fill it hangs off.
         Style.PinSpark(bar.spark, bar)
-        bar.spark:SetAlpha(Style.ShowSparks() and Style.SparkAlpha(value, length) or 0)
+        bar.spark:SetAlpha(Style.SparkAlpha(value, length))
         bar.spellText:SetText(name)
-        if Style.ShowTimes() then
-            bar.timeText:SetFormattedText("%.1f", length - elapsed)
-        else
-            bar.timeText:SetText("")
-        end
+        bar.timeText:SetFormattedText("%.1f", length - elapsed)
         -- Everything is set before the bar is seen, and it fades in.
         Style.FadeIn(bar)
     end

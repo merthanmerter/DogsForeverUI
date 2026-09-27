@@ -105,14 +105,10 @@ do -- private scope
         statusbar.label:SetPoint("LEFT", statusbar, "LEFT", 4, 0)
         statusbar.label:SetPoint("RIGHT", statusbar.stateText, "LEFT", -6, 0)
 
-        -- SPARK
-        if group.showSpark then
-            if not statusbar.spark then statusbar.spark = Style.AddSpark(statusbar) end
-            statusbar.spark:SetHeight(group.barHeight * Style.SPARK_HEIGHT)
-            statusbar.spark:Show()
-        elseif statusbar.spark then
-            statusbar.spark:Hide()
-        end
+        -- SPARK: always there, on every bar the addon draws.
+        if not statusbar.spark then statusbar.spark = Style.AddSpark(statusbar) end
+        statusbar.spark:SetHeight(group.barHeight * Style.SPARK_HEIGHT)
+        statusbar.spark:Show()
 
         -- VISIBILITY. A countdown already running is left to OnUpdate; with
         -- none, the bar is put away at once.
@@ -159,18 +155,12 @@ do -- private scope
             return
         end
 
-        local group = Group()
-
         statusbar:SetValue(remaining)
         Style.FadeIn(statusbar)
 
-        if group.showTime then
-            statusbar.label:SetFormattedText("%.1fs", remaining)
-        else
-            statusbar.label:SetText("")
-        end
+        statusbar.label:SetFormattedText("%.1fs", remaining)
 
-        if group.showSpark and statusbar.spark then
+        if statusbar.spark then
             local width = statusbar:GetWidth()
             statusbar.spark:Show()
             statusbar.spark:SetPoint("CENTER", statusbar, "LEFT",

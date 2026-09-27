@@ -160,11 +160,12 @@ do -- private scope
         return bar.endTime ~= nil or bar.idleUntil ~= nil
     end
 
-    -- Whether the swing bars are on at all: the castbar enabled, and the swing
-    -- timers with it.
+    -- Whether the swing bars are on at all: Swing timers, their own switch.
+    -- The castbar's switch (Castbar) is the castbar's alone - the player asked
+    -- to turn each bar of the group on and off by itself.
     local function Active()
         local db = Options()
-        return db and db.enabled and db.showSwing and true or false
+        return db and db.showSwing and true or false
     end
 
     local function ShouldShow(bar)
@@ -227,11 +228,9 @@ do -- private scope
         Style.SetFont(bar, bar.typeText, db.textPadding)
         Style.SetFont(bar, bar.timeText, db.textPadding)
 
-        if db.showSpark then
-            if not bar.spark then bar.spark = Style.AddSpark(bar) end
-            bar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
-        end
-        if bar.spark and not (db.showSpark and bar.endTime) then bar.spark:Hide() end
+        if not bar.spark then bar.spark = Style.AddSpark(bar) end
+        bar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
+        if not bar.endTime then bar.spark:Hide() end
 
         ApplyRange(bar)
     end
@@ -242,7 +241,7 @@ do -- private scope
         bar:SetMinMaxValues(0, 1)
         bar:SetValue(0)
         bar.typeText:SetText(bar.hand.label)
-        bar.timeText:SetText(db.unlocked and PLACEMENT_LABEL or (db.showTime and "0.0" or ""))
+        bar.timeText:SetText(db.unlocked and PLACEMENT_LABEL or "0.0")
         if bar.spark then bar.spark:Hide() end
     end
 
@@ -361,7 +360,7 @@ do -- private scope
             local hand = bar.hand
             local outOfRange = false
 
-            if type(api) == "table" and Options().enabled and CanSwing(hand) then
+            if type(api) == "table" and Active() and CanSwing(hand) then
                 if type(api.EnableRangeCheck) == "function" then
                     pcall(api.EnableRangeCheck, hand.swingType, true)
                 end
@@ -408,8 +407,8 @@ do -- private scope
 
         bar:SetMinMaxValues(0, duration)
         bar:SetValue(0)
-        bar.timeText:SetText(Options().showTime and string.format("%.1f", duration) or "")
-        if bar.spark and Options().showSpark then bar.spark:Show() end
+        bar.timeText:SetText(string.format("%.1f", duration))
+        if bar.spark then bar.spark:Show() end
     end
 
     ---------------------------------------------------------------------------
@@ -463,8 +462,8 @@ do -- private scope
                 else
                     local elapsed = duration - remaining
                     bar:SetValue(elapsed)
-                    bar.timeText:SetText(db.showTime and string.format("%.1f", remaining) or "")
-                    if bar.spark and db.showSpark then
+                    bar.timeText:SetText(string.format("%.1f", remaining))
+                    if bar.spark then
                         bar.spark:SetPoint("CENTER", bar, "LEFT",
                             db.barWidth * (elapsed / duration), 0)
                     end

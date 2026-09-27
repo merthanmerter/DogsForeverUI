@@ -120,13 +120,9 @@ do -- private scope
         Style.SetFont(castbar, castbar.spellText, db.textPadding)
         Style.SetFont(castbar, castbar.timeText, db.textPadding)
 
-        -- SPARK
-        if db.showSpark then
-            if not castbar.spark then castbar.spark = Style.AddSpark(castbar) end
-            castbar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
-        elseif castbar.spark then
-            castbar.spark:Hide()
-        end
+        -- SPARK: always there, on every bar the addon draws.
+        if not castbar.spark then castbar.spark = Style.AddSpark(castbar) end
+        castbar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
 
         -- VISIBILITY
         -- Settings can change at any moment, including while nothing is casting,
@@ -151,7 +147,7 @@ do -- private scope
 
         if castbar.spark then
             -- Only a bar whose progress can be measured has somewhere to put it.
-            if db.showSpark and cast.plain then
+            if cast.plain then
                 castbar.spark:Show()
             else
                 castbar.spark:Hide()
@@ -245,13 +241,9 @@ do -- private scope
         castbar:SetMinMaxValues(0, length)
         castbar:SetValue(value)
 
-        if db.showTime then
-            castbar.timeText:SetFormattedText("%.1f", length - elapsed)
-        else
-            castbar.timeText:SetText("")
-        end
+        castbar.timeText:SetFormattedText("%.1f", length - elapsed)
 
-        if db.showSpark and castbar.spark then
+        if castbar.spark then
             castbar.spark:SetPoint("CENTER", castbar, "LEFT",
                 db.barWidth * (value / length), 0)
         end
