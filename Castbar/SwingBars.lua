@@ -52,7 +52,7 @@ do -- private scope
 
     -- Every function here is called with a dot. Several take arguments, and a
     -- colon would hand them the module table instead - see the note in
-    -- CastBar.lua.
+    -- PlayerCastBar.lua.
 
     -- The castbar group's gap between two bars (see Castbar.lua).
     local STACK_GAP = NS.STACK_GAP
@@ -76,8 +76,8 @@ do -- private scope
         return type(global) == "string" and global or fallback
     end
 
-    -- Top to bottom, as the game shows them. The labels are the game's own
-    -- strings - the ones its bars wear.
+    -- In the game's order, which is the stack's bottom to top (see Layout).
+    -- The labels are the game's own strings - the ones its bars wear.
     local HANDS = {
         { swingType = SwingType.MainHand,
           label = Label(SWING_TIMER_MAIN_HAND, "Main Hand"),
@@ -206,7 +206,9 @@ do -- private scope
     end
 
     -- Everything that follows a setting: size, fill, background, fonts and
-    -- spark. Every one of them is the castbar's own setting.
+    -- spark. Every one of them is the castbar's own setting. SetFont turns
+    -- the text white again; the range look goes back on in Refresh's
+    -- UpdateRange, after Layout has settled the bars' alpha.
     local function Restyle(bar)
         local db = Options()
 
@@ -231,8 +233,6 @@ do -- private scope
         if not bar.spark then bar.spark = Style.AddSpark(bar) end
         bar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
         if not bar.endTime then bar.spark:Hide() end
-
-        ApplyRange(bar)
     end
 
     -- An empty bar at 0.0: what the game's bars show between swings.

@@ -83,16 +83,11 @@ do -- private scope
         bar:SetValue(value)
         bar.nameText:SetText(timer.Text and timer.Text:GetText() or "")
 
-        local secret = IsSecret(value) or IsSecret(low) or IsSecret(high)
-        if secret then
+        if IsSecret(value) or IsSecret(low) or IsSecret(high) then
             bar.timeText:SetFormattedText("%.1f", value)
-        else
-            bar.timeText:SetFormattedText("%.1f", math.max(0, value))
-        end
-
-        if secret then
             bar.spark:SetAlpha(0)
         else
+            bar.timeText:SetFormattedText("%.1f", math.max(0, value))
             bar.spark:SetAlpha(Style.SparkAlpha(value - low, high - low))
         end
     end

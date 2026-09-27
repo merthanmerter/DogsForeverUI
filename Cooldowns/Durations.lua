@@ -75,7 +75,7 @@ do -- private scope
 
     local GROUP = "tracked"
     local MAX_BARS = 20
-    local GAP = 6 + 2 * Style.BORDER_INSET
+    local GAP = NS.GAP
     local COLOR = Style.GOLD
     local DARK = { 0.05, 0.05, 0.05, 1 }   -- the elapsed part: opaque, over the gold
     local TIME_ROOM = 40                   -- kept clear for "59 m" and the like
@@ -328,7 +328,6 @@ do -- private scope
             sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
             shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
         end
-        p.gold, p.sheen, p.shade = gold, sheen, shade
 
         -- The part the game fills: the elapsed time, dark, from the right.
         p.paint = function(statusBar)
@@ -370,8 +369,7 @@ do -- private scope
     -- name. They hang off the bar, so they follow it anyway; their font size
     -- is the one they were made with.
     local function Resize()
-        local secret = Global(Api("C_Secrets", "ShouldAurasBeSecret"))
-        if IsSecret(secret) or secret == true then return end
+        if not AurasReadable() then return end
         local db = NS.db
         local width, height = db.barWidth, db.barHeight
         for _, button in ipairs(buttons) do
@@ -458,7 +456,6 @@ do -- private scope
         placedFor = nil
         MapRanks()
         local ids, any = Durations.SpellIDs()
-        Durations.ids = ids
 
         if not any or not NS.db.enabled then
             if container then

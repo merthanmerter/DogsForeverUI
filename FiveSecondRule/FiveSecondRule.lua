@@ -7,7 +7,7 @@
 -- the castbar, under the swing bars, in the row it shares with the combo
 -- points (nobody needs both: a rogue has no mana), and goes wherever the
 -- castbar goes until it is dragged somewhere of its own; it takes its size,
--- strata, text padding, spark and seconds from the castbar's settings; it is
+-- strata and text padding from the castbar's settings; it is
 -- unlocked and locked with the castbar; and its one
 -- switch, Five second rule, sits in the options' Castbars section. It has no
 -- section of its own.
@@ -46,10 +46,12 @@ do -- private scope
     -- the five-second rule is driven by events instead.
     local IsSecret = issecretvalue
 
+    -- Only the player's own, so the client filters for us rather than this
+    -- module waking for every cast in the zone.
     NS:RegisterEvent("PLAYER_ENTERING_WORLD")
-    NS:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    NS:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     NS:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
-    NS:SetScript("OnEvent", function(_, event, arg1, ...) onEvent(event, arg1, ...) end)
+    NS:SetScript("OnEvent", function(_, event, ...) onEvent(event, ...) end)
 
     -- Whether this character's class has mana at all: not a warrior, not a
     -- rogue. What the castbar group keeps a row for.
@@ -73,36 +75,38 @@ do -- private scope
         Refresh()
     end
 
-    function onEvent(event, arg1, ...)
-        local db = NS.db
-
+    -- Both unit events are registered for the player alone (above), so the
+    -- unit is never asked about here.
+    function onEvent(event, ...)
         if event == "PLAYER_ENTERING_WORLD" then
             Refresh()
             return
         end
 
-        if not db.enabled or NS.noMana then return end
+        if not NS.db.enabled or NS.noMana then return end
 
         if event == "UNIT_POWER_UPDATE" then
             -- The one power signal that survives secret values: the player's mana
             -- moved. Landing inside the window after a mana-costing cast makes it
             -- that cast's cost, which a free (Clearcasting-style) cast never
             -- produces.
-            local powerToken = ...
-            if arg1 == "player" and (IsSecret(powerToken) or powerToken == "MANA")
+            local _, powerToken = ...
+            if (IsSecret(powerToken) or powerToken == "MANA")
                and GetTime() <= castPendingUntil then
                 TriggerFSR()
             end
 
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            if arg1 == "player" and SpellHasManaCost(select(2, ...)) then
+            local _, _, spellID = ...
+            if SpellHasManaCost(spellID) then
                 castPendingUntil = GetTime() + 0.4
             end
         end
     end
 
+    -- Switched off, the countdown bar puts itself away (StatusBar's OnUpdate).
     function onUpdate()
-        if not NS.db.enabled or UnitIsDead("player") then
+        if UnitIsDead("player") then
             NS.StatusBar.statusbar:Hide()
             return
         end
@@ -110,11 +114,11 @@ do -- private scope
         NS.StatusBar:OnUpdate()
     end
 
+    -- The bar is brought out by the next OnUpdate, fading in like every bar of
+    -- the group.
     function TriggerFSR()
         NS.mp5StartTime = GetTime() + 5
         castPendingUntil = 0
-
-        NS.StatusBar.statusbar:Show()
     end
 
     function SpellHasManaCost(spellID)

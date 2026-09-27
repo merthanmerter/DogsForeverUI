@@ -5,7 +5,8 @@
 -- At the top, always in reach: the one Unlock UI button that places every
 -- piece at once, and the one Reset everything. Under them the page scrolls, in
 -- sections: each part's switches two to a row, then one Sizes section with a
--- row per element (width, heights, layer) and the text padding. Every setting
+-- row per element (width, heights, layer) and the text padding, then one
+-- Positions section with a row per piece that can be placed. Every setting
 -- explains itself in its tooltip. Pages.lua describes the page; this file is
 -- the widgets, the layout and the registration.
 --
@@ -65,15 +66,49 @@ do -- private scope
         return nil
     end
 
-    local function LabelOf(widget, suffix)
-        local name = widget.GetName and widget:GetName()
+    local function LabelOf(widget)
+        local name = widget:GetName()
         return AsFontString(widget.Text)
             or AsFontString(widget.text)
-            or AsFontString(name and _G[name .. (suffix or "Text")])
+            or AsFontString(name and _G[name .. "Text"])
     end
 
     local function Refresh()
         for i = 1, #refreshers do refreshers[i]() end
+    end
+
+    -- A setting's tooltip: its name, and what it does.
+    local function AddTooltip(widget, title, text)
+        widget:HookScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(title, 1, 1, 1)
+            GameTooltip:AddLine(text, nil, nil, nil, true)
+            GameTooltip:Show()
+        end)
+        widget:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
+    -- A small title over a box or a dropdown, in the addon's font.
+    local function AddTitle(parent, text)
+        local title = parent:CreateFontString(nil, "ARTWORK")
+        title:SetFont(DogsForeverUI.Style.FONT, 12, "")
+        title:SetText(text)
+        return title
+    end
+
+    -- A number box: one line, centred, on a dark tooltip backdrop.
+    local function NewEditBox(parent, name, width, maxLetters)
+        local box = CreateFrame("EditBox", name, parent, "BackdropTemplate")
+        box:SetSize(width, 25)
+        box:SetBackdrop(EDIT_BACKDROP)
+        box:SetBackdropColor(0, 0, 0, 1)
+        box:SetMultiLine(false)
+        box:SetAutoFocus(false)
+        box:SetMaxLetters(maxLetters)
+        box:SetJustifyH("CENTER")
+        box:SetJustifyV("MIDDLE")
+        box:SetFontObject(GameFontNormal)
+        return box
     end
 
     local function AddCheck(parent, x, y, label, tooltip, get, set)
@@ -89,15 +124,7 @@ do -- private scope
         text:SetText(label)
 
         check:SetScript("OnClick", function(self) set(self:GetChecked() and true or false) end)
-        if tooltip then
-            check:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetText(label, 1, 1, 1)
-                GameTooltip:AddLine(tooltip, nil, nil, nil, true)
-                GameTooltip:Show()
-            end)
-            check:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        end
+        if tooltip then AddTooltip(check, label, tooltip) end
 
         refreshers[#refreshers + 1] = function() check:SetChecked(get() and true or false) end
         return check
@@ -117,9 +144,9 @@ do -- private scope
         slider:SetOrientation("HORIZONTAL")
         slider:SetMinMaxValues(spec.min, spec.max)
         slider:SetValueStep(spec.step)
-        if slider.SetObeyStepOnDrag then slider:SetObeyStepOnDrag(true) end
+        slider:SetObeyStepOnDrag(true)
 
-        local name = slider.GetName and slider:GetName()
+        local name = slider:GetName()
         local title = LabelOf(slider)
         if not title then
             title = slider:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -182,27 +209,12 @@ do -- private scope
     -- outside min..max is put back too, and `decimals` shows tenths.
     local function AddEditBox(parent, name, x, y, title, get, set, limits)
         limits = limits or {}
-        local box = CreateFrame("EditBox", name, parent,
-            BackdropTemplateMixin and "BackdropTemplate" or nil)
+        -- Six letters, not four: a position on a tall screen is a negative
+        -- four-digit number, and a shorter limit silently cut the minus sign
+        -- off it.
+        local box = NewEditBox(parent, name, 75, 6)
         box:SetPoint("TOPLEFT", x, y)
-        box:SetSize(75, 25)
-        if box.SetBackdrop then
-            box:SetBackdrop(EDIT_BACKDROP)
-            box:SetBackdropColor(0, 0, 0, 1)
-        end
-        box:SetMultiLine(false)
-        box:SetAutoFocus(false)
-        -- Six, not four: a position on a tall screen is a negative four-digit
-        -- number, and a shorter limit silently cut the minus sign off it.
-        box:SetMaxLetters(6)
-        box:SetJustifyH("CENTER")
-        box:SetJustifyV("MIDDLE")
-        box:SetFontObject(GameFontNormal)
-
-        local label = box:CreateFontString(nil, "ARTWORK")
-        label:SetFont(DogsForeverUI.Style.FONT, 12, "")
-        label:SetPoint("TOP", 0, 12)
-        label:SetText(title)
+        AddTitle(box, title):SetPoint("TOP", 0, 12)
 
         local function Show()
             local value = get()
@@ -238,35 +250,12 @@ do -- private scope
         return box
     end
 
-    local STRATA = {
-        "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
-        "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP",
-    }
-
+    -- A dropdown of named choices. choices = { { value, label }, ... }
+    --
     -- Blizzard_Menu, not UIDropDownMenu. Blizzard's own 11.0 implementation
     -- guide says UIDropDownMenu "is now deprecated", that Blizzard_Menu is "a
     -- complete replacement", and that no shims were provided. The button works
     -- out its own label from whichever radio reports itself selected.
-    local function AddStrata(parent, x, y, get, set)
-        local ok, dropdown = pcall(CreateFrame, "DropdownButton", nil, parent,
-            "WowStyle1DropdownTemplate")
-        if not ok or not dropdown then return nil end
-
-        dropdown:SetPoint("TOPLEFT", x, y)
-        dropdown:SetWidth(120)
-
-        local function Selected(value) return get() == value end
-        dropdown:SetupMenu(function(_, rootDescription)
-            for _, value in ipairs(STRATA) do
-                rootDescription:CreateRadio(value, Selected, set, value)
-            end
-        end)
-        refreshers[#refreshers + 1] = function() dropdown:GenerateMenu() end
-        return dropdown
-    end
-
-    -- A dropdown of named choices, Blizzard_Menu like the layer one.
-    -- choices = { { value, label }, ... }
     local function AddChoice(parent, x, y, width, choices, get, set)
         local ok, dropdown = pcall(CreateFrame, "DropdownButton", nil, parent,
             "WowStyle1DropdownTemplate")
@@ -285,10 +274,22 @@ do -- private scope
         return dropdown
     end
 
-    local function Percent(value)
+    -- The layer dropdown: every frame strata, each named as itself.
+    local STRATA = {}
+    for _, value in ipairs({
+        "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
+        "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP",
+    }) do
+        STRATA[#STRATA + 1] = { value = value, label = value }
+    end
+
+    local function AddStrata(parent, x, y, get, set)
+        return AddChoice(parent, x, y, 120, STRATA, get, set)
+    end
+
+    function Options.Percent(value)
         return string.format("%d%%", math.floor((value or 0) * 100 + 0.5))
     end
-    Options.Percent = Percent
 
     function Options.Seconds(value)
         return string.format("%.1fs", value or 0)
@@ -314,6 +315,14 @@ do -- private scope
     local SIZE_BOX_X = LEFT + SIZE_LABEL_WIDTH
     local SIZE_BOX_STEP = 84
     local SIZE_STRATA_X = SIZE_BOX_X + 4 * SIZE_BOX_STEP + 6
+
+    -- A gold hairline under a heading, `width` long from the left margin.
+    local function AddRule(content, y, width)
+        local rule = content:CreateTexture(nil, "ARTWORK")
+        rule:SetColorTexture(1, 0.82, 0, 0.25)
+        rule:SetPoint("TOPLEFT", content, "TOPLEFT", LEFT, y)
+        rule:SetSize(width, 1)
+    end
 
     local Page = {}
     Page.__index = Page
@@ -362,10 +371,7 @@ do -- private scope
         if self.sections > 0 then self.y = self.y - SECTION_GAP end
         self.sections = self.sections + 1
         AddText(self.content, LEFT, self.y, title, "GameFontNormalLarge")
-        local rule = self.content:CreateTexture(nil, "ARTWORK")
-        rule:SetColorTexture(1, 0.82, 0, 0.25)
-        rule:SetPoint("TOPLEFT", self.content, "TOPLEFT", LEFT, self.y - 22)
-        rule:SetSize(CONTENT_WIDTH - 2 * LEFT, 1)
+        AddRule(self.content, self.y - 22, CONTENT_WIDTH - 2 * LEFT)
         self.y = self.y - HEADING_ROW
     end
 
@@ -386,23 +392,14 @@ do -- private scope
     function Page:Choice(entry)
         local module, db = entry.module, entry.module.db
         local x, y = self:Slot(CHOICE_ROW)
-        local label = AddText(self.content, x + 4, y - 4, entry.label, "GameFontHighlight")
+        AddText(self.content, x + 4, y - 4, entry.label, "GameFontHighlight")
         local dropdown = AddChoice(self.content, x + 4, y - 22, 160, entry.choices,
             function() return db[entry.key] end,
             function(value)
                 db[entry.key] = value
                 self:Changed(module)
             end)
-        if dropdown and entry.tooltip then
-            dropdown:HookScript("OnEnter", function(widget)
-                GameTooltip:SetOwner(widget, "ANCHOR_RIGHT")
-                GameTooltip:SetText(entry.label, 1, 1, 1)
-                GameTooltip:AddLine(entry.tooltip, nil, nil, nil, true)
-                GameTooltip:Show()
-            end)
-            dropdown:HookScript("OnLeave", function() GameTooltip:Hide() end)
-        end
-        return label, dropdown
+        if dropdown and entry.tooltip then AddTooltip(dropdown, entry.label, entry.tooltip) end
     end
 
     -- entry = { module, key, label, min, max, step, lowText, highText, text }
@@ -464,10 +461,8 @@ do -- private scope
     function Page:SizeRow(row)
         local module, db = row.module, row.module.db
         local top = self:Row(row)
-        local layer = self.content:CreateFontString(nil, "ARTWORK")
-        layer:SetFont(DogsForeverUI.Style.FONT, 12, "")
-        layer:SetPoint("TOPLEFT", self.content, "TOPLEFT", SIZE_STRATA_X + 4, top + 12)
-        layer:SetText("Layer")
+        AddTitle(self.content, "Layer"):SetPoint("TOPLEFT", self.content, "TOPLEFT",
+            SIZE_STRATA_X + 4, top + 12)
         AddStrata(self.content, SIZE_STRATA_X, top,
             function() return db.frameStrata end,
             function(value)
@@ -508,24 +503,9 @@ do -- private scope
         local top = self.y
 
         -- The box, its title over it, and the add buttons beside it.
-        local box = CreateFrame("EditBox", PANEL_NAME .. "IdBox", content,
-            BackdropTemplateMixin and "BackdropTemplate" or nil)
+        local box = NewEditBox(content, PANEL_NAME .. "IdBox", 110, 9)
         box:SetPoint("TOPLEFT", LEFT + 4, top - 18)
-        box:SetSize(110, 25)
-        if box.SetBackdrop then
-            box:SetBackdrop(EDIT_BACKDROP)
-            box:SetBackdropColor(0, 0, 0, 1)
-        end
-        box:SetMultiLine(false)
-        box:SetAutoFocus(false)
-        box:SetMaxLetters(9)
-        box:SetJustifyH("CENTER")
-        box:SetJustifyV("MIDDLE")
-        box:SetFontObject(GameFontNormal)
-        local title = box:CreateFontString(nil, "ARTWORK")
-        title:SetFont(DogsForeverUI.Style.FONT, 12, "")
-        title:SetPoint("BOTTOMLEFT", box, "TOPLEFT", 2, 2)
-        title:SetText(spec.title)
+        AddTitle(box, spec.title):SetPoint("BOTTOMLEFT", box, "TOPLEFT", 2, 2)
 
         -- What the last add did: one line, never wrapped.
         local status = AddText(content, LEFT + 4, top - 50, "", "GameFontHighlightSmall")
@@ -559,14 +539,11 @@ do -- private scope
         local choiceX = choiceRight - CHOICE_WIDTH
 
         local headTop = top - 72
-        local nameHead = AddText(content, LEFT + 4 + LIST_ICON + 8, headTop, "Spell or item", "GameFontNormalSmall")
+        AddText(content, LEFT + 4 + LIST_ICON + 8, headTop, "Spell or item", "GameFontNormalSmall")
         if spec.column then
             AddText(content, LEFT + choiceX + 4, headTop, spec.column, "GameFontNormalSmall")
         end
-        local rule = content:CreateTexture(nil, "ARTWORK")
-        rule:SetColorTexture(1, 0.82, 0, 0.25)
-        rule:SetPoint("TOPLEFT", content, "TOPLEFT", LEFT, headTop - 14)
-        rule:SetSize(right, 1)
+        AddRule(content, headTop - 14, right)
 
         local listTop = headTop - 20
         local emptyText = AddText(content, LEFT + 4, listTop - 8, spec.empty or "", "GameFontDisable")
@@ -654,7 +631,6 @@ do -- private scope
         end
 
         self.y = listTop - LIST_ROW
-        return nameHead
     end
 
     function Page:Finish()
@@ -703,14 +679,12 @@ do -- private scope
             if not button.armed then
                 button.armed = true
                 button:SetText(RESET_ARMED)
-                if C_Timer and C_Timer.After then
-                    C_Timer.After(5, function()
-                        if button.armed then
-                            button.armed = false
-                            button:SetText(RESET_LABEL)
-                        end
-                    end)
-                end
+                C_Timer.After(5, function()
+                    if button.armed then
+                        button.armed = false
+                        button:SetText(RESET_LABEL)
+                    end
+                end)
                 return
             end
             button.armed = false
@@ -744,18 +718,16 @@ do -- private scope
         if build then build(page) end
         content:SetHeight(page:Finish())
 
-        frame.content = content
-        if Core.ScrollBar then
-            frame.UpdateScrollBar = Core.ScrollBar.Attach(scroll)
-            refreshers[#refreshers + 1] = frame.UpdateScrollBar
-        end
+        -- A refresher like any widget's, so every Refresh - showing the
+        -- panel included - fits the scrollbar to the content after the
+        -- content has been laid out.
+        refreshers[#refreshers + 1] = Core.ScrollBar.Attach(scroll)
         parent.page = frame
         return frame
     end
 
     local function BuildPanel()
         panel = CreateFrame("Frame", PANEL_NAME, UIParent)
-        panel.name = TITLE
         panel:Hide()
 
         AddText(panel, 16, -16, TITLE, "GameFontNormalLarge")
@@ -767,10 +739,7 @@ do -- private scope
         BuildToolbar(panel)
         BuildPage(panel, describe, PANEL_NAME .. "Page")
 
-        panel:SetScript("OnShow", function()
-            Refresh()
-            if panel.page.UpdateScrollBar then panel.page.UpdateScrollBar() end
-        end)
+        panel:SetScript("OnShow", Refresh)
 
         return panel
     end
@@ -779,7 +748,6 @@ do -- private scope
     -- no toolbar.
     local function BuildTab(tab)
         local frame = CreateFrame("Frame", PANEL_NAME .. tab.name, UIParent)
-        frame.name = tab.title
         frame:Hide()
 
         AddText(frame, 16, -16, tab.title, "GameFontNormalLarge")
@@ -788,24 +756,21 @@ do -- private scope
         subtitle:SetWordWrap(true)
 
         BuildPage(frame, tab.build, PANEL_NAME .. tab.name .. "Page", -66)
-        frame.subtitle = subtitle
         -- The page starts under the text above it however many lines that
         -- text takes - known only once the panel has its width, so asked each
         -- time it is shown.
         frame:SetScript("OnShow", function()
-            local ok, height = pcall(subtitle.GetStringHeight, subtitle)
-            if ok and type(height) == "number" and height > 0 then
+            local height = subtitle:GetStringHeight()
+            if type(height) == "number" and height > 0 then
                 frame.page:ClearAllPoints()
                 frame.page:SetPoint("TOPLEFT", 8, -(38 + height + 14))
                 frame.page:SetPoint("BOTTOMRIGHT", -26, 8)
             end
             Refresh()
-            if frame.page.UpdateScrollBar then frame.page.UpdateScrollBar() end
         end)
         tab.panel = frame
         return frame
     end
-    Options.tabs = tabs
 
     -------------------------------------------------------------------------------
     -- Registration: the panel is a category of the game's own options, under
@@ -821,19 +786,17 @@ do -- private scope
                 and Settings.RegisterAddOnCategory) then
             return
         end
+        -- The category keeps the numeric ID the game gives it: an ID is what
+        -- Settings.OpenToCategory takes (C_SettingsUtil.OpenSettingsPanel),
+        -- and a name written over it would match nothing.
         local ok, category = pcall(Settings.RegisterCanvasLayoutCategory, panel, TITLE)
-        if ok and category then
-            category.ID = TITLE
-            pcall(Settings.RegisterAddOnCategory, category)
-            panel.category = category
-        end
+        if not (ok and category) then return end
+        pcall(Settings.RegisterAddOnCategory, category)
 
         -- Each tab is listed under the addon's own entry.
-        if not (panel.category and Settings.RegisterCanvasLayoutSubcategory) then return end
+        if not Settings.RegisterCanvasLayoutSubcategory then return end
         for _, tab in ipairs(tabs) do
-            local okTab, sub = pcall(Settings.RegisterCanvasLayoutSubcategory,
-                panel.category, tab.panel, tab.title)
-            if okTab and sub then tab.panel.category = sub end
+            pcall(Settings.RegisterCanvasLayoutSubcategory, category, tab.panel, tab.title)
         end
     end
 

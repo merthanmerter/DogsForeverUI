@@ -600,7 +600,7 @@ do -- private scope
     end
 
     function NamePlates.HoldNamesOnly()
-        if type(InCombatLockdown) == "function" and InCombatLockdown() then
+        if InCombatLockdown() then
             pending = true
             return
         end

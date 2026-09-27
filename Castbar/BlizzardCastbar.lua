@@ -24,26 +24,19 @@ DogsForeverUI.Castbar.BlizzardCastbar = BlizzardCastbar
 
 do -- private scope
 
-    -- The frame the player's casting bar might be called on this client,
-    -- likeliest first.
-    local CANDIDATES = { "PlayerCastingBarFrame", "CastingBarFrame" }
-
-    local frame          -- the one we found, once we have found it
     local hooked = false
     local savedEditMode = {}
 
-    -- A stray global of the same name would otherwise take the addon down on the
-    -- first call, so this checks it really is a frame before believing it.
+    -- The player's casting bar: PlayerCastingBarFrame on this client (the
+    -- family's Blizzard_UIPanels_Game CastingBarFrame.xml; the old classic
+    -- CastingBarFrame does not exist here). A stray global of the same name
+    -- would otherwise take the addon down on the first call, so this checks it
+    -- really is a frame before believing it.
     local function Resolve()
-        if frame then return frame end
-
-        for _, name in ipairs(CANDIDATES) do
-            local candidate = _G[name]
-            if type(candidate) == "table" and type(candidate.Hide) == "function"
-               and type(candidate.HookScript) == "function" then
-                frame = candidate
-                return frame
-            end
+        local frame = _G.PlayerCastingBarFrame
+        if type(frame) == "table" and type(frame.Hide) == "function"
+           and type(frame.HookScript) == "function" then
+            return frame
         end
     end
 

@@ -1,22 +1,28 @@
 -- NAMESPACE: DogsForeverUI
 -- SETTINGS:  DogsForeverUIDB
 --
--- One addon, five parts, one look:
+-- One addon, many parts, one look:
 --
---   Frames          the player, target, focus and target-of-target as plain
---                   double bars                                  (Frames\)
+--   Frames          the player, target, focus, target-of-target and pet as
+--                   plain double bars                            (Frames\)
 --   Castbar         a casting bar and auto-attack swing bars     (Castbar\)
 --   Five Second     the countdown after mana is spent            (FiveSecondRule\)
---   Chat            a window to select and copy chat from        (Chat\)
---   Menus           a quieter micro menu, auto-hiding bars       (Menus\)
+--   Combo points    a bar of segments above the castbar          (ComboPoints\)
+--   XP bar          the addon's own experience bar               (XPBar\)
+--   Loot rolls      where the game's loot roll windows appear    (LootRolls\)
 --   Cooldowns       bars for the spells and items the player
 --                   adds by ID, and IDs on tooltips             (Cooldowns\)
---   Loot rolls      where the game's loot roll windows appear    (LootRolls\)
+--   Chat            a window to select and copy chat from        (Chat\)
+--   Menus           a quieter micro menu, auto-hiding bars       (Menus\)
 --
--- They were five addons once. Each part is a module here: it registers itself
--- with this file, keeps its settings in its own section of the one saved table,
--- and draws with the shared look in Core\Style.lua. The options are one page
--- with a section per part (Options\).
+-- and, with no settings of their own, the breath bar (MirrorTimers\) and
+-- fishing with a double right-click (Fishing\).
+--
+-- They were five addons once. Each part with settings is a module here: it
+-- registers itself with this file, keeps its settings in its own section of
+-- the one saved table, and draws with the shared look in Core\Style.lua. The
+-- options are one page with a section per part, and a tab for the cooldown
+-- manager (Options\).
 --
 -- This file owns the saved settings, and the two things that are every
 -- module's at once: placing the UI (one unlock for everything, with a grid)
@@ -134,7 +140,7 @@ do -- private scope
         if PixelUtil and PixelUtil.GetNearestPixelSize then
             thick = PixelUtil.GetNearestPixelSize(1, scale, 1)
         end
-        local gold = Core.Style and Core.Style.BORDER_COLOR or { 1, 0.82, 0 }
+        local gold = Core.Style.BORDER_COLOR
 
         local used = 0
         local function Line(vertical, offset)

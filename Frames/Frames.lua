@@ -17,15 +17,16 @@
 -- the frame that used to draw it is not on screen any more -- see
 -- UnitCastbar.lua.
 --
--- There is deliberately no aura row. One was built and taken out again: on this
--- client an addon cannot read a hostile unit's auras, so a target's debuffs
--- could never appear on the plate, and a row that shows your own buffs but
--- never an enemy's debuffs is worse than none. The game draws all of them.
+-- The buffs and debuffs are rows of the client's own aura container, which the
+-- game fills itself - an addon cannot read a hostile unit's auras, and these
+-- never do - each put below, above or nowhere by a setting of its own. See
+-- UnitAuras.lua.
 --
 -- The game's frames are not destroyed to make room: their artwork is faded out
--- and their mouse turned off, both of which are undone the moment the module
--- is turned off. Nothing Edit Mode owns is read or written, no Blizzard
--- function is replaced, and nothing is reparented.
+-- (the target and focus frames shrunk as well) and their mouse turned off, all
+-- of which is undone the moment the module is turned off. No Edit Mode setting
+-- is read or written, no Blizzard function is replaced, and nothing is
+-- reparented - see BlizzardFrames.lua.
 
 DogsForeverUI.Frames = CreateFrame("Frame")
 
@@ -215,7 +216,6 @@ do -- private scope
 
         NS.PlacePet()
     end
-    NS.PlaceFrames = PlaceFrames
 
     -- THE PET, by default right under the player's frame and lined up with its
     -- left edge, its name band clear of the player's border - where the game

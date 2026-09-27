@@ -102,7 +102,7 @@ do -- private scope
         return NAME_Y + NAME_SIZE + 2 + NAME_BAND_EXTRA
     end
 
-    -- How much smaller the target's target is drawn than the rest.
+    -- How much smaller the target's target and the pet are drawn than the rest.
     UnitPlate.SMALL_SCALE = 0.6
 
     -- The game's own setting for whether a target's target is shown at all,
@@ -476,7 +476,7 @@ do -- private scope
     end
 
     -- unit   the unit token this plate draws
-    -- label  "Player", "Target", "Focus", "TargetOfTarget": the frame's name
+    -- label  "Player", "Target", "Focus", "TargetOfTarget", "Pet": the frame's name
     -- scale  a fraction of the configured size, for the small frames
     function UnitPlate.New(unit, label, scale)
         local plate = CreateFrame("Frame", "DogsForeverUI.Frames" .. label, UIParent)
@@ -634,8 +634,8 @@ do -- private scope
 
         for name, method in pairs(UnitPlate.methods) do plate[name] = method end
 
-        -- What the target and the focus are casting. No auras: this client does
-        -- not let an addon read a unit's, so the game keeps drawing those.
+        -- What the target and the focus are casting. The auras are rows of
+        -- their own, hung off the plate (UnitAuras.lua).
         if unit == "target" or unit == "focus" then
             plate.castbar = NS.UnitCastbar.New(plate)
         end
@@ -1030,10 +1030,11 @@ do -- private scope
         end
 
         local unit = self.unit
-        local maxHealth = UnitHealthMax(unit)
+        -- Read once a tick and only passed on: to the bar and to the label.
+        local health, power = UnitHealth(unit, false), UnitPower(unit)
 
-        self.health:SetMinMaxValues(0, maxHealth)
-        self.health:SetValue(UnitHealth(unit, false))
+        self.health:SetMinMaxValues(0, UnitHealthMax(unit))
+        self.health:SetValue(health)
 
         -- The incoming heal, drawn without ever being worked out.
         --
@@ -1060,7 +1061,7 @@ do -- private scope
         end
 
         self.power:SetMinMaxValues(0, UnitPowerMax(unit))
-        self.power:SetValue(UnitPower(unit))
+        self.power:SetValue(power)
 
         -- Each spark shows only between empty and full, which the game works
         -- out from the secret values and hands straight to the spark.
@@ -1068,17 +1069,16 @@ do -- private scope
         self.powerSpark:SetAlpha(Style.PowerSparkAlpha(unit))
 
         if db.showHealthText then
-            ShowValue(self.healthText, UnitHealth(unit, false), HealthPercent(unit))
+            ShowValue(self.healthText, health, HealthPercent(unit))
         else
             self.healthText:SetText("")
         end
 
         if db.showPowerText then
-            ShowValue(self.powerText, UnitPower(unit), PowerPercent(unit))
+            ShowValue(self.powerText, power, PowerPercent(unit))
         else
             self.powerText:SetText("")
         end
-
     end
 
     -- A dragged position is the player's, and is never recomputed by the addon.

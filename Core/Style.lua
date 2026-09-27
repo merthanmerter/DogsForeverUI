@@ -274,13 +274,8 @@ do -- private scope
         shade:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT")
 
         -- Bottom colour first, then top.
-        if sheen.SetGradient and CreateColor then
-            sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
-            shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
-        else
-            sheen:SetVertexColor(1, 1, 1, SHEEN / 2)
-            shade:SetVertexColor(0, 0, 0, SHADE / 2)
-        end
+        sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
+        shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
         return sheen, shade
     end
 
@@ -539,9 +534,7 @@ do -- private scope
     function Style.AddBorder(bar, spec, ownScale, unitPixels)
         spec = spec or Style.DEFAULT_BORDER
         local border = CreateFrame("Frame", nil, bar)
-        if ownScale and type(border.SetIgnoreParentScale) == "function" then
-            border:SetIgnoreParentScale(true)
-        end
+        if ownScale then border:SetIgnoreParentScale(true) end
         border:SetFrameLevel(bar:GetFrameLevel() + 5)
         border.spec = spec
         border.unitPixels = unitPixels
@@ -765,8 +758,8 @@ do -- private scope
     function Style.SingleLine(label)
         label:SetShadowOffset(1, -1)
         label:SetWordWrap(false)
-        if type(label.SetNonSpaceWrap) == "function" then label:SetNonSpaceWrap(false) end
-        if type(label.SetMaxLines) == "function" then label:SetMaxLines(1) end
+        label:SetNonSpaceWrap(false)
+        label:SetMaxLines(1)
     end
 
     ---------------------------------------------------------------------------

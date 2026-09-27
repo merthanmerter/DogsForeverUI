@@ -101,8 +101,9 @@ do -- private scope
         return true
     end
 
+    -- Entering the world covers login; the module's Init and Refresh (at
+    -- ADDON_LOADED and once the saved settings are in) cover the rest.
     local watcher = CreateFrame("Frame")
-    watcher:RegisterEvent("PLAYER_LOGIN")
     watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
     -- The chat windows being rebuilt, redocked, moved or hidden.
     watcher:RegisterEvent("UPDATE_CHAT_WINDOWS")

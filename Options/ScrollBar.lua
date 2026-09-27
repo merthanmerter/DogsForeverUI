@@ -5,66 +5,42 @@
 -- Attach() turns a plain ScrollFrame into a scrolling one: mouse wheel, a track
 -- and a draggable thumb sized to how much of the content fits, clamped at both
 -- ends, and hidden entirely when nothing overflows.
---
--- The same file Dog's Scrolling Combat Text Forever ships, unchanged below this
--- header.
-
-local ADDON, NS = ...
 
 local ScrollBar = {}
+DogsForeverUI.ScrollBar = ScrollBar
 
-local DEFAULT_WIDTH = 8
+local WIDTH = 8
 local MIN_THUMB = 24
 local WHEEL_STEP = 40
 
-local function Paint(texture, r, g, b, a)
-    if texture.SetColorTexture then
-        texture:SetColorTexture(r, g, b, a)
-    else
-        texture:SetTexture(r, g, b, a)
-    end
-end
-
 local function ContentHeight(scrollFrame)
     local child = scrollFrame:GetScrollChild()
-    if not child then return 0 end
-    local ok, height = pcall(child.GetHeight, child)
-    if not ok or type(height) ~= "number" then return 0 end
-    return height
+    return child and child:GetHeight() or 0
 end
 
 -- Cursor coordinates come back in screen units, so divide by the UI scale to
 -- compare them against frame heights.
 local function CursorY()
-    if not GetCursorPosition then return 0 end
-    local ok, _, y = pcall(GetCursorPosition)
-    if not ok then return 0 end
-
-    local scale = 1
-    if UIParent and UIParent.GetEffectiveScale then
-        local ok2, value = pcall(UIParent.GetEffectiveScale, UIParent)
-        if ok2 and type(value) == "number" and value > 0 then scale = value end
-    end
-    return (y or 0) / scale
+    local _, y = GetCursorPosition()
+    return y / UIParent:GetEffectiveScale()
 end
 
 -- scrollFrame  a ScrollFrame that already has its scroll child set
--- width        bar width in pixels, 8 by default
 --
--- Returns the update function, and also parks it on the scroll frame as
--- :UpdateScrollBar() so a panel's OnShow can call it without keeping a handle.
-function ScrollBar.Attach(scrollFrame, width)
+-- Returns the update function, for a panel to call when it is shown or its
+-- content changes.
+function ScrollBar.Attach(scrollFrame)
     local track = CreateFrame("Frame", nil, scrollFrame:GetParent())
     track:SetPoint("TOPLEFT", scrollFrame, "TOPRIGHT", 4, 0)
     track:SetPoint("BOTTOMLEFT", scrollFrame, "BOTTOMRIGHT", 4, 0)
-    track:SetWidth(width or DEFAULT_WIDTH)
+    track:SetWidth(WIDTH)
 
     local trackTexture = track:CreateTexture(nil, "BACKGROUND")
     trackTexture:SetAllPoints()
-    Paint(trackTexture, 1, 1, 1, 0.07)
+    trackTexture:SetColorTexture(1, 1, 1, 0.07)
 
     local thumb = CreateFrame("Frame", nil, track)
-    thumb:SetWidth(width or DEFAULT_WIDTH)
+    thumb:SetWidth(WIDTH)
     thumb:SetHeight(MIN_THUMB)
     thumb:SetPoint("TOP", track, "TOP", 0, 0)
     thumb:EnableMouse(true)
@@ -72,7 +48,7 @@ function ScrollBar.Attach(scrollFrame, width)
 
     local thumbTexture = thumb:CreateTexture(nil, "ARTWORK")
     thumbTexture:SetAllPoints()
-    Paint(thumbTexture, 0.65, 0.65, 0.65, 0.65)
+    thumbTexture:SetColorTexture(0.65, 0.65, 0.65, 0.65)
 
     local function Limit()
         return ContentHeight(scrollFrame) - scrollFrame:GetHeight()
@@ -137,16 +113,6 @@ function ScrollBar.Attach(scrollFrame, width)
     end)
     thumb:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
 
-    scrollFrame.scrollBarTrack = track
-    scrollFrame.scrollBarThumb = thumb
-    scrollFrame.UpdateScrollBar = Update
-    scrollFrame.SetScrollPosition = SetScroll
-
     Update()
     return Update
 end
-
--- Reachable both as the addon's private namespace field and, for addons that
--- keep a global table of their own, as <Addon>.ScrollBar.
-if NS then NS.ScrollBar = ScrollBar end
-if type(_G[ADDON]) == "table" then _G[ADDON].ScrollBar = ScrollBar end

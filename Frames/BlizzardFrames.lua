@@ -28,7 +28,7 @@
 --     name, level - and the badges in their contextual content. Their buffs
 --     and debuffs, also in there, are the addon's own now (UnitAuras.lua); the
 --     game's rows are retired with the frame that holds them -- see
---     PlaceAuraCarriers.
+--     RetireCarriers.
 --   * The two target-of-target frames whole: they are frames of their own,
 --     children of the target and focus frames rather than of their content, and
 --     nothing else lives inside them.
@@ -239,7 +239,7 @@ do -- private scope
         end
     end
 
-    local function PlaceAuraCarriers(hide)
+    local function RetireCarriers(hide)
         for _, name in ipairs(CARRIERS) do
             local frame = _G[name]
             if type(frame) == "table" and type(frame.SetAlpha) == "function" then
@@ -261,7 +261,6 @@ do -- private scope
             end
         end
     end
-    BlizzardFrames.PlaceAuraCarriers = PlaceAuraCarriers
 
     -- Whether the game's frames should be off screen right now. Asked afresh
     -- every time rather than remembered, so turning the addon off puts them
@@ -349,9 +348,8 @@ do -- private scope
         end
         HoldPetParts(hide)
 
-        -- The target and focus frames are kept on top of their plates so the
-        -- auras they carry land against them. Everything else on them is
-        -- already invisible.
-        PlaceAuraCarriers(hide)
+        -- The target and focus frames, retired whole with the game's aura rows
+        -- they carry; the addon's own rows are drawn instead (UnitAuras.lua).
+        RetireCarriers(hide)
     end
 end

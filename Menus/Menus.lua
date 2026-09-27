@@ -62,6 +62,18 @@ do -- private scope
         frame:SetAlpha(state.alpha)
     end
 
+    -- Whether the mouse is over a faded frame, asked of the frame itself:
+    -- IsMouseOver is geometry, so it answers the same whether the frame is
+    -- visible or not. MARGIN outside still counts, so the edge does not
+    -- flicker; a frame the game has hidden is never "under the mouse".
+    local MARGIN = 4
+
+    function NS.MouseOver(frame)
+        if not frame:IsShown() then return false end
+        local ok, over = pcall(frame.IsMouseOver, frame, MARGIN, -MARGIN, -MARGIN, MARGIN)
+        return ok and over and true or false
+    end
+
     -- The menus are the game's, built before any addon runs; the hooks go on
     -- once, at login, when every one of them exists.
     local applied = false

@@ -96,6 +96,7 @@ do -- private scope
     -- Daylight between two bars, as between the castbar group's: every border
     -- is drawn outside its bar, so a gap has to leave room for two.
     local GAP = 6 + 2 * Style.BORDER_INSET
+    NS.GAP = GAP   -- the buff bars' too (Durations.lua)
     -- How often everything looks again - a cooldown ends with no event.
     local POLL = 0.1
     -- An item's cooldown this short is the global cooldown, not the item's.
@@ -278,8 +279,7 @@ do -- private scope
     end
 
     local function ItemCooldown(entry)
-        local get = Api("C_Item", "GetItemCooldown") or _G.GetItemCooldown
-        local start, length, enabled = Call(get, entry.id)
+        local start, length, enabled = Call(Api("C_Item", "GetItemCooldown"), entry.id)
         if not (Plain(start) and Plain(length) and Plain(enabled)) then return false end
         if type(start) ~= "number" or type(length) ~= "number" then return false end
         if enabled == false or enabled == 0 then return false end
@@ -456,7 +456,7 @@ do -- private scope
         local width, height = db.barWidth, db.barHeight
         local px = OnePixel(frame)
         frame:SetSize(width, height)
-        -- The pieces; anchors to the bar's own frame go to \`frame\`, never to
+        -- The pieces; anchors to the bar's own frame go to `frame`, never to
         -- this table (on a buff bar the two are different things).
         local row = parts
 
@@ -772,10 +772,12 @@ do -- private scope
         -- saved here.
         holder:SetUserPlaced(false)
 
-        for _, row in pairs(rows) do LayOutRow(row) end
         -- Settings changed: whatever was on screen is redrawn at once, and
         -- anything that should no longer be there goes at once too.
-        for _, row in pairs(rows) do Style.HideNow(row) end
+        for _, row in pairs(rows) do
+            LayOutRow(row)
+            Style.HideNow(row)
+        end
         ForgetRanks()
         NS.Durations.Refresh()
         Update(true, true)
@@ -822,10 +824,6 @@ do -- private scope
         NS.db.unlocked = false
         holder:StopMovingOrSizing()
         Refresh()
-    end
-
-    function NS.ToggleLock()
-        if NS.db.unlocked then Lock() else Unlock() end
     end
 
     NS.Init = Refresh

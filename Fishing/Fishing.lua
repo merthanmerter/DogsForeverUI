@@ -140,8 +140,7 @@ do -- private scope
     -- coming in forgets any click made while it was out, so a double-click
     -- on the bobber - the first click catches, the second lands after - is not
     -- taken for the start of a new cast.
-    local function OnSpellcast(event, unit)
-        if unit ~= "player" then return end
+    local function OnSpellcast(event)
         if event == "UNIT_SPELLCAST_CHANNEL_START" then
             Disarm()
         elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
@@ -167,10 +166,11 @@ do -- private scope
         -- after half a second if it was never used - the second click let go
         -- of over a window, say.
         button:RegisterEvent("PLAYER_REGEN_DISABLED")
-        button:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-        button:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
-        button:SetScript("OnEvent", function(_, event, unit)
-            if event == "PLAYER_REGEN_DISABLED" then Disarm() else OnSpellcast(event, unit) end
+        -- The player's own line only; nobody else's channel reaches here.
+        button:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
+        button:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+        button:SetScript("OnEvent", function(_, event)
+            if event == "PLAYER_REGEN_DISABLED" then Disarm() else OnSpellcast(event) end
         end)
         button:SetScript("OnUpdate", function()
             if armedAt and GetTime() - armedAt > ARMED_FOR then Disarm() end

@@ -96,7 +96,6 @@ do -- private scope
     local CHECKED_ALPHA = 0.35     -- the border's gold, as a wash
 
     local styled = setmetatable({}, { __mode = "k" })
-    Buttons.styled = styled
     Buttons.parts = setmetatable({}, { __mode = "k" })   -- button -> what was made for it
 
     local function Fade(region)
@@ -249,7 +248,7 @@ do -- private scope
 
     local mainBar = _G.MainActionBar
     if type(mainBar) == "table" and type(mainBar.UpdateDividers) == "function" then
-        hooksecurefunc(mainBar, "UpdateDividers", function(self) FadeDividers(self) end)
+        hooksecurefunc(mainBar, "UpdateDividers", FadeDividers)
     end
 
     ---------------------------------------------------------------------------

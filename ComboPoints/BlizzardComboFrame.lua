@@ -2,8 +2,8 @@
 --
 -- The game draws them in ComboFrame, a plain frame on UIParent pinned to the
 -- target frame's top-right corner (Blizzard_UnitFrame/Camelot/
--- ComboFrameOverrides.lua) - and the Frames module parks the target frame on
--- the target plate, which put the gems on the plate. ComboFrame is not a
+-- ComboFrameOverrides.lua). It is not the target frame's child, so fading the
+-- target frame away (the Frames module) leaves the gems showing. ComboFrame is not a
 -- protected frame and nothing is laid out around it, so it is simply hidden,
 -- in or out of combat.
 --

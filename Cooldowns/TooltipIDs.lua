@@ -160,14 +160,7 @@ do -- private scope
         if type(processor) ~= "table" or type(processor.AddTooltipPostCall) ~= "function" then
             return
         end
-        if processor.AllTypes ~= nil then
-            processor.AddTooltipPostCall(processor.AllTypes, IDs.Add)
-            return
-        end
-        -- No catch-all on this client: every kind there is, one by one.
-        local kinds = type(Enum) == "table" and Enum.TooltipDataType
-        if type(kinds) ~= "table" then return end
-        for _, kind in pairs(kinds) do processor.AddTooltipPostCall(kind, IDs.Add) end
+        processor.AddTooltipPostCall(processor.AllTypes, IDs.Add)
     end
 
     local loader = CreateFrame("Frame")

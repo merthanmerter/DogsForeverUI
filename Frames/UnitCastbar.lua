@@ -1,5 +1,5 @@
 -- A unit's casting bar: a thin one beside its plate, for the target and the
--- focus - under it, or over it when the game stacks the unit's auras under it.
+-- focus - under it, or over it when the unit's auras are set below it.
 --
 -- It is drawn in the same style as the plate: the flat fill with its sheen, in
 -- the castbar colour for each state.
@@ -183,9 +183,9 @@ do -- private scope
         bar:SetSize(width, height)
 
         -- Under the plate, which is where the game puts a target's cast bar -
-        -- unless the game's auras are stacked under it (Edit Mode's "Buffs on
-        -- top" off; see BlizzardFrames), when it goes over it, so the auras sit
-        -- the same distance from the plate either way and never meet the bar.
+        -- unless the unit's auras are set below it (UnitAuras.lua), when it
+        -- goes over it, so the auras sit the same distance from the plate
+        -- either way and never meet the bar.
         -- Above, it clears the plate's name and level row rather than its border.
         if NS.BlizzardFrames.AurasBelow(plate.unit) then
             bar:SetPoint("BOTTOMLEFT", plate, "TOPLEFT", 0,

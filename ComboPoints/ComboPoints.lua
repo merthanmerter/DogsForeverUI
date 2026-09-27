@@ -99,15 +99,10 @@ do -- private scope
         return not IsSecret(token) and token == "ENERGY"
     end
 
-    local function Points()
-        return GetComboPoints("player", "target")
-    end
-
     -- Whether there is anything to show. A count that can be read says so
     -- itself; one that cannot is shown while there is a target to have points
     -- on, since the segments draw it correctly either way.
-    local function HasPoints()
-        local points = Points()
+    local function HasPoints(points)
         if IsSecret(points) then return UnitExists("target") and true or false end
         return type(points) == "number" and points > 0
     end
@@ -172,12 +167,12 @@ do -- private scope
 
         -- The same count to every segment, shown or not: each one draws its
         -- own point, and none is left holding a count from before.
-        local points = Points()
+        local points = GetComboPoints("player", "target")
         for _, segment in ipairs(segments) do segment:SetValue(points) end
 
         if not UsesComboPoints() then
             Style.HideNow(bar)
-        elseif HasPoints() then
+        elseif HasPoints(points) then
             if settled then Style.ShowNow(bar) else Style.FadeIn(bar) end
         elseif settled then
             Style.HideNow(bar)

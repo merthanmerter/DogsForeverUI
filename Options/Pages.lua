@@ -2,9 +2,9 @@
 -- Panel.lua's.
 --
 -- One page, in sections by what a setting is about - each part of the UI, then
--- the settings every bar shares, then all the sizes together, then all the
--- positions together (the cooldown manager is a tab of its own, at the end
--- of this file) - with no unlock or reset in any section: those are the
+-- all the sizes together, then all the positions together (the cooldown
+-- manager is a tab of its own, at the end of this file) - with no unlock or
+-- reset in any section: those are the
 -- two buttons at the top of the panel, for the whole UI at once. A position
 -- can be typed in its box or set by dragging on the grid with the UI
 -- unlocked; the box follows the drag.

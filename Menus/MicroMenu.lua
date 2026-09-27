@@ -33,10 +33,6 @@ do -- private scope
 
     local MENU_ART = { "BorderArt", "BackgroundArt" }
 
-    -- How far outside the menu still counts as over it, so the edge does not
-    -- flicker.
-    local MARGIN = 4
-
     local watcher
     local fade = nil       -- { alpha, away } while the menu is being faded
     local alphaBefore = {} -- the art's own alpha, to give back
@@ -53,12 +49,6 @@ do -- private scope
             region:SetAlpha(alphaBefore[region])
             alphaBefore[region] = nil
         end
-    end
-
-    local function MouseOverMenu(menu)
-        if not menu:IsShown() then return false end
-        local ok, over = pcall(menu.IsMouseOver, menu, MARGIN, -MARGIN, -MARGIN, MARGIN)
-        return ok and over and true or false
     end
 
     function Micro:Refresh(delta)
@@ -83,7 +73,7 @@ do -- private scope
 
         -- Starts where it is, as if the mouse had just left it.
         if not fade then fade = { alpha = menu:GetAlpha(), away = 0 } end
-        NS.Fade(menu, fade, MouseOverMenu(menu), delta)
+        NS.Fade(menu, fade, NS.MouseOver(menu), delta)
     end
 
     function Micro:Apply()

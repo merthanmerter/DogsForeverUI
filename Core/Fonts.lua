@@ -27,17 +27,18 @@
 --
 -- WHAT IT LEAVES ALONE. The combat text - the scrolling text over you (hits
 -- taken, heals and the rest; Blizzard_CombatText) and the numbers over the
--- units you hit and heal - stays in the game's own font, as the player asked. Its font, CombatTextFont, is a 64px font drawn at a fixed size
--- and shrunk with SetTextHeight; given the player's font with SetFont it lost
--- that, and its letters came out spaced wrong.
+-- units you hit and heal - stays in the game's own font, as the player asked.
+-- Its font, CombatTextFont, is a 64px font drawn at a fixed size and shrunk
+-- with SetTextHeight; given the player's font with SetFont it lost that, and
+-- its letters came out spaced wrong.
 
 local Fonts = {}
 DogsForeverUI.Fonts = Fonts
 
 do -- private scope
 
-    local REGULAR = DogsForeverUI.MEDIA .. "Dog.ttf"
-    local BOLD = DogsForeverUI.MEDIA .. "Dog-Bold.ttf"
+    local REGULAR = DogsForeverUI.Style.FONT
+    local BOLD = DogsForeverUI.Style.BOLD_FONT
 
     -- The game's Latin faces, by file name, and whether each is a display face
     -- that takes the bold cut.
@@ -80,7 +81,11 @@ do -- private scope
 
     -- One font object into the player's face, keeping its size and outline.
     -- The bold cut may not load (a file added while the game was running is
-    -- only found after a restart): then the regular one.
+    -- only found after a restart): then the regular one. Whether it took is
+    -- read back from the font: a font object's SetFont answers nothing
+    -- (SimpleFontAPI), unlike a font string's, so its return cannot tell.
+    local BOLD_FACE = Face(BOLD)
+
     local function Replace(name, font)
         local ok, file, size, flags = pcall(font.GetFont, font)
         if not ok then return end
@@ -88,7 +93,8 @@ do -- private scope
         if display == nil or type(size) ~= "number" or size <= 0 then return end
 
         local wanted = (display or IsHeading(name)) and BOLD or REGULAR
-        if not font:SetFont(wanted, size, flags or "") and wanted == BOLD then
+        font:SetFont(wanted, size, flags or "")
+        if wanted == BOLD and Face(font:GetFont()) ~= BOLD_FACE then
             font:SetFont(REGULAR, size, flags or "")
         end
     end

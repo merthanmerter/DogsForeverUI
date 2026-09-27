@@ -99,10 +99,8 @@ do -- private scope
         return math.min(delay, Bars.MAX_DELAY)
     end
 
-    -- How far outside a bar still counts as over it, so its edge does not
-    -- flicker. The fade itself is the micro menu's too: NS.Fade in Menus.lua.
-    local MARGIN = 4
-
+    -- The fade and the mouse test are the micro menu's too: NS.Fade and
+    -- NS.MouseOver in Menus.lua.
     local faded = {}       -- [entry] = { before, alpha, away }: bars this module is fading
     local watcher
 
@@ -142,11 +140,11 @@ do -- private scope
     -- The spellbook, which is where spells are dragged onto the bars from. On
     -- this client it is a tab of PlayerSpellsFrame, beside the talents
     -- (Blizzard_PlayerSpells/Camelot): open means that frame is up on that
-    -- tab. A client with the older stand-alone SpellBookFrame is covered too.
+    -- tab. (The stand-alone SpellBookFrame is classic-only: Blizzard_UIPanels_Game
+    -- never loads it on this client.)
     local function SpellbookOpen()
         local spells = _G.PlayerSpellsFrame
-        if Shown(spells) then return Shown(spells.SpellBookFrame) end
-        return Shown(_G.SpellBookFrame)
+        return Shown(spells) and Shown(spells.SpellBookFrame)
     end
 
     -- Any bag open - one bag, the backpack, the keyring or the combined
@@ -155,12 +153,6 @@ do -- private scope
         if type(IsAnyBagOpen) ~= "function" then return false end
         local ok, open = pcall(IsAnyBagOpen)
         return ok and open and true or false
-    end
-
-    local function MouseOver(frame)
-        if not frame:IsShown() then return false end
-        local ok, over = pcall(frame.IsMouseOver, frame, MARGIN, -MARGIN, -MARGIN, MARGIN)
-        return ok and over and true or false
     end
 
     -- One step of every bar towards where it should be. Alpha is written only
@@ -186,7 +178,7 @@ do -- private scope
                     faded[entry] = state
                 end
 
-                local shown = everyBar or (entry.bags and bagOpen) or MouseOver(frame)
+                local shown = everyBar or (entry.bags and bagOpen) or NS.MouseOver(frame)
                 NS.Fade(frame, state, shown, delta, delay)
             elseif state then
                 -- Opted out: handed back as it was.

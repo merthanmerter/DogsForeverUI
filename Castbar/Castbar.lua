@@ -150,12 +150,6 @@ do -- private scope
     local STACK_GAP       = VISIBLE_GAP + 2 * BORDER_INSET
     NS.STACK_GAP = STACK_GAP
 
-    -- Where the castbar's top edge lands by default on a screen this tall. The
-    -- combo points work their own default out from it.
-    function NS.DefaultTop(screenHeight)
-        return -screenHeight * TOP_SHARE
-    end
-
     -- THE GROUP, bottom to top: the castbar; one row for the five-second
     -- countdown and the combo points, which share it because nobody needs
     -- both - a rogue has no mana; then the swing bars, main hand, off hand,
@@ -200,7 +194,7 @@ do -- private scope
         local width = db.barWidth or NS.defaults.barWidth
 
         db.barLeft = (screenWidth - width) / 2
-        db.barTop = NS.DefaultTop(screenHeight)
+        db.barTop = -screenHeight * TOP_SHARE
 
         -- Still the addon's placement rather than the player's, so it may be
         -- recomputed once the screen size is final. Dragging the bar clears it.
@@ -375,10 +369,6 @@ do -- private scope
         for _, module in ipairs({ DogsForeverUI.FiveSecondRule, DogsForeverUI.ComboPoints }) do
             if module and module.db and module.Redraw then module.Redraw() end
         end
-        -- The XP bar only redraws on XP events, so a size change here is
-        -- handed on to it now.
-        local xp = DogsForeverUI.XPBar
-        if xp and xp.db and xp.Update then xp.Update() end
     end
 
     -- The bar is off screen except while something is casting, so placement is

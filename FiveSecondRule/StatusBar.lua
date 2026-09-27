@@ -1,9 +1,9 @@
 -- The countdown bar.
 --
 -- One of the castbar group: drawn exactly like the castbar (Core\Style.lua) in
--- the palette's countdown grey, at the castbar's size and strata, with its text
--- padding, spark and seconds settings - all read from the castbar's settings,
--- so the two can never drift apart. It sits just above the castbar, under the
+-- the palette's countdown colour, at the castbar's size and strata, with its
+-- text padding - all read from the castbar's settings, so the two can never
+-- drift apart. The spark and the seconds are always there. It sits just above the castbar, under the
 -- swing bars, with the group's daylight between each, and goes wherever the
 -- castbar goes - until it is dragged, when it stays where it was put. It is
 -- unlocked and locked with the castbar.
@@ -17,7 +17,7 @@ do -- private scope
     local Style = DogsForeverUI.Style
 
     local Refresh, ShowPlacementPreview, OnUpdate
-    local onMouseDown, onMouseUp, resetManaGain
+    local onMouseDown, onMouseUp
 
     local statusbar = CreateFrame("StatusBar", "DogsForeverUIFiveSecondBar", UIParent)
     statusbar:Hide()   -- off screen until a countdown fades it in
@@ -149,9 +149,11 @@ do -- private scope
             return
         end
 
+        -- Nothing counting down, or the five seconds are up.
         local remaining = NS.mp5StartTime - GetTime()
         if NS.mp5StartTime <= 0 or remaining < 0 then
-            resetManaGain()
+            NS.mp5StartTime = 0
+            Style.FadeOut(statusbar)
             return
         end
 
@@ -195,14 +197,6 @@ do -- private scope
 
         Refresh()
         DogsForeverUI.RefreshOptions()
-    end
-
-    function resetManaGain()
-        NS.mp5StartTime = 0
-
-        if not Unlocked() then
-            Style.FadeOut(statusbar)
-        end
     end
 
     StatusBar.statusbar = statusbar
