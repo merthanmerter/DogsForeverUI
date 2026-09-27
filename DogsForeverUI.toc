@@ -1,0 +1,51 @@
+## Interface: 16001
+## Title: Dog's Forever UI
+## Notes: Unit frames, a castbar with swing bars, the five-second rule, combo points, an XP bar, a breath bar, a chat copy window and quieter menus - one addon, one look. Options under Settings, AddOns.
+## Version: 1.0.0
+## Author: Dog
+## Category: Interface
+## IconTexture: Interface\AddOns\DogsForeverUI\Media\icon
+## SavedVariables: DogsForeverUIDB
+
+DogsForeverUI.lua
+
+Core\Style.lua
+Core\Fonts.lua
+
+Frames\Frames.lua
+Frames\BlizzardFrames.lua
+Frames\UnitPlate.lua
+Frames\UnitCastbar.lua
+Frames\NamePlates.lua
+
+Castbar\Castbar.lua
+Castbar\BlizzardCastbar.lua
+Castbar\PlayerCastBar.lua
+Castbar\BlizzardSwingTimer.lua
+Castbar\SwingBars.lua
+
+FiveSecondRule\FiveSecondRule.lua
+FiveSecondRule\StatusBar.lua
+
+ComboPoints\ComboPoints.lua
+ComboPoints\BlizzardComboFrame.lua
+
+XPBar\XPBar.lua
+XPBar\BlizzardXPBar.lua
+
+MirrorTimers\MirrorTimers.lua
+
+Chat\Chat.lua
+Chat\ChatLog.lua
+Chat\ChatButton.lua
+
+Menus\Menus.lua
+Menus\MicroMenu.lua
+Menus\BagsBar.lua
+Menus\ActionBars.lua
+
+Fishing\Fishing.lua
+
+Options\ScrollBar.lua
+Options\Panel.lua
+Options\Pages.lua

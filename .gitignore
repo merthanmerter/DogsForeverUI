@@ -1,0 +1,11 @@
+# Not part of the addon: WoW never loads these, and they do not belong in a
+# release zip either. package.ps1 skips exactly the same things.
+tests/
+package.ps1
+dist/
+
+# Editor and OS leftovers.
+*.bak
+*~
+.DS_Store
+Thumbs.db
