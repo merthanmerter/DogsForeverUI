@@ -2,27 +2,34 @@
 --
 -- The game's menus and bars, made quieter:
 --
---   * the micro menu (character, spellbook, quests, ...) loses its outer frame
---     and plate, keeps its buttons as the game draws them, and is invisible
---     until the mouse is over it;
---   * any action bar ticked - and the bag bar - auto-hides, and fades back in
---     under the mouse (ActionBars.lua); the backpack's icon is repaired
---     (BagsBar.lua);
+--   * the micro menu (character, spellbook, quests, ...) in the action
+--     buttons' look - square, the addon's border and background, the game's
+--     icon centred - laid out in one row by the addon and placed with the rest
+--     of the UI (MicroMenu.lua - the look, no setting), and invisible until the
+--     mouse is over it;
+--   * the bag bar is gone until a bag is open, and a bag button second in the
+--     micro menu opens the bags instead (BagsBar.lua - the look, no setting);
+--     the backpack's icon is repaired there too;
+--   * any action bar ticked auto-hides, and fades back in under the mouse
+--     (ActionBars.lua);
 --   * every action button in the addon's look, the bars at 80% of the game's
 --     size and the end caps gone (ActionButtons.lua - the look, no setting);
 --   * the beta's Issue Reporter box and its tooltip hints hidden
 --     (IssueReporter.lua).
 --
--- All but the action button look can be switched off in the options, which
--- hands each straight back.
+-- All but the button looks and the bags can be switched off in the options,
+-- which hands each straight back.
 --
--- No script is replaced, no Lua field is written onto a Blizzard frame, no
+-- No script is replaced, no Lua field is written onto a Blizzard frame (but
+-- Edit Mode's two opt-outs, DogsForeverUI.HoldEditMode, on the micro menu), no
 -- layout method is called and no Edit Mode setting is touched, so nothing here
 -- can taint the menus. (The one exception is the Issue Reporter's own
 -- SetCurrentTooltipReport, wrapped to drop its tooltip hints - see that file;
--- the reporter is a beta tool, not part of the menus.) Art and bars are faded,
--- never hidden. `hooksecurefunc` and `HookScript` are the only hooks, and both
--- run after Blizzard's own code rather than instead of it.
+-- the reporter is a beta tool, not part of the menus.) Art and bars are faded
+-- (the micro buttons' art by vertex alpha), never hidden - except the bag bar, which is hidden and shown whole, the way
+-- the game itself hides it for a gamepad (BagsBar.lua). `hooksecurefunc` and
+-- `HookScript` are the only hooks, and both run after Blizzard's own code
+-- rather than instead of it.
 
 DogsForeverUI.Menus = {}
 
@@ -33,10 +40,20 @@ do -- private scope
     NS.title = "Menus"
 
     NS.defaults = {
+        unlocked = false,        -- the micro menu is placed with the rest of the UI
         quietMicroMenu = true,   -- the micro menu shows only under the mouse
         hideIssueReporter = true, -- the beta's Issue Reporter box and hints
+        -- The group finder's icon, once read off its window (MicroMenu.lua):
+        -- that window loads only when first opened. Not a setting, so a reset
+        -- keeps it.
+        groupFinderIcon = false,
     }
+    NS.keep = { groupFinderIcon = true }
     -- ActionBars.lua adds one switch per bar that can auto-hide.
+
+    -- The micro menu's place (MicroMenu.lua): its top left from the screen's,
+    -- and whether the player put it there.
+    NS.placement = { microLeft = true, microTop = true, microPlaced = true }
 
     -- THE FADE, the one the micro menu and the action bars share: a wait after
     -- the mouse leaves, then a fade out; a quicker fade back in while it is
@@ -74,12 +91,24 @@ do -- private scope
         return ok and over and true or false
     end
 
+    -- Whether Edit Mode is open: the faded bars and the bag bar all show then,
+    -- so they can be seen to be placed.
+    function NS.EditModeOpen()
+        local manager = _G.EditModeManagerFrame
+        if type(manager) ~= "table" or type(manager.IsEditModeActive) ~= "function" then
+            return false
+        end
+        local ok, active = pcall(manager.IsEditModeActive, manager)
+        return ok and active and true or false
+    end
+
     -- The menus are the game's, built before any addon runs; the hooks go on
     -- once, at login, when every one of them exists.
     local applied = false
 
     local function Refresh()
         if not applied then return end
+        NS.MicroMenu.Place()
         NS.MicroMenu:Refresh()
         NS.ActionBars:Refresh()
         NS.IssueReporter:Refresh()
@@ -87,9 +116,22 @@ do -- private scope
     NS.Refresh = Refresh
     NS.Init = Refresh
 
-    -- Once the saved settings are in: see ActionBars.lua.
+    -- The micro menu is dragged with the rest of the UI (the one unlock).
+    function NS.Unlock()
+        NS.db.unlocked = true
+        Refresh()
+    end
+
+    function NS.Lock()
+        NS.db.unlocked = false
+        NS.MicroMenu.holder:StopMovingOrSizing()
+        Refresh()
+    end
+
+    -- Once the saved settings are in: see ActionBars.lua and MicroMenu.lua.
     function NS.Normalise(db)
         NS.ActionBars.Normalise(db)
+        NS.MicroMenu.Normalise(db)
     end
 
     local loader = CreateFrame("Frame")
@@ -97,8 +139,9 @@ do -- private scope
     loader:SetScript("OnEvent", function(self)
         self:UnregisterEvent("PLAYER_LOGIN")
         applied = true
+        NS.BagsBar:Apply()      -- first: its bag button is one of the menu's row,
+        NS.OptionsButton:Apply() -- and so is the options button
         NS.MicroMenu:Apply()
-        NS.BagsBar:Apply()
         NS.ActionBars:Apply()
         NS.IssueReporter:Apply()
     end)

@@ -1,5 +1,6 @@
--- Taking the game's player, target, focus, target-of-target and pet frames off
--- screen, and giving them back.
+-- Taking the game's player, target, focus, target-of-target, pet and party
+-- frames off screen, and giving them back (the party's whenever the game's
+-- raid-style party frames are on - see HoldParty).
 --
 -- The game's unit frames are protected: showing or hiding one from addon code is
 -- refused while the player is in combat, and the target frame is shown again on
@@ -262,12 +263,11 @@ do -- private scope
         end
     end
 
-    -- Whether the game's frames should be off screen right now. Asked afresh
-    -- every time rather than remembered, so turning the addon off puts them
-    -- back at once. There is no setting for it: this addon replaces them.
+    -- Whether the game's frames should be off screen right now: whenever the
+    -- addon's are there, which is always once its settings exist. There is no
+    -- setting for it: this addon replaces them.
     local function ShouldHide()
-        local db = DogsForeverUI.Frames.db
-        return db and db.enabled and true or false
+        return DogsForeverUI.Frames.db ~= nil
     end
     BlizzardFrames.ShouldHide = ShouldHide
 
@@ -319,8 +319,142 @@ do -- private scope
         end
     end
 
+    ---------------------------------------------------------------------------
+    -- THE GAME'S PARTY FRAMES, while the addon's party column is what shows -
+    -- that is, unless the game's raid-style party frames are on
+    -- (UnitPlate.RaidStyleParty), which then are the party's and are left
+    -- alone (RaidFrames.lua gives them this addon's bar textures).
+    --
+    -- Only the four member frames (PartyFrame.MemberFrame1-4, secure unit
+    -- buttons the game pools, with their pets) and the party background are
+    -- faded, and their mouse taken off. The PartyFrame container itself is
+    -- not touched, and not held out of Edit Mode: its box there is where
+    -- "Use Raid-Style Party Frames" is switched, and it has to stay
+    -- selectable. Nothing is shown or hidden, and no hook is put on any of
+    -- them (a hook on a widget method would be a field written onto the
+    -- game's frame).
+    --
+    -- The game sets a member's alpha itself (0.6 while phased, 1 otherwise),
+    -- and the background's (its opacity slider), so HoldParty is asked again
+    -- on the frames' own redraw timer (Frames.lua) and takes them down again.
+    -- The mouse is a protected call on these buttons: out of combat only,
+    -- and again when combat ends (the core refreshes then).
+    ---------------------------------------------------------------------------
+
+    local partyHeld = false
+    local partyMouse = setmetatable({}, { __mode = "k" })   -- frame -> mouse as last set
+    -- The alpha the game last gave each faded frame (its phasing, the
+    -- background's opacity slider): what it gets back when released.
+    local gameAlpha = setmetatable({}, { __mode = "k" })
+
+    local function HideParty()
+        local plates = DogsForeverUI.Frames.UnitPlate
+        return ShouldHide() and not (plates and plates.RaidStyleParty())
+    end
+    BlizzardFrames.HideParty = HideParty
+
+    -- The members, their pets and the background: everything faded.
+    local function PartyParts()
+        local party, parts = _G.PartyFrame, {}
+        if type(party) ~= "table" then return parts end
+        for index = 1, 4 do
+            local member = party["MemberFrame" .. index]
+            if type(member) == "table" and type(member.SetAlpha) == "function" then
+                parts[#parts + 1] = member
+                local pet = member.PetFrame
+                if type(pet) == "table" and type(pet.EnableMouse) == "function" then
+                    parts[#parts + 1] = pet
+                end
+            end
+        end
+        return parts
+    end
+
+    local function Background()
+        local party = _G.PartyFrame
+        local background = type(party) == "table" and party.Background
+        if type(background) == "table" and type(background.SetAlpha) == "function" then
+            return background
+        end
+    end
+
+    local function Alpha(frame)
+        local ok, alpha = pcall(frame.GetAlpha, frame)
+        return ok and alpha or nil
+    end
+
+    local function Mouse(frame, on)
+        if partyMouse[frame] == on or InCombatLockdown() then return end
+        if type(frame.EnableMouse) == "function" and pcall(frame.EnableMouse, frame, on) then
+            partyMouse[frame] = on
+        end
+    end
+
+    function BlizzardFrames.HoldParty()
+        local hide = HideParty()
+        local frames = PartyParts()
+        frames[#frames + 1] = Background()
+        for _, frame in ipairs(frames) do
+            if hide then
+                -- Anything but nothing is the game's own latest word: kept,
+                -- then taken down.
+                local alpha = Alpha(frame)
+                if alpha ~= 0 then
+                    gameAlpha[frame] = alpha
+                    pcall(frame.SetAlpha, frame, 0)
+                end
+                Mouse(frame, false)
+            elseif partyHeld then
+                pcall(frame.SetAlpha, frame, gameAlpha[frame] or 1)
+                Mouse(frame, true)
+            end
+        end
+        partyHeld = hide
+    end
+    local HoldParty = BlizzardFrames.HoldParty
+
+    -- AT ONCE, NOT ON THE NEXT REDRAW. The game raises a member's alpha itself
+    -- - UpdateNotPresentIcon sets it to 1 or 0.6 whenever a member's phase or
+    -- presence is looked at again, which is often in a busy group - and builds
+    -- all four afresh when the party frame shows (InitializePartyMemberFrames,
+    -- Setup). Faded again only on the frames' redraw, the old frames were drawn
+    -- for the few frames in between: the flicker the player saw. So HoldParty
+    -- also runs straight after each of those, in the same frame, before
+    -- anything is drawn (hooksecurefunc: after the game's own code, which runs
+    -- untouched). The redraw's pass stays, as the backstop.
+    --
+    -- Only methods the frame already carries as its own fields - the game's
+    -- mixins copy them in - are followed, so no field is ever added to the
+    -- game's frames.
+    local PARTY_METHODS = { "InitializePartyMemberFrames", "UpdatePartyFrames", "UpdateMemberFrames",
+                            "UpdatePartyMemberBackground" }
+    local MEMBER_METHODS = { "UpdateNotPresentIcon", "UpdateMember", "Setup" }
+    local followed = setmetatable({}, { __mode = "k" })
+
+    local function Follow(frame, methods)
+        if followed[frame] or type(frame) ~= "table" then return end
+        followed[frame] = true
+        for _, method in ipairs(methods) do
+            if type(rawget(frame, method)) == "function" then
+                pcall(hooksecurefunc, frame, method, function() BlizzardFrames.HoldPartyNow() end)
+            end
+        end
+    end
+
+    -- HoldParty, and the member frames it finds followed from then on.
+    function BlizzardFrames.HoldPartyNow()
+        local party = _G.PartyFrame
+        if type(party) == "table" then
+            Follow(party, PARTY_METHODS)
+            for index = 1, 4 do Follow(party["MemberFrame" .. index], MEMBER_METHODS) end
+        end
+        HoldParty()
+    end
+
     function BlizzardFrames.Refresh()
         local hide = ShouldHide()
+
+        BlizzardFrames.HoldPartyNow()
 
         for _, entry in ipairs(FRAMES) do
             for _, path in ipairs(entry.parts) do

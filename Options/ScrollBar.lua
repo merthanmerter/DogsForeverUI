@@ -1,118 +1,140 @@
--- A thin scrollbar, built by hand rather than taken from
--- UIPanelScrollFrameTemplate: which scroll templates a client ships varies, and
--- a missing one takes the whole options panel down with it.
+-- Scrolling for the options window's page, built by hand rather than taken
+-- from a scroll template (which templates a client ships varies, and a
+-- missing one would take the whole window down with it).
 --
--- Attach() turns a plain ScrollFrame into a scrolling one: mouse wheel, a track
--- and a draggable thumb sized to how much of the content fits, clamped at both
--- ends, and hidden entirely when nothing overflows.
+-- Smooth: the wheel and ScrollTo set where the page is heading, and it eases
+-- there over a few frames rather than jumping. A slim thumb in the border's
+-- gold shows where you are and can be dragged; there is no track to speak of,
+-- and nothing at all when the page fits.
 
 local ScrollBar = {}
 DogsForeverUI.ScrollBar = ScrollBar
 
-local WIDTH = 8
-local MIN_THUMB = 24
-local WHEEL_STEP = 40
+do -- private scope
+    local Style = DogsForeverUI.Style
 
-local function ContentHeight(scrollFrame)
-    local child = scrollFrame:GetScrollChild()
-    return child and child:GetHeight() or 0
-end
+    local WIDTH = 4
+    local MIN_THUMB = 28
+    local WHEEL_STEP = 70
+    local EASE = 14        -- per second: how quickly the page catches up
+    local THUMB = { Style.BORDER_COLOR[1], Style.BORDER_COLOR[2], Style.BORDER_COLOR[3] }
 
--- Cursor coordinates come back in screen units, so divide by the UI scale to
--- compare them against frame heights.
-local function CursorY()
-    local _, y = GetCursorPosition()
-    return y / UIParent:GetEffectiveScale()
-end
-
--- scrollFrame  a ScrollFrame that already has its scroll child set
---
--- Returns the update function, for a panel to call when it is shown or its
--- content changes.
-function ScrollBar.Attach(scrollFrame)
-    local track = CreateFrame("Frame", nil, scrollFrame:GetParent())
-    track:SetPoint("TOPLEFT", scrollFrame, "TOPRIGHT", 4, 0)
-    track:SetPoint("BOTTOMLEFT", scrollFrame, "BOTTOMRIGHT", 4, 0)
-    track:SetWidth(WIDTH)
-
-    local trackTexture = track:CreateTexture(nil, "BACKGROUND")
-    trackTexture:SetAllPoints()
-    trackTexture:SetColorTexture(1, 1, 1, 0.07)
-
-    local thumb = CreateFrame("Frame", nil, track)
-    thumb:SetWidth(WIDTH)
-    thumb:SetHeight(MIN_THUMB)
-    thumb:SetPoint("TOP", track, "TOP", 0, 0)
-    thumb:EnableMouse(true)
-    thumb:RegisterForDrag("LeftButton")
-
-    local thumbTexture = thumb:CreateTexture(nil, "ARTWORK")
-    thumbTexture:SetAllPoints()
-    thumbTexture:SetColorTexture(0.65, 0.65, 0.65, 0.65)
-
-    local function Limit()
-        return ContentHeight(scrollFrame) - scrollFrame:GetHeight()
+    -- Cursor coordinates come back in screen units.
+    local function CursorY(frame)
+        local _, y = GetCursorPosition()
+        return y / frame:GetEffectiveScale()
     end
 
-    local function Update()
-        local limit = Limit()
-        local trackHeight = track:GetHeight()
-        if limit <= 0 or trackHeight <= 0 then
-            track:Hide()
-            return
+    -- scrollFrame: a ScrollFrame with its scroll child set. `onScroll(y)` is
+    -- told every time the page moves. Answers the scroller:
+    --   Update()            fit the thumb to the content (after it changed)
+    --   ScrollTo(y, now)    head for `y` (clamped); `now` jumps there
+    --   Limit()             how far the page can scroll
+    function ScrollBar.Attach(scrollFrame, onScroll)
+        local scroller = {}
+        local target = 0
+
+        local track = CreateFrame("Frame", nil, scrollFrame:GetParent())
+        track:SetPoint("TOPLEFT", scrollFrame, "TOPRIGHT", 6, -4)
+        track:SetPoint("BOTTOMLEFT", scrollFrame, "BOTTOMRIGHT", 6, 4)
+        track:SetWidth(WIDTH)
+        -- What runs the easing: always shown, unlike the track.
+        local driver = CreateFrame("Frame", nil, scrollFrame:GetParent())
+        local groove = track:CreateTexture(nil, "BACKGROUND")
+        groove:SetAllPoints(track)
+        groove:SetColorTexture(1, 1, 1, 0.04)
+
+        local thumb = CreateFrame("Frame", nil, track)
+        thumb:SetWidth(WIDTH)
+        thumb:SetHeight(MIN_THUMB)
+        thumb:EnableMouse(true)
+        thumb:RegisterForDrag("LeftButton")
+        local thumbTexture = thumb:CreateTexture(nil, "ARTWORK")
+        thumbTexture:SetAllPoints(thumb)
+        thumbTexture:SetColorTexture(THUMB[1], THUMB[2], THUMB[3], 0.7)
+        thumb:SetScript("OnEnter", function() thumbTexture:SetColorTexture(THUMB[1], THUMB[2], THUMB[3], 1) end)
+        thumb:SetScript("OnLeave", function() thumbTexture:SetColorTexture(THUMB[1], THUMB[2], THUMB[3], 0.7) end)
+
+        local function ContentHeight()
+            local child = scrollFrame:GetScrollChild()
+            return child and child:GetHeight() or 0
         end
-        track:Show()
 
-        local thumbHeight = trackHeight * (scrollFrame:GetHeight() / ContentHeight(scrollFrame))
-        if thumbHeight < MIN_THUMB then thumbHeight = MIN_THUMB end
-        if thumbHeight > trackHeight then thumbHeight = trackHeight end
-        thumb:SetHeight(thumbHeight)
-
-        local travel = trackHeight - thumbHeight
-        thumb:ClearAllPoints()
-        thumb:SetPoint("TOP", track, "TOP", 0,
-            -travel * (scrollFrame:GetVerticalScroll() / limit))
-    end
-
-    local function SetScroll(position)
-        local limit = Limit()
-        if limit <= 0 then
-            scrollFrame:SetVerticalScroll(0)
-        else
-            if position < 0 then position = 0 end
-            if position > limit then position = limit end
-            scrollFrame:SetVerticalScroll(position)
+        function scroller.Limit()
+            return math.max(0, ContentHeight() - scrollFrame:GetHeight())
         end
-        Update()
-    end
 
-    scrollFrame:EnableMouseWheel(true)
-    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
-        SetScroll(self:GetVerticalScroll() - delta * WHEEL_STEP)
-    end)
+        local function Clamp(y)
+            return math.max(0, math.min(y, scroller.Limit()))
+        end
 
-    -- A panel may already resize its scroll child from OnSizeChanged, so chain
-    -- rather than replace.
-    local previousSizeChanged = scrollFrame:GetScript("OnSizeChanged")
-    scrollFrame:SetScript("OnSizeChanged", function(self, ...)
-        if previousSizeChanged then previousSizeChanged(self, ...) end
-        Update()
-    end)
+        function scroller.Update()
+            local limit = scroller.Limit()
+            local trackHeight = track:GetHeight()
+            if limit <= 0 or trackHeight <= 0 then
+                track:Hide()
+                return
+            end
+            track:Show()
+            local height = trackHeight * (scrollFrame:GetHeight() / ContentHeight())
+            height = math.min(trackHeight, math.max(MIN_THUMB, height))
+            thumb:SetHeight(height)
+            thumb:ClearAllPoints()
+            thumb:SetPoint("TOP", track, "TOP", 0,
+                -(trackHeight - height) * (scrollFrame:GetVerticalScroll() / limit))
+        end
 
-    thumb:SetScript("OnDragStart", function(self)
-        self.startCursor = CursorY()
-        self.startScroll = scrollFrame:GetVerticalScroll()
-        self:SetScript("OnUpdate", function(self)
-            local travel = track:GetHeight() - self:GetHeight()
-            local limit = Limit()
-            if travel <= 0 or limit <= 0 then return end
-            -- Dragging down scrolls down, and the cursor axis points up.
-            local moved = self.startCursor - CursorY()
-            SetScroll(self.startScroll + moved * (limit / travel))
+        local function Set(y)
+            scrollFrame:SetVerticalScroll(y)
+            scroller.Update()
+            if onScroll then onScroll(y) end
+        end
+
+        local function Ease(self, elapsed)
+            local y = scrollFrame:GetVerticalScroll()
+            local gap = target - y
+            if math.abs(gap) < 0.5 then
+                self:SetScript("OnUpdate", nil)
+                Set(target)
+            else
+                Set(y + gap * (1 - math.exp(-EASE * elapsed)))
+            end
+        end
+
+        function scroller.ScrollTo(y, now)
+            target = Clamp(y)
+            if now then
+                driver:SetScript("OnUpdate", nil)
+                Set(target)
+            else
+                driver:SetScript("OnUpdate", Ease)
+            end
+        end
+
+        function scroller.Target() return target end
+
+        scrollFrame:EnableMouseWheel(true)
+        scrollFrame:SetScript("OnMouseWheel", function(_, delta)
+            scroller.ScrollTo(target - delta * WHEEL_STEP)
         end)
-    end)
-    thumb:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+        scrollFrame:HookScript("OnSizeChanged", function()
+            target = Clamp(target)
+            scroller.Update()
+        end)
 
-    Update()
-    return Update
+        thumb:SetScript("OnDragStart", function(self)
+            local startCursor, startScroll = CursorY(self), scrollFrame:GetVerticalScroll()
+            self:SetScript("OnUpdate", function(me)
+                local travel = track:GetHeight() - me:GetHeight()
+                local limit = scroller.Limit()
+                if travel <= 0 or limit <= 0 then return end
+                -- Dragging down scrolls down, and the cursor axis points up.
+                scroller.ScrollTo(startScroll + (startCursor - CursorY(me)) * (limit / travel), true)
+            end)
+        end)
+        thumb:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+
+        scroller.Update()
+        return scroller
+    end
 end

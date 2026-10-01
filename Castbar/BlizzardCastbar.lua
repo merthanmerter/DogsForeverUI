@@ -47,8 +47,7 @@ do -- private scope
     -- configuration anybody wants. The addon being on is what hides the game's
     -- bar, and turning the addon off is what gives it back.
     local function ShouldHide()
-        local db = DogsForeverUI.Castbar.db
-        return db and db.enabled and true or false
+        return DogsForeverUI.Castbar.db ~= nil
     end
 
     function BlizzardCastbar.Refresh()

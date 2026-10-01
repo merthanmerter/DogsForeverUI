@@ -1,5 +1,6 @@
 -- NAMESPACE: DogsForeverUI
--- SETTINGS:  DogsForeverUIDB
+-- SETTINGS:  DogsForeverUIDB, per character
+--            DogsForeverUIProfiles, the account's (Core\Profiles.lua)
 --
 -- One addon, many parts, one look:
 --
@@ -24,9 +25,9 @@
 -- options are one page with a section per part, and a tab for the cooldown
 -- manager (Options\).
 --
--- This file owns the saved settings, and the two things that are every
--- module's at once: placing the UI (one unlock for everything, with a grid)
--- and resetting it. Every module gets a section table that is created here
+-- This file owns the saved settings, and the things that are every module's
+-- at once: placing the UI (one unlock for everything, with a grid), resetting
+-- it, and taking over a whole set of settings (a profile). Every module gets a section table that is created here
 -- once and never replaced, so a reference a module or the options panel holds
 -- stays good for the whole session.
 
@@ -124,26 +125,29 @@ do -- private scope
         return true
     end
 
-    -- THE GRID. Lines every GRID_STEP UI units out from the middle of the
-    -- screen both ways, so the centre lines are exact; those two in the
+    -- THE GRID. Lines about every GRID_STEP UI units out from the middle of
+    -- the screen both ways, so the centre lines are exact; those two in the
     -- border's gold, the rest faint white. Each line one real pixel thick.
     -- Under all the UI, over the world, and never in the mouse's way.
+    --
+    -- Laid out in real pixels, not UI units: GRID_STEP units is rarely a
+    -- whole number of pixels, and lines placed in units each snapped to the
+    -- nearest pixel on their own, so some squares came out a pixel larger
+    -- than others. The step is rounded to whole pixels once, and every line
+    -- starts on an exact pixel from the screen's corner.
     local GRID_STEP = 32
     local GRID_LINE = { 1, 1, 1, 0.12 }
     local GRID_CENTRE_ALPHA = 0.8
     local grid
 
     local function LayOutGrid()
-        local width, height = UIParent:GetWidth(), UIParent:GetHeight()
-        local scale = UIParent:GetEffectiveScale()
-        local thick = 1
-        if PixelUtil and PixelUtil.GetNearestPixelSize then
-            thick = PixelUtil.GetNearestPixelSize(1, scale, 1)
-        end
+        local physicalWidth, physicalHeight = GetPhysicalScreenSize()
+        local pixel = 768 / physicalHeight / grid:GetEffectiveScale()   -- one real pixel, in the grid's units
+        local step = math.max(2, math.floor(GRID_STEP / pixel + 0.5))   -- whole pixels
         local gold = Core.Style.BORDER_COLOR
 
         local used = 0
-        local function Line(vertical, offset)
+        local function Line(vertical, at, centre)
             used = used + 1
             local line = grid.lines[used]
             if not line then
@@ -152,15 +156,15 @@ do -- private scope
             end
             line:ClearAllPoints()
             if vertical then
-                line:SetPoint("TOP", grid, "TOP", offset, 0)
-                line:SetPoint("BOTTOM", grid, "BOTTOM", offset, 0)
-                line:SetWidth(thick)
+                line:SetPoint("TOPLEFT", grid, "TOPLEFT", at * pixel, 0)
+                line:SetPoint("BOTTOMLEFT", grid, "BOTTOMLEFT", at * pixel, 0)
+                line:SetWidth(pixel)
             else
-                line:SetPoint("LEFT", grid, "LEFT", 0, offset)
-                line:SetPoint("RIGHT", grid, "RIGHT", 0, offset)
-                line:SetHeight(thick)
+                line:SetPoint("BOTTOMLEFT", grid, "BOTTOMLEFT", 0, at * pixel)
+                line:SetPoint("BOTTOMRIGHT", grid, "BOTTOMRIGHT", 0, at * pixel)
+                line:SetHeight(pixel)
             end
-            if offset == 0 then
+            if centre then
                 line:SetColorTexture(gold[1], gold[2], gold[3], GRID_CENTRE_ALPHA)
             else
                 line:SetColorTexture(GRID_LINE[1], GRID_LINE[2], GRID_LINE[3], GRID_LINE[4])
@@ -168,14 +172,15 @@ do -- private scope
             line:Show()
         end
 
-        for step = 0, math.floor(width / 2 / GRID_STEP) do
-            Line(true, step * GRID_STEP)
-            if step > 0 then Line(true, -step * GRID_STEP) end
+        -- Every step pixels either side of the middle pixel, edge to edge.
+        local function Lines(vertical, size)
+            local middle = math.floor(size / 2)
+            for at = middle % step, size - 1, step do
+                Line(vertical, at, at == middle)
+            end
         end
-        for step = 0, math.floor(height / 2 / GRID_STEP) do
-            Line(false, step * GRID_STEP)
-            if step > 0 then Line(false, -step * GRID_STEP) end
-        end
+        Lines(true, physicalWidth)
+        Lines(false, physicalHeight)
         for spare = used + 1, #grid.lines do grid.lines[spare]:Hide() end
     end
 
@@ -371,39 +376,62 @@ do -- private scope
         end
     end
 
-    -- Back to defaults, for one module. The section is emptied and refilled
-    -- rather than replaced, so every reference already handed out is still
-    -- looking at the settings in use. What a module lists in `keep` is the
-    -- player's own content rather than a setting (the cooldowns they track),
-    -- and comes through a reset untouched.
-    function Core:Reset(key)
+    Core.DeepCopy = DeepCopy
+
+    -- Back to defaults, for one module - or, given `from`, to those settings
+    -- instead (a profile's section, Core\Profiles.lua). The section is
+    -- emptied and refilled rather than replaced, so every reference already
+    -- handed out is still looking at the settings in use; whatever `from`
+    -- lacks comes from the defaults, and whatever this version no longer has
+    -- is dropped, as for a file loaded at login. What a module lists in `keep`
+    -- is the player's own content rather than a setting (the cooldowns they
+    -- track), and comes through untouched.
+    function Core:Reset(key, from)
         local module = self:GetModule(key)
         if not module then return end
 
         local kept = {}
         for name in pairs(module.keep or {}) do kept[name] = module.db[name] end
         Wipe(module.db)
-        for name, value in pairs(module.defaults or {}) do
+        local source = type(from) == "table" and from or module.defaults or {}
+        for name, value in pairs(source) do
             module.db[name] = DeepCopy(value)
         end
-        for name, value in pairs(kept) do module.db[name] = value end
+        for name in pairs(module.keep or {}) do module.db[name] = kept[name] end
         Normalise(module)
         if module.Init then module.Init() end
     end
 
+    -- Every module's settings at once: `settings` = { [module key] = section },
+    -- a module missing from it back to defaults; nil = everything to defaults.
+    -- The UI is locked first (every piece goes back to a place, which is
+    -- nothing to be dragging). Not in combat - it rewrites the frames' secure
+    -- parts - so the caller checks.
+    local function ApplyAll(settings)
+        if Core.IsUnlocked() then Core.SetUnlocked(false) end
+        for _, module in ipairs(Core.modules) do
+            Core:Reset(module.key, settings and settings[module.key])
+        end
+        UpdateGrid()
+        Core.RefreshOptions()
+    end
+
     -- Back to defaults, everything at once: the one reset button in the
-    -- options. The UI is locked first (a reset puts every piece back in its
-    -- place, which is nothing to be dragging). Not in combat - resetting the
-    -- frames rewrites their secure parts. Answers whether it happened.
+    -- options. Answers whether it happened.
     function Core:ResetAll()
         if InCombatLockdown() then
             Core.Print("the UI cannot be reset in combat.")
             return false
         end
-        if Core.IsUnlocked() then Core.SetUnlocked(false) end
-        for _, module in ipairs(self.modules) do self:Reset(module.key) end
-        UpdateGrid()
-        Core.RefreshOptions()
+        ApplyAll(nil)
+        return true
+    end
+
+    -- A whole set of settings taken over at once: a profile being loaded.
+    -- Answers whether it happened.
+    function Core:ApplySettings(settings)
+        if InCombatLockdown() then return false end
+        ApplyAll(settings)
         return true
     end
 

@@ -84,12 +84,10 @@ do -- private scope
         for _, button in ipairs(list) do fn(button) end
     end
 
-    -- The addon has the totems while its frames are on and the player's is
-    -- there to hang them from.
+    -- The addon has the totems once the player's frame is there to hang them
+    -- from.
     local function Wanted()
-        local db = NS.db
-        return db ~= nil and db.enabled == true and NS.plates ~= nil
-            and NS.plates.player ~= nil
+        return NS.db ~= nil and NS.plates ~= nil and NS.plates.player ~= nil
     end
 
     ---------------------------------------------------------------------------

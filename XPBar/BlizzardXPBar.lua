@@ -77,7 +77,7 @@ do -- private scope
     end
 
     local function ShouldHide(container)
-        return NS.db.enabled and Ours(container.shownBarIndex)
+        return NS.db ~= nil and Ours(container.shownBarIndex)
     end
 
     local editMode = {}
@@ -129,7 +129,7 @@ do -- private scope
             local bar = index and type(container.bars) == "table" and container.bars[index]
             if bar and type(bar.HookScript) == "function" then
                 bar:HookScript("OnShow", function(self)
-                    if NS.db and NS.db.enabled then Fade(self) end
+                    if NS.db then Fade(self) end
                 end)
             end
         end

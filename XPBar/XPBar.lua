@@ -32,12 +32,12 @@ do -- private scope
     NS.key = "xp"
     NS.title = "XP bar"
 
+    -- Always on, the rested XP always shaded in (the player, 2026-09-29): only
+    -- its size, layer and place are set.
     NS.defaults = {
-        enabled = true,
         unlocked = false,
         barWidth = 300,
         barHeight = 10,
-        showRested = true,
         frameStrata = "MEDIUM",
     }
 
@@ -59,8 +59,8 @@ do -- private scope
     bar.border = Style.AddBorder(bar)
     -- The spark at the end of the XP, as on the castbar.
     bar.spark = Style.AddSpark(bar)
-    -- No text on the bar - except, while it is being placed, its name and
-    -- "unlocked", as on every bar.
+    -- No text on the bar - except, while it is being placed, its name, as on
+    -- every bar.
     bar.placementLabels = Style.AddPlacementLabels(bar)
 
     NS.bar = bar
@@ -210,7 +210,6 @@ do -- private scope
     -- What the bar shows right now: the XP in it and the rested XP beyond it.
     function Update()
         local db = NS.db
-        if not db.enabled then bar:Hide(); return end
 
         if db.unlocked then
             bar:Show()
@@ -263,7 +262,7 @@ do -- private scope
         bar:SetValue(current)
         bar.spark:SetAlpha(Style.SparkAlpha(current, max))
 
-        local restedXP = db.showRested and GetXPExhaustion and GetXPExhaustion() or nil
+        local restedXP = GetXPExhaustion and GetXPExhaustion() or nil
         if IsSecret(restedXP) or type(restedXP) ~= "number" then restedXP = 0 end
         rested:SetMinMaxValues(0, max)
         rested:SetValue(math.min(current + restedXP, max))

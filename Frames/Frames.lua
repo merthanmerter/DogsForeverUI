@@ -1,10 +1,13 @@
 -- MODULE: Frames  (DogsForeverUI.Frames, settings section "frames")
 --
--- The player, the target, the focus, the target's target and the pet as two
--- plain bars each -- health over power, one border round the pair and a
--- hairline between them -- with the level written before the name. The pet's
--- frame hangs under the player's until it is put somewhere else, and the
--- player's totems hang under the player's frame too (Totems.lua).
+-- The player, the target, the focus, the target's target, the pet and the
+-- party as two plain bars each -- health over power, one border round the pair
+-- and a hairline between them -- with the level written before the name. The
+-- pet's frame hangs under the player's until it is put somewhere else, and the
+-- player's totems hang under the player's frame too (Totems.lua). The party's
+-- four are a column down the left of the screen, placed as one - unless the
+-- game's raid-style party frames are on, which then are the party's, drawn
+-- with this addon's bar textures (RaidFrames.lua).
 --
 -- Only the look changes. Left-click targets, right-click opens the unit menu and
 -- hovering shows the tooltip, exactly as the game's frames do, because the click
@@ -23,8 +26,7 @@
 -- UnitAuras.lua.
 --
 -- The game's frames are not destroyed to make room: their artwork is faded out
--- (the target and focus frames shrunk as well) and their mouse turned off, all
--- of which is undone the moment the module is turned off. No Edit Mode setting
+-- (the target and focus frames shrunk as well) and their mouse turned off. No Edit Mode setting
 -- is read or written, no Blizzard function is replaced, and nothing is
 -- reparented - see BlizzardFrames.lua.
 
@@ -39,8 +41,12 @@ do -- private scope
     NS.key = "frames"
     NS.title = "Frames"
 
+    -- Always on, like everything the addon draws (the player, 2026-09-29: "if
+    -- the addon is installed all its features should be enabled"): no
+    -- switch for the frames themselves, the name, the level, the incoming
+    -- heals or the nameplates' look. Turning the addon off in the addon list is how the
+    -- game's own come back.
     NS.defaults = {
-        enabled = true,
         unlocked = false,
         barWidth = 150,
         barHeight = 30,          -- the health bar
@@ -48,20 +54,23 @@ do -- private scope
         showCastbar = true,      -- what the target and the focus are casting
         castbarHeight = 8,       -- thin: it sits under a plate, not beside it
         textPadding = 0.15,
-        showName = true,
         showHealthText = true,
         showPowerText = true,
-        showLevel = true,
-        showHealPrediction = true,
         classColors = true,
         frameStrata = "MEDIUM",
-        styleNamePlates = true,  -- the game's nameplates in this look (NamePlates.lua)
+        -- The party's four frames: a size and layer of their own, smaller
+        -- than the rest to start (0.8 of the defaults above).
+        partyWidth = 120,
+        partyHealth = 24,
+        partyPower = 8,
+        partyStrata = "MEDIUM",
         -- Where each frame's buffs and debuffs go: "below", "above" or "off"
         -- (UnitAuras.lua). The game has none on the target of target.
         targetAuras = "below",
         focusAuras = "below",
         targettargetAuras = "off",
         petAuras = "below",      -- the game's pet frame shows them too
+        partyAuras = "right",    -- beside each party frame: "right" or "off"
     }
 
     -- Saved keys that are not settings: where each frame was put.
@@ -71,6 +80,8 @@ do -- private scope
         focusLeft = true, focusTop = true, focusPlaced = true,
         targettargetLeft = true, targettargetTop = true, targettargetPlaced = true,
         petLeft = true, petTop = true, petPlaced = true,
+        -- The party's column, party1's top left; the others hang under it.
+        partyLeft = true, partyTop = true, partyPlaced = true,
     }
 
     -- SECRET VALUES
@@ -113,9 +124,12 @@ do -- private scope
     -- owner, not the pet.
     pcall(NS.RegisterUnitEvent, NS, "UNIT_PET", "player")
     -- Who leads the group, for the crown over a frame. Neither names a unit.
-    for _, event in ipairs({ "PARTY_LEADER_CHANGED", "GROUP_ROSTER_UPDATE" }) do
+    -- And the party's roles (the icon after a member's level).
+    for _, event in ipairs({ "PARTY_LEADER_CHANGED", "GROUP_ROSTER_UPDATE", "PLAYER_ROLES_ASSIGNED" }) do
         pcall(NS.RegisterEvent, NS, event)
     end
+    -- Resting starting or ending, for the "Zzz" over the player's level.
+    pcall(NS.RegisterEvent, NS, "PLAYER_UPDATE_RESTING")
 
     NS:SetScript("OnEvent", function(_, event, ...) onEvent(event, ...) end)
     NS:SetScript("OnUpdate", function(_, elapsed) onUpdate(elapsed) end)
@@ -130,7 +144,8 @@ do -- private scope
     function NS.Normalise(db)
         if db.playerLeft == nil or db.playerTop == nil
            or db.targetLeft == nil or db.targetTop == nil
-           or db.petLeft == nil or db.petTop == nil then
+           or db.petLeft == nil or db.petTop == nil
+           or db.partyLeft == nil or db.partyTop == nil then
             PlaceFrames()
         end
     end
@@ -153,6 +168,11 @@ do -- private scope
                 NS.UnitPlate.SMALL_SCALE),
             pet = NS.UnitPlate.New("pet", "Pet", NS.UnitPlate.SMALL_SCALE),
         }
+        -- The party: the target frame's design, a little smaller, in a column.
+        for index = 1, 4 do
+            local unit = "party" .. index
+            NS.plates[unit] = NS.UnitPlate.New(unit, "Party" .. index, NS.UnitPlate.PARTY_SCALE)
+        end
     end
 
     -- Default placement: one row across the lower part of the screen. The focus
@@ -168,6 +188,10 @@ do -- private scope
     local CENTRE_GAP      = 140    -- clear space each side of the middle
     local SIDE_GAP        = 8      -- between a frame and the one beside it
     local PET_GAP         = 6      -- the player's border to the pet's name band
+    -- The party's column: against the left edge of the screen - just its
+    -- border's width in, so the border is not cut off - and centred top to
+    -- bottom (the player asked). See NS.PlaceParty.
+    local PARTY_EDGE      = DogsForeverUI.Style.BORDER_INSET + 1
 
     -- The top of that row, as a TOPLEFT offset from the top of the screen.
     local function RowTop(screenHeight)
@@ -215,6 +239,27 @@ do -- private scope
         end
 
         NS.PlacePet()
+        NS.PlaceParty()
+    end
+
+    -- THE PARTY'S COLUMN, by default against the left edge and centred top to
+    -- bottom: the whole column as it is drawn - the first frame's name row
+    -- over it down to the last frame's border - with as much screen above it
+    -- as below. Worked out from the party frames' size, so until the column
+    -- is put somewhere by the player it stays centred when that changes:
+    -- Refresh asks again every time.
+    function NS.PlaceParty()
+        local db = NS.db
+        if db.partyPlaced then return end
+        local screenHeight = GetScreenHeight() or 0
+        if screenHeight <= 0 then screenHeight = 768 end
+        local UnitPlate = NS.UnitPlate
+        local _, health, power = UnitPlate.Size(db, { partyIndex = 1 })
+        local nameRow = UnitPlate.TopRoom() * UnitPlate.PARTY_SCALE
+        local inset = DogsForeverUI.Style.BORDER_INSET
+        local column = nameRow + 3 * UnitPlate.PartyStep(db) + health + 1 + power + inset
+        db.partyLeft = PARTY_EDGE
+        db.partyTop = -(screenHeight - column) / 2 - nameRow
     end
 
     -- THE PET, by default right under the player's frame and lined up with its
@@ -257,7 +302,7 @@ do -- private scope
             return
         end
 
-        if not NS.db.enabled or not NS.plates then return end
+        if not NS.plates then return end
 
         if event == "PLAYER_TARGET_CHANGED" then
             -- The target's target goes with it.
@@ -280,11 +325,14 @@ do -- private scope
         elseif event == "UNIT_TARGET" then
             -- Whose target changed. The only one drawn here is the target's.
             if ... == "target" then NS.plates.targettarget:Update() end
+        elseif event == "PLAYER_UPDATE_RESTING" then
+            NS.plates.player:Update()
         elseif event == "UNIT_PET" then
             -- A new pet can arrive between two looks of the unit watch, with
             -- no hide and show in between to repaint the plate.
             NS.plates.pet:Update()
-        elseif event == "PARTY_LEADER_CHANGED" or event == "GROUP_ROSTER_UPDATE" then
+        elseif event == "PARTY_LEADER_CHANGED" or event == "GROUP_ROSTER_UPDATE"
+               or event == "PLAYER_ROLES_ASSIGNED" then
             for _, plate in pairs(NS.plates) do plate:Update() end
         else
             -- A unit event: (unit, ...). Only the units drawn here matter.
@@ -315,6 +363,11 @@ do -- private scope
         sinceUpdate = 0
 
         for _, plate in pairs(NS.plates) do plate:OnUpdate(step) end
+        -- The game's party frames set their own alpha: kept faded while the
+        -- party's frames are these (or given back once raid-style is on).
+        -- Mostly done at once, right after the game's own code (HoldPartyNow);
+        -- this pass is the backstop, and picks up member frames made since.
+        NS.BlizzardFrames.HoldPartyNow()
     end
 
     -------------------------------------------------------------------------
@@ -322,8 +375,10 @@ do -- private scope
     -------------------------------------------------------------------------
 
     function Refresh()
-        -- The pet goes with the player's frame until it is placed itself.
+        -- The pet goes with the player's frame until it is placed itself, and
+        -- the party's column stays centred at its size until it is.
         NS.PlacePet()
+        NS.PlaceParty()
 
         -- The plates may not exist yet - a /reload in the middle of a fight
         -- leaves them until it ends - but the game's frames are not waiting on

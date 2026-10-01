@@ -69,8 +69,9 @@ do -- private scope
     NS.key = "cooldowns"
     NS.title = "Cooldowns"
 
+    -- Always on (the player, 2026-09-29): with nothing in the list there is
+    -- nothing on screen anyway.
     NS.defaults = {
-        enabled = true,
         unlocked = false,
         barWidth = 150,          -- the whole row, icon included: the player frame's width
         barHeight = 20,          -- the castbar's height
@@ -183,6 +184,62 @@ do -- private scope
         table.insert(NS.db.tracked, entry)
         Refresh()
         return true, "Tracking " .. name .. "."
+    end
+
+    -- Whether the player has it: a spell in the spellbook (that rank, or
+    -- another the game knows by its name), an item in the bags or worn.
+    local function Yours(kind, id)
+        if kind == "spell" then
+            local inBook = Api("C_SpellBook", "IsSpellInSpellBook")
+            if Call(inBook, id) == true then return true end
+            local name = Call(Api("C_Spell", "GetSpellName"), id)
+            if not (Plain(name) and type(name) == "string") then return false end
+            local info = Call(Api("C_Spell", "GetSpellInfo"), name)
+            local known = type(info) == "table" and info.spellID
+            return Plain(known) and type(known) == "number" and Call(inBook, known) == true
+        end
+        local count = Call(Api("C_Item", "GetItemCount"), id)
+        if Plain(count) and type(count) == "number" and count > 0 then return true end
+        return Call(Api("C_Item", "IsEquippedItem"), id) == true
+    end
+
+    -- What the options' one Add button calls, with whatever was typed:
+    --
+    --   * "spell 2983" or "item 6948" (also "Spell ID 2983", as the tooltips
+    --     write it, or just "s"/"i" before the number) adds that kind;
+    --   * a bare number is whichever of the two has that ID. Spell and item
+    --     IDs overlap, so when both do, it is the one you have - the spell in
+    --     your spellbook or the item in your bags or worn. When that does not
+    --     settle it either, nothing is added and the line names both, so the
+    --     kind can be typed.
+    local PREFIXES = { s = "spell", spell = "spell", i = "item", item = "item" }
+
+    function NS.AddID(text)
+        text = type(text) == "string" and text:lower():match("^%s*(.-)%s*$") or tostring(text or "")
+        local word, number = text:match("^(%a+)%s*[:%s]%s*i?d?%s*:?%s*(%d+)$")
+        if not word then word, number = text:match("^(%a+)(%d+)$") end
+        if word then
+            local kind = PREFIXES[word] or PREFIXES[word:match("^(%a+)id$") or ""]
+            if not kind then return false, "Type an ID, or spell or item and an ID." end
+            return NS.Add(kind, number)
+        end
+
+        local id = tonumber(text)
+        if not id or id <= 0 or id % 1 ~= 0 then
+            return false, "Type a spell or item ID: a whole number."
+        end
+        local spell, item = NS.Exists("spell", id), NS.Exists("item", id)
+        if spell and item then
+            local mySpell, myItem = Yours("spell", id), Yours("item", id)
+            if mySpell ~= myItem then return NS.Add(mySpell and "spell" or "item", id) end
+            local spellName = NS.Describe({ kind = "spell", id = id })
+            local itemName = NS.Describe({ kind = "item", id = id })
+            return false, id .. " is the spell " .. spellName .. " and the item " .. itemName
+                .. ": type spell " .. id .. " or item " .. id .. "."
+        end
+        if spell then return NS.Add("spell", id) end
+        if item then return NS.Add("item", id) end
+        return false, "No spell or item has the ID " .. id .. "."
     end
 
     -- For a spell with a cooldown: what its row tracks. "cooldown" (the
@@ -660,8 +717,8 @@ do -- private scope
         if instant then Style.ShowNow(frame) else Style.FadeIn(frame) end
     end
 
-    -- While unlocked: every bar, full, so there is something to drag and the
-    -- space they take shows. The first says what it is; with nothing tracked,
+    -- While unlocked: every bar, empty and striped like every bar being
+    -- placed, so there is something to drag and the space they take shows. The first says what it is; with nothing tracked,
     -- one bar stands in.
     local function ShowPlacing()
         local tracked = NS.db.tracked
@@ -672,12 +729,13 @@ do -- private scope
             local name, texture = "Cooldowns", QUESTION_MARK
             if entry then name, texture = NS.Describe(entry) end
             row.icon:SetTexture(texture)
+            -- Empty, as every bar being placed is, so its stripes show.
             row.bar:SetMinMaxValues(0, 1)
-            row.bar:SetValue(1)
+            row.bar:SetValue(0)
             row.spark:SetAlpha(0)
             row.countText:SetText("")
             row.nameText:SetText(index == 1 and "Cooldowns" or name)
-            row.timeText:SetText(index == 1 and Style.PLACEMENT_LABEL or "")
+            row.timeText:SetText("")
             BarSlot(row, index, true)
             Style.ShowNow(row)
         end
@@ -739,7 +797,7 @@ do -- private scope
         local db = NS.db
         Follow()
         local tracked = db.tracked
-        if not db.enabled or (#tracked == 0 and not db.unlocked) then
+        if #tracked == 0 and not db.unlocked then
             for _, row in pairs(rows) do Style.HideNow(row) end
             holder:Hide()
             return

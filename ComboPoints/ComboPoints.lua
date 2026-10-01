@@ -9,11 +9,11 @@
 -- while this is on (BlizzardComboFrame.lua).
 --
 -- Part of the castbar group, like the five-second countdown, and in the same
--- row as it - just above the castbar, under the swing bars - since the two are
--- never wanted together: a rogue has no mana. It takes the castbar's size,
--- strata and placement mode, goes wherever the castbar goes until it is
--- dragged somewhere of its own, and its one switch, Combo points, is in the
--- options' Castbars section. It has no section of its own.
+-- row as it - just above the castbar, centred on it, under the swing bars -
+-- since the two are never wanted together: a rogue has no mana. Its size and
+-- layer are its own (Sizes, "Combo points"); it takes the castbar's placement
+-- mode and text padding, and goes wherever the castbar goes until it is
+-- dragged or given a position of its own (Positions). Always on, no switch.
 --
 -- NOTHING IS READ. GetComboPoints is SecretWhenUnitPowerRestricted, so the
 -- count is never compared or counted with. Each segment is a status bar of its
@@ -34,14 +34,28 @@ do -- private scope
     NS.key = "combo"
     NS.title = "Combo"
 
-    -- Only what is its own: everything else is the castbar's (see above).
+    -- Always on (the player, 2026-09-29), no switch. Its own size and layer
+    -- since then; it took the castbar's before, and `sized` says that was
+    -- copied over once, so no bar changes size on the way.
     NS.defaults = {
-        enabled = true,
+        barWidth = 130,
+        barHeight = 20,
+        frameStrata = "MEDIUM",
+        sized = false,
     }
 
-    -- Where it was dragged to, once it has been. Until then it has no position
-    -- of its own.
+    -- Where it is. Until it is placed on its own it sits in its row over the
+    -- castbar, and these say where that is, for the Positions boxes.
     NS.placement = { barLeft = true, barTop = true, placed = true }
+
+    function NS.Normalise(db)
+        local castbar = DogsForeverUI.Castbar.db
+        if not db.sized and castbar then
+            db.barWidth, db.barHeight = castbar.barWidth, castbar.barHeight
+            db.frameStrata = castbar.frameStrata
+            db.sized = true
+        end
+    end
 
     -- The group's settings: size, strata, whether it is being placed.
     local function Group()
@@ -65,7 +79,7 @@ do -- private scope
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints(true)
     bar.border = Style.AddBorder(bar)
-    -- Its name and "unlocked", while it is being placed - above the segments.
+    -- Its name, while it is being placed - above the segments.
     bar.placementLabels = Style.AddPlacementLabels(bar)
 
     local segments, dividers = {}, {}
@@ -110,7 +124,7 @@ do -- private scope
     -- Lay the segments out: as many as there can be points, sharing the bar's
     -- width with a hairline between each two.
     local function Layout()
-        local db = Group()
+        local db = NS.db
         local count = MaxPoints()
         local width = (db.barWidth - (count - 1) * DIVIDER) / count
 
@@ -155,7 +169,6 @@ do -- private scope
     -- once.
     function Update(settled)
         local db = NS.db
-        if not db.enabled then Style.HideNow(bar); return end
 
         -- Placed with the castbar group - by a character that has combo points
         -- to show: nobody else has anything to place here.
@@ -186,15 +199,17 @@ do -- private scope
         local castbar = DogsForeverUI.Castbar
 
         bar:ClearAllPoints()
-        bar:SetFrameStrata(group.frameStrata or "MEDIUM")
-        bar:SetSize(group.barWidth, group.barHeight)
+        bar:SetFrameStrata(db.frameStrata or "MEDIUM")
+        bar:SetSize(db.barWidth, db.barHeight)
         if db.placed then
-            -- Dragged somewhere of its own: it stays there.
+            -- Placed somewhere of its own: it stays there.
             bar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
         else
             -- The countdown's row: just above the castbar, centred on it, and
-            -- wherever that goes.
+            -- wherever that goes. Where that is, written back for the
+            -- Positions boxes.
             bar:SetPoint("BOTTOM", castbar.CastBar.castbar, "TOP", 0, castbar.STACK_GAP)
+            db.barLeft, db.barTop = castbar.OverCastbar(db.barWidth, db.barHeight, castbar.STACK_GAP)
         end
         bar:SetMovable(true)
         -- After SetMovable: SetUserPlaced errors on a frame that is neither

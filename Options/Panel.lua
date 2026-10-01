@@ -1,19 +1,32 @@
--- The options: one panel in the game's Settings, one page, and - listed under
--- it - a tab for the cooldown manager (the player asked for everything else in
--- one place, and for the cooldown manager on its own).
+-- The options: a window of the addon's own, in the frames' look, opened from
+-- its button at the end of the micro menu (Menus\OptionsButton.lua) - the one
+-- way in. It is not in the game's Settings any more (the player asked for its
+-- own window, 2026-09-29).
 --
--- At the top, always in reach: the one Unlock UI button that places every
--- piece at once, and the one Reset everything. Under them the page scrolls, in
--- sections: each part's switches two to a row, then one Sizes section with a
--- row per element (width, heights, layer) and the text padding, then one
--- Positions section with a row per piece that can be placed. Every setting
--- explains itself in its tooltip. Pages.lua describes the page; this file is
--- the widgets, the layout and the registration.
+--   +------------------------------------------------------------------+
+--   | [icon] Dog's Forever UI              [Unlock UI] [Reset all] [x] |  header: drag to move
+--   +------------+-----------------------------------------------------+
+--   | Unit frames|  Unit frames                                        |
+--   | Castbars   |  +-----------------------------------------------+  |
+--   | XP bar     |  | Enabled                                  [==] |  |  a card of rows:
+--   | ...        |  | what it does, in a line or two                |  |  name, what it does,
+--   |            |  +-----------------------------------------------+  |  the control on the right
+--   |            |  Castbars ...                                       |
+--   +------------+-----------------------------------------------------+
 --
--- Two rules carried over: every position comes from a running cursor rather
--- than a magic number, so adding an option cannot land on top of something
--- else, and every widget registers its own refresh closure, so refreshing the
--- panel never has to know what is on it.
+-- ONE PAGE, as the player wants it (no tabs - 2026-09-27): every section on
+-- one scrolling page. The sidebar is its table of contents: a click glides
+-- the page to that section, and whichever section you are reading is lit as
+-- you scroll. The cooldown manager and the profiles are sections like the
+-- rest.
+--
+-- Every setting says what it does under its name, rather than in a tooltip.
+-- Changes take effect at once - there is no Apply. What a click did that is
+-- not plain to see (a profile saved, an ID refused) shows in a toast at the
+-- foot of the window. Esc or the cross closes it; the header drags it.
+--
+-- The window is built the first time it is opened. Pages.lua describes what
+-- is on the page; Widgets.lua draws the controls; this file lays them out.
 
 local Options = {}
 DogsForeverUI.Options = Options
@@ -21,270 +34,40 @@ DogsForeverUI.Options = Options
 do -- private scope
 
     local Core = DogsForeverUI
+    local Style = Core.Style
+    local W = Core.Widgets
     local TITLE = Core.TITLE
     local PANEL_NAME = Core.ADDON_NAME .. "Options"
 
-    local panel
+    local WIDTH, HEIGHT = 880, 620
+    local HEADER = 52
+    local SIDEBAR = 190
+    local PAD = 28                  -- the page's margins, left and right
+    local GUTTER = 14               -- room for the scrollbar
+    local INSET = 4                 -- so a card's outline is not cut off
+    local CONTENT_WIDTH = WIDTH - SIDEBAR - 2 * PAD - GUTTER - 2 * INSET
+    local CARD_PAD = 16             -- inside a card, left and right
+    local ROW_MIN = 46
+    local TOP_PAD = 20
+    local SECTION_GAP = 34
+    local NAV_ROW = 32
+    local SEPARATOR = { 1, 1, 1, 0.06 }
+    local BACKGROUND = { Style.BACKGROUND_COLOR[1], Style.BACKGROUND_COLOR[2],
+                         Style.BACKGROUND_COLOR[3], 0.96 }
+
+    local window, content, scrollFrame, scroller
     local refreshers = {}
-
-    ---------------------------------------------------------------------------
-    -- Widget factories. Templates differ between clients, so every CreateFrame
-    -- goes through TryCreate and a missing template costs one widget, not the
-    -- panel.
-    ---------------------------------------------------------------------------
-
-    -- Current templates only, verified against the Blizzard source in this
-    -- install.
-    local CHECK_TEMPLATES = { "UICheckButtonTemplate", "ChatConfigCheckButtonTemplate" }
-    local SLIDER_TEMPLATES = { "UISliderTemplateWithLabels", "UISliderTemplate" }
-    local BUTTON_TEMPLATES = { "UIPanelButtonTemplate" }
-
-    local EDIT_BACKDROP = {
-        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-        tile = true,
-        tileSize = 26,
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    }
-
-    local function TryCreate(kind, parent, templates, name)
-        for _, template in ipairs(templates) do
-            local ok, widget = pcall(CreateFrame, kind, name, parent, template)
-            if ok and widget then return widget end
-        end
-        return nil
-    end
-
-    -- Templates expose their label in different places, and on some of them
-    -- `.text` is a plain string rather than a font string, so check for the
-    -- method.
-    local function AsFontString(candidate)
-        if type(candidate) == "table" and type(candidate.SetText) == "function" then
-            return candidate
-        end
-        return nil
-    end
-
-    local function LabelOf(widget)
-        local name = widget:GetName()
-        return AsFontString(widget.Text)
-            or AsFontString(widget.text)
-            or AsFontString(name and _G[name .. "Text"])
-    end
+    local sections = {}
+    local describe
+    Options.sections = sections
+    Options.controls = {}           -- ["Section/Label"] = the row's control
 
     local function Refresh()
-        for i = 1, #refreshers do refreshers[i]() end
+        for index = 1, #refreshers do refreshers[index]() end
     end
 
-    -- A setting's tooltip: its name, and what it does.
-    local function AddTooltip(widget, title, text)
-        widget:HookScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(title, 1, 1, 1)
-            GameTooltip:AddLine(text, nil, nil, nil, true)
-            GameTooltip:Show()
-        end)
-        widget:HookScript("OnLeave", function() GameTooltip:Hide() end)
-    end
-
-    -- A small title over a box or a dropdown, in the addon's font.
-    local function AddTitle(parent, text)
-        local title = parent:CreateFontString(nil, "ARTWORK")
-        title:SetFont(DogsForeverUI.Style.FONT, 12, "")
-        title:SetText(text)
-        return title
-    end
-
-    -- A number box: one line, centred, on a dark tooltip backdrop.
-    local function NewEditBox(parent, name, width, maxLetters)
-        local box = CreateFrame("EditBox", name, parent, "BackdropTemplate")
-        box:SetSize(width, 25)
-        box:SetBackdrop(EDIT_BACKDROP)
-        box:SetBackdropColor(0, 0, 0, 1)
-        box:SetMultiLine(false)
-        box:SetAutoFocus(false)
-        box:SetMaxLetters(maxLetters)
-        box:SetJustifyH("CENTER")
-        box:SetJustifyV("MIDDLE")
-        box:SetFontObject(GameFontNormal)
-        return box
-    end
-
-    local function AddCheck(parent, x, y, label, tooltip, get, set)
-        local check = TryCreate("CheckButton", parent, CHECK_TEMPLATES)
-        if not check then return nil end
-
-        check:SetPoint("TOPLEFT", x, y)
-        local text = LabelOf(check)
-        if not text then
-            text = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-            text:SetPoint("LEFT", check, "RIGHT", 2, 0)
-        end
-        text:SetText(label)
-
-        check:SetScript("OnClick", function(self) set(self:GetChecked() and true or false) end)
-        if tooltip then AddTooltip(check, label, tooltip) end
-
-        refreshers[#refreshers + 1] = function() check:SetChecked(get() and true or false) end
-        return check
-    end
-
-    -- spec = { label, min, max, step, get, set, text, lowText, highText }
-    local function AddSlider(parent, x, y, spec)
-        local slider = TryCreate("Slider", parent, SLIDER_TEMPLATES)
-        if not slider then return nil end
-
-        slider:SetPoint("TOPLEFT", x, y)
-        -- The template has no size of its own: without a height the slider is
-        -- zero tall and draws nothing - bar, thumb and labels all gone, just
-        -- an empty gap where it should be. 17 is Blizzard's own
-        -- (OptionsSliderTemplate, the same template with a size).
-        slider:SetSize(200, 17)
-        slider:SetOrientation("HORIZONTAL")
-        slider:SetMinMaxValues(spec.min, spec.max)
-        slider:SetValueStep(spec.step)
-        slider:SetObeyStepOnDrag(true)
-
-        local name = slider:GetName()
-        local title = LabelOf(slider)
-        if not title then
-            title = slider:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-            title:SetPoint("BOTTOM", slider, "TOP", 0, 2)
-        end
-        local low = AsFontString(slider.Low) or AsFontString(name and _G[name .. "Low"])
-        local high = AsFontString(slider.High) or AsFontString(name and _G[name .. "High"])
-        if low then low:SetText(spec.lowText or spec.min) end
-        if high then high:SetText(spec.highText or spec.max) end
-
-        -- Rounded before formatting rather than left to "%d" to truncate: a
-        -- slider step of 0.01 produces values like 55.00000000000001, which some
-        -- Lua versions refuse to format as an integer at all.
-        local function Caption(value)
-            local shown = spec.text and spec.text(value)
-                or string.format("%d", math.floor((value or 0) + 0.5))
-            return spec.label .. ": " .. shown
-        end
-
-        slider:SetScript("OnValueChanged", function(_, value)
-            value = math.floor(value / spec.step + 0.5) * spec.step
-            spec.set(value)
-            title:SetText(Caption(value))
-        end)
-
-        refreshers[#refreshers + 1] = function()
-            local value = spec.get() or spec.min
-            slider:SetValue(value)
-            title:SetText(Caption(value))
-        end
-        return slider
-    end
-
-    local function AddButton(parent, x, y, label, width, onClick)
-        local button = TryCreate("Button", parent, BUTTON_TEMPLATES)
-        if not button then return nil end
-        button:SetPoint("TOPLEFT", x, y)
-        button:SetWidth(width)
-        button:SetHeight(22)
-        button:SetText(label)
-        button:SetScript("OnClick", onClick)
-        return button
-    end
-
-    local function AddText(parent, x, y, text, font, width)
-        local fs = parent:CreateFontString(nil, "ARTWORK", font)
-        fs:SetPoint("TOPLEFT", x, y)
-        fs:SetJustifyH("LEFT")
-        if width then
-            fs:SetWidth(width)
-            fs:SetWordWrap(true)
-        end
-        fs:SetText(text)
-        return fs
-    end
-
-    -- A number box with its title above it. Anything that is not a number is
-    -- put back rather than stored: a nil width reaches SetWidth and takes the
-    -- bar down with it. `limits` = { min, max, decimals }, optional: a number
-    -- outside min..max is put back too, and `decimals` shows tenths.
-    local function AddEditBox(parent, name, x, y, title, get, set, limits)
-        limits = limits or {}
-        -- Six letters, not four: a position on a tall screen is a negative
-        -- four-digit number, and a shorter limit silently cut the minus sign
-        -- off it.
-        local box = NewEditBox(parent, name, 75, 6)
-        box:SetPoint("TOPLEFT", x, y)
-        AddTitle(box, title):SetPoint("TOP", 0, 12)
-
-        local function Show()
-            local value = get()
-            if type(value) ~= "number" then
-                box:SetText("")
-            elseif limits.decimals then
-                -- Tenths, without a trailing ".0" on a whole number.
-                local text = string.format("%.1f", value):gsub("%.0$", "")
-                box:SetText(text)
-            else
-                box:SetText(tostring(math.floor(value + 0.5)))
-            end
-        end
-
-        box:SetScript("OnEnterPressed", function(self)
-            local value = tonumber(self:GetText())
-            if value and limits.decimals then value = math.floor(value * 10 + 0.5) / 10 end
-            if value and (limits.min and value < limits.min
-                          or limits.max and value > limits.max) then
-                value = nil
-            end
-            if value then set(value) end
-            Show()
-            self:ClearFocus()
-        end)
-        box:SetScript("OnEscapePressed", function(self)
-            Show()
-            self:ClearFocus()
-        end)
-
-        refreshers[#refreshers + 1] = Show
-        box:SetCursorPosition(0)
-        return box
-    end
-
-    -- A dropdown of named choices. choices = { { value, label }, ... }
-    --
-    -- Blizzard_Menu, not UIDropDownMenu. Blizzard's own 11.0 implementation
-    -- guide says UIDropDownMenu "is now deprecated", that Blizzard_Menu is "a
-    -- complete replacement", and that no shims were provided. The button works
-    -- out its own label from whichever radio reports itself selected.
-    local function AddChoice(parent, x, y, width, choices, get, set)
-        local ok, dropdown = pcall(CreateFrame, "DropdownButton", nil, parent,
-            "WowStyle1DropdownTemplate")
-        if not ok or not dropdown then return nil end
-
-        dropdown:SetPoint("TOPLEFT", x, y)
-        dropdown:SetWidth(width)
-
-        local function Selected(value) return get() == value end
-        dropdown:SetupMenu(function(_, rootDescription)
-            for _, choice in ipairs(choices) do
-                rootDescription:CreateRadio(choice.label, Selected, set, choice.value)
-            end
-        end)
-        refreshers[#refreshers + 1] = function() dropdown:GenerateMenu() end
-        return dropdown
-    end
-
-    -- The layer dropdown: every frame strata, each named as itself.
-    local STRATA = {}
-    for _, value in ipairs({
-        "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
-        "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP",
-    }) do
-        STRATA[#STRATA + 1] = { value = value, label = value }
-    end
-
-    local function AddStrata(parent, x, y, get, set)
-        return AddChoice(parent, x, y, 120, STRATA, get, set)
+    local function Register(refresh)
+        refreshers[#refreshers + 1] = refresh
     end
 
     function Options.Percent(value)
@@ -296,519 +79,797 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- THE PAGE: one, scrolling, in sections from top to bottom. Inside a
-    -- section, settings sit two to a row in two fixed columns, so everything
-    -- lines up; a section always starts on a fresh row under a heading.
+    -- THE TOAST: one line at the foot of the window saying what a click did.
     ---------------------------------------------------------------------------
 
-    local LEFT, RIGHT = 16, 320
-    local CONTENT_WIDTH = 600
-    local CHECK_ROW = 26
-    local SLIDER_ROW = 62
-    local BOX_ROW = 52
-    local CHOICE_ROW = 56
-    local HEADING_ROW = 30
-    local SECTION_GAP = 14
+    local toast
 
-    -- The size rows: the element's name, then its boxes, then its layer.
-    local SIZE_LABEL_WIDTH = 110
-    local SIZE_BOX_X = LEFT + SIZE_LABEL_WIDTH
-    local SIZE_BOX_STEP = 84
-    local SIZE_STRATA_X = SIZE_BOX_X + 4 * SIZE_BOX_STEP + 6
+    local function BuildToast()
+        toast = CreateFrame("Frame", nil, window)
+        toast:SetHeight(30)
+        toast:SetPoint("BOTTOM", window, "BOTTOM", SIDEBAR / 2, 18)
+        toast:SetFrameLevel(window:GetFrameLevel() + 40)
+        local bg = W.Flat(toast, "BACKGROUND", { 0.09, 0.09, 0.09, 0.97 })
+        bg:SetAllPoints(toast)
+        toast.border = W.Border(toast)
+        toast.dot = W.Flat(toast, "ARTWORK", W.GOOD)
+        toast.dot:SetSize(6, 6)
+        toast.dot:SetPoint("LEFT", toast, "LEFT", 12, 0)
+        toast.text = W.Text(toast, 12)
+        toast.text:SetPoint("LEFT", toast.dot, "RIGHT", 8, 0)
+        toast:Hide()
+    end
 
-    -- A gold hairline under a heading, `width` long from the left margin.
-    local function AddRule(content, y, width)
-        local rule = content:CreateTexture(nil, "ARTWORK")
-        rule:SetColorTexture(1, 0.82, 0, 0.25)
-        rule:SetPoint("TOPLEFT", content, "TOPLEFT", LEFT, y)
-        rule:SetSize(width, 1)
+    -- ok: whether it worked (a green or a red mark, and a longer stay if not).
+    function Options.Say(ok, message)
+        if not toast or not message then return end
+        toast.text:SetText(message)
+        W.Colour(toast.dot, ok and W.GOOD or W.BAD)
+        W.SetTextColour(toast.text, ok and W.TEXT or W.BAD)
+        local width = toast.text.GetStringWidth and toast.text:GetStringWidth() or 300
+        toast:SetWidth(math.min(WIDTH - SIDEBAR - 40, (width or 300) + 40))
+        toast.message = message
+        Style.FadeIn(toast)
+        local token = (toast.token or 0) + 1
+        toast.token = token
+        C_Timer.After(ok and 3 or 6, function()
+            if toast.token == token then Style.FadeOut(toast) end
+        end)
+    end
+
+    ---------------------------------------------------------------------------
+    -- THE PAGE: sections top to bottom, each a heading, an optional line
+    -- under it and a card of rows. Rows know their own height (Measure), so
+    -- a list that grows lays the page out again below it (Relayout).
+    ---------------------------------------------------------------------------
+
+    local function Relayout()
+        if not content then return end
+        local y = TOP_PAD
+        for _, section in ipairs(sections) do
+            section.top = y
+            section.heading:ClearAllPoints()
+            section.heading:SetPoint("TOPLEFT", content, "TOPLEFT", INSET, -y)
+            y = y + 22
+            if section.note then
+                section.note:ClearAllPoints()
+                section.note:SetPoint("TOPLEFT", content, "TOPLEFT", INSET, -y)
+                section.note:SetPoint("TOPRIGHT", content, "TOPLEFT", INSET + CONTENT_WIDTH, -y)
+                y = y + W.FitText(section.note) + 6
+            end
+            y = y + 8
+            local card = section.card
+            card:ClearAllPoints()
+            card:SetPoint("TOPLEFT", content, "TOPLEFT", INSET, -y)
+            local inside = 0
+            for index, row in ipairs(section.rows) do
+                local height = row.Measure()
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", card, "TOPLEFT", 0, -inside)
+                row:SetHeight(height)
+                row.separator:SetShown(index > 1)
+                inside = inside + height
+            end
+            card:SetHeight(math.max(1, inside))
+            y = y + inside + SECTION_GAP
+        end
+        content:SetHeight(y - SECTION_GAP + 40)
+        if scroller then scroller.Update() end
+        W.SnapBorders()
+    end
+    Options.Relayout = Relayout
+
+    local function AddRow(section, row)
+        row:SetWidth(CONTENT_WIDTH)
+        row.separator = W.Hairline(row, SEPARATOR, 0, CARD_PAD, CARD_PAD)
+        section.rows[#section.rows + 1] = row
+        return row
     end
 
     local Page = {}
     Page.__index = Page
 
-    local function NewPage(content)
-        return setmetatable({
-            content = content,
-            y = -8,          -- the top of the next row
-            column = 1,      -- which column the next setting takes
-            rowHeight = 0,   -- the tallest setting on the row being filled
-            sections = 0,
-        }, Page)
-    end
-
-    -- A setting changed: its module redraws, and the panel shows what the
+    -- A setting changed: its module redraws, and the page shows what the
     -- settings are now.
     function Page:Changed(module)
         if module and module.Refresh then module.Refresh() end
         Refresh()
     end
 
-    -- Close the row being filled, if any.
+    function Page:Section(title, note)
+        local section = { title = title, rows = {} }
+        section.heading = W.Text(content, 16, W.TEXT, true)
+        section.heading:SetText(title)
+        if note then
+            section.note = W.Text(content, 12, W.MUTED, false, CONTENT_WIDTH)
+            section.note:SetText(note)
+        end
+        section.card = W.Card(content)
+        section.card:SetWidth(CONTENT_WIDTH)
+        sections[#sections + 1] = section
+        self.section = section
+        self.pair = nil
+    end
+
+    -- Closes a half-filled pair of small switches: the next one starts a row.
     function Page:EndRow()
-        if self.column == 2 then
-            self.y = self.y - self.rowHeight
-            self.column, self.rowHeight = 1, 0
+        self.pair = nil
+    end
+
+    -- A row with a name, a line or two on what it does, and its control on
+    -- the right. `clickable`: the whole row presses the control.
+    local function SettingRow(page, label, description, controlWidth, clickable)
+        local row = CreateFrame(clickable and "Button" or "Frame", nil, page.section.card)
+        row.hover = W.Flat(row, "BACKGROUND", { 1, 1, 1, 0.035 })
+        row.hover:SetAllPoints(row)
+        row.hover:Hide()
+        if clickable then
+            row:RegisterForClicks("LeftButtonUp")
+            row:SetScript("OnEnter", function(self) self.hover:Show() end)
+            row:SetScript("OnLeave", function(self) self.hover:Hide() end)
         end
-    end
 
-    -- The next slot in the two columns, `height` tall: its x and its top.
-    function Page:Slot(height)
-        local x = self.column == 1 and LEFT or RIGHT
-        local y = self.y
-        self.rowHeight = math.max(self.rowHeight, height)
-        if self.column == 1 then
-            self.column = 2
-        else
-            self.y = self.y - self.rowHeight
-            self.column, self.rowHeight = 1, 0
+        local textWidth = CONTENT_WIDTH - 2 * CARD_PAD - controlWidth - 24
+        row.label = W.Text(row, 13, W.TEXT)
+        row.label:SetWidth(textWidth)
+        row.label:SetText(label)
+        row.label:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, description and -13 or -16)
+        if description then
+            row.description = W.Text(row, 12, W.MUTED, false, textWidth)
+            row.description:SetText(description)
+            row.description:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -4)
+            row.description:SetPoint("TOPRIGHT", row.label, "BOTTOMLEFT", textWidth, -4)
         end
-        return x, y
+        function row.Measure()
+            local height = 13 + (row.label:GetStringHeight() or 14) + 13
+            if row.description then height = height + 4 + W.FitText(row.description) end
+            return math.max(ROW_MIN, height)
+        end
+        AddRow(page.section, row)
+        return row
     end
 
-    function Page:Section(title)
-        self:EndRow()
-        if self.sections > 0 then self.y = self.y - SECTION_GAP end
-        self.sections = self.sections + 1
-        AddText(self.content, LEFT, self.y, title, "GameFontNormalLarge")
-        AddRule(self.content, self.y - 22, CONTENT_WIDTH - 2 * LEFT)
-        self.y = self.y - HEADING_ROW
+    local function Keep(page, label, control)
+        Options.controls[page.section.title .. "/" .. label] = control
     end
 
-    -- entry = { module, key, label, tooltip }
+    -- entry = { module, key, label, tooltip (what it does), compact }
+    -- A compact switch has no line of its own: two share a row, name and
+    -- switch each (the action bars under Auto-hide).
     function Page:Check(entry)
         local module, db = entry.module, entry.module.db
-        local x, y = self:Slot(CHECK_ROW)
-        AddCheck(self.content, x, y, entry.label, entry.tooltip,
-            function() return db[entry.key] end,
-            function(value)
-                db[entry.key] = value
-                self:Changed(module)
-            end)
+        local function Get() return db[entry.key] end
+        local function Set(value)
+            db[entry.key] = value
+            self:Changed(module)
+        end
+
+        local toggle
+        if entry.compact then
+            local pair = self.pair
+            if not pair or pair.count == 2 then
+                pair = CreateFrame("Frame", nil, self.section.card)
+                pair.count = 0
+                function pair.Measure() return 40 end
+                AddRow(self.section, pair)
+                self.pair = pair
+            end
+            local half = (CONTENT_WIDTH - 2 * CARD_PAD) / 2
+            local cell = CreateFrame("Button", nil, pair)
+            cell:SetSize(half - 12, 32)
+            cell:SetPoint("LEFT", pair, "LEFT", CARD_PAD + pair.count * (half + 12) - 6, 0)
+            cell:RegisterForClicks("LeftButtonUp")
+            cell.hover = W.Flat(cell, "BACKGROUND", { 1, 1, 1, 0.035 })
+            cell.hover:SetAllPoints(cell)
+            cell.hover:Hide()
+            cell:SetScript("OnEnter", function(me) me.hover:Show() end)
+            cell:SetScript("OnLeave", function(me) me.hover:Hide() end)
+            cell.label = W.Text(cell, 13, W.TEXT)
+            cell.label:SetPoint("LEFT", cell, "LEFT", 6, 0)
+            cell.label:SetText(entry.label)
+            toggle = W.Toggle(cell, Get, Set)
+            toggle:SetPoint("RIGHT", cell, "RIGHT", -6, 0)
+            cell:SetScript("OnClick", function() Set(not Get()) end)
+            pair.count = pair.count + 1
+            toggle.row = cell
+        else
+            self.pair = nil
+            local row = SettingRow(self, entry.label, entry.tooltip, W.TOGGLE_WIDTH, true)
+            toggle = W.Toggle(row, Get, Set)
+            toggle:SetPoint("RIGHT", row, "RIGHT", -CARD_PAD, 0)
+            row:SetScript("OnClick", function() Set(not Get()) end)
+            toggle.row = row
+        end
+        Register(toggle.Refresh)
+        Keep(self, entry.label, toggle)
+        return toggle
     end
 
-    -- A setting with a few named values, as a dropdown under its label.
+    -- A setting with a few named values, side by side.
     -- entry = { module, key, label, tooltip, choices = { { value, label } } }
     function Page:Choice(entry)
+        self.pair = nil
         local module, db = entry.module, entry.module.db
-        local x, y = self:Slot(CHOICE_ROW)
-        AddText(self.content, x + 4, y - 4, entry.label, "GameFontHighlight")
-        local dropdown = AddChoice(self.content, x + 4, y - 22, 160, entry.choices,
+        local width = entry.segmentWidth or 72
+        local row = SettingRow(self, entry.label, entry.tooltip, width * #entry.choices)
+        local control = W.Segmented(row, entry.choices, width,
             function() return db[entry.key] end,
             function(value)
                 db[entry.key] = value
                 self:Changed(module)
             end)
-        if dropdown and entry.tooltip then AddTooltip(dropdown, entry.label, entry.tooltip) end
+        control:SetPoint("RIGHT", row, "RIGHT", -CARD_PAD, 0)
+        Register(control.Refresh)
+        Keep(self, entry.label, control)
+        return control
     end
 
-    -- entry = { module, key, label, min, max, step, lowText, highText, text }
+    -- entry = { module, key, label, description, min, max, step, text }
+    local SLIDER_WIDTH, SLIDER_VALUE = 180, 52
     function Page:Slider(entry)
+        self.pair = nil
         local module, db = entry.module, entry.module.db
-        local x, y = self:Slot(SLIDER_ROW)
-        AddSlider(self.content, x + 4, y - 18, {
-            label = entry.label, min = entry.min, max = entry.max, step = entry.step,
-            lowText = entry.lowText, highText = entry.highText, text = entry.text,
-            get = function() return db[entry.key] end,
-            set = function(value)
-                db[entry.key] = value
-                if module.Refresh then module.Refresh() end
-            end,
-        })
-    end
-
-    -- One number box. entry = { module, key, title, min, max, decimals,
-    -- onChange(old, new), placed, keepsPlacement }: onChange runs before the
-    -- redraw - a width
-    -- that keeps its bar centred moves the bar with it. A typed size or
-    -- position is the player's, so a bar the addon was placing itself
-    -- (autoPlaced) is left where it now is from then on, and `placed` names
-    -- the flag that says a unit frame has been placed.
-    local function Box(page, entry, x, y)
-        local module, db = entry.module, entry.module.db
-        return AddEditBox(page.content, PANEL_NAME .. module.key .. entry.key, x, y, entry.title,
+        local row = SettingRow(self, entry.label, entry.description, SLIDER_WIDTH + SLIDER_VALUE)
+        local slider = W.Slider(row, SLIDER_WIDTH, entry,
             function() return db[entry.key] end,
             function(value)
-                local old = db[entry.key]
                 db[entry.key] = value
+                if module.Refresh then module.Refresh() end
+            end)
+        slider:SetPoint("RIGHT", row, "RIGHT", -CARD_PAD - SLIDER_VALUE, 0)
+        Register(slider.Refresh)
+        Keep(self, entry.label, slider)
+        return slider
+    end
+
+    -- ROWS OF BOXES: the element's name, then its number boxes, each with a
+    -- small title over it. A typed size or position is the player's: a bar
+    -- the addon was placing itself (autoPlaced) stays where it now is, and
+    -- `placed` names the flag that says a unit frame has been placed.
+    -- box = { key, title, min, max, decimals, onChange(old, new), placed,
+    --         keepsPlacement }: onChange runs before the redraw - a width that
+    -- keeps its bar centred moves the bar with it.
+    --
+    -- The columns, left to right: the name (LABEL_WIDTH, never wrapped), up to
+    -- MAX_BOXES boxes, then - right-aligned, so every row's layer lines up -
+    -- the layer. Worked out so the widest row still leaves LAYER_GAP clear
+    -- before the layer (an earlier layout put the unit frames' fourth box
+    -- under the layer dropdown).
+    local LABEL_WIDTH = 116
+    local BOX_WIDTH, BOX_STEP = 60, 70
+    local BOX_X = CARD_PAD + LABEL_WIDTH + 8
+    local MAX_BOXES = 4
+    local LAYER_WIDTH, LAYER_GAP = 132, 40
+    local BOX_ROW = 62
+    local BOX_TOP = -28
+    assert(BOX_X + (MAX_BOXES - 1) * BOX_STEP + BOX_WIDTH + LAYER_GAP
+        <= CONTENT_WIDTH - CARD_PAD - LAYER_WIDTH, "the size rows do not fit")
+
+    -- `get(db)` / `set(db, value)`, optional: a box whose number is worked out
+    -- from a saved one rather than being it (the swing bars' Y, saved from
+    -- the bottom of the screen since they grow upwards).
+    local function Box(page, module, row, entry, x)
+        local db = module.db
+        local function Get()
+            if entry.get then return entry.get(db) end
+            return db[entry.key]
+        end
+        local box = W.NumberBox(row, PANEL_NAME .. module.key .. entry.key, BOX_WIDTH,
+            Get,
+            function(value)
+                local old = Get()
+                if entry.set then entry.set(db, value) else db[entry.key] = value end
                 if entry.onChange then entry.onChange(old, value) end
                 if entry.placed then db[entry.placed] = true end
-                if db.autoPlaced ~= nil and not entry.keepsPlacement then
-                    db.autoPlaced = false
-                end
+                if db.autoPlaced ~= nil and not entry.keepsPlacement then db.autoPlaced = false end
                 page:Changed(module)
             end,
             { min = entry.min, max = entry.max, decimals = entry.decimals })
+        box:SetPoint("TOPLEFT", row, "TOPLEFT", x, BOX_TOP)
+        local title = W.Text(row, 11, W.MUTED)
+        title:SetPoint("BOTTOMLEFT", box, "TOPLEFT", 1, 4)
+        title:SetText(entry.title)
+        Register(box.Refresh)
+        return box
     end
 
-    -- A row of boxes: the element's name, then its boxes.
-    -- row = { module, label, boxes = { { key, title, onChange, placed }, ... } }
-    -- Answers where the row's boxes stand, for SizeRow's layer dropdown.
-    function Page:Row(row)
-        self:EndRow()
-        local module = row.module
-        local top = self.y - 16
-        AddText(self.content, LEFT, top - 5, row.label, "GameFontHighlight")
-        for index, entry in ipairs(row.boxes) do
-            entry.module = module
-            Box(self, entry, SIZE_BOX_X + (index - 1) * SIZE_BOX_STEP, top)
+    -- row = { module, label, boxes = { box, ... } }
+    function Page:Row(spec)
+        self.pair = nil
+        local row = CreateFrame("Frame", nil, self.section.card)
+        function row.Measure() return BOX_ROW end
+        row.label = W.Text(row, 13, W.TEXT)
+        row.label:SetWidth(LABEL_WIDTH)
+        row.label:SetPoint("LEFT", row, "TOPLEFT", CARD_PAD, BOX_TOP - W.CONTROL_HEIGHT / 2)
+        row.label:SetText(spec.label)
+        assert(#spec.boxes <= MAX_BOXES, "more boxes than a row has room for")
+        row.boxes = {}
+        for index, entry in ipairs(spec.boxes) do
+            row.boxes[index] = Box(self, spec.module, row, entry, BOX_X + (index - 1) * BOX_STEP)
         end
-        self.y = self.y - BOX_ROW - 4
-        return top
+        AddRow(self.section, row)
+        return row
     end
 
     -- A size row: a row of boxes, and the element's layer at its end.
-    function Page:SizeRow(row)
-        local module, db = row.module, row.module.db
-        local top = self:Row(row)
-        AddTitle(self.content, "Layer"):SetPoint("TOPLEFT", self.content, "TOPLEFT",
-            SIZE_STRATA_X + 4, top + 12)
-        AddStrata(self.content, SIZE_STRATA_X, top,
-            function() return db.frameStrata end,
+    local STRATA = {}
+    for _, value in ipairs({ "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
+                             "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP" }) do
+        STRATA[#STRATA + 1] = { value = value, label = value:sub(1, 1) .. value:sub(2):lower():gsub("_d", " d") }
+    end
+    Options.STRATA = STRATA
+
+    -- spec.layerKey: the setting the layer is kept in (frameStrata unless said).
+    function Page:SizeRow(spec)
+        local row = self:Row(spec)
+        local module, db = spec.module, spec.module.db
+        local layerKey = spec.layerKey or "frameStrata"
+        local layer = W.Dropdown(row, LAYER_WIDTH, STRATA,
+            function() return db[layerKey] end,
             function(value)
-                db.frameStrata = value
+                db[layerKey] = value
                 self:Changed(module)
             end)
+        layer:SetPoint("TOPRIGHT", row, "TOPRIGHT", -CARD_PAD, BOX_TOP)
+        local title = W.Text(row, 11, W.MUTED)
+        title:SetPoint("BOTTOMLEFT", layer, "TOPLEFT", 1, 4)
+        title:SetText("Layer")
+        row.layer = layer
+        Register(layer.Refresh)
+        return row
     end
 
-    -- A list the player builds, in four rows from the top:
-    --
-    --   * a box for an ID, with its title, and a button per kind to add it;
-    --   * one line saying what the last add did (nothing to start);
-    --   * column headings: the name, and - when the list has one - the
-    --     column saying what each entry does;
-    --   * a row per entry: icon, name and ID; in that column either a
-    --     dropdown (the entry has a choice) or a word (it does not); Up/Down
-    --     buttons when the order means something; Remove.
-    --
-    -- Every explanation is the page's, above all this - nothing here wraps, so
-    -- nothing can run into the rows. The list grows, so it has to be the last
-    -- thing on the page: the page's height follows it.
-    --
-    -- spec = { title, empty, buttons = { { kind, label }, ... },
-    --          add(kind, text) -> ok, message   entries() -> list
-    --          describe(entry) -> name, icon, detail   remove(index)
-    --          column (heading), choices, getChoice(index),
-    --          setChoice(index, value), hasChoice(entry),
-    --          fixedChoice(entry) -> text                     (optional)
-    --          move(index, delta)                             (optional) }
-    local LIST_ROW = 30
-    local LIST_ICON = 20
-    local CHOICE_WIDTH = 120
-    local REMOVE_WIDTH = 76
+    ---------------------------------------------------------------------------
+    -- LISTS the player builds: a box and a button to add, then a line per
+    -- entry. Both below grow and shrink, and lay the page out again when they
+    -- do.
+    ---------------------------------------------------------------------------
+
+    local LIST_TOP = 60             -- the add row, above the entries
+    local ENTRY = 38
+    local ICON = 22
+
+    -- One line of a list, lazily made: a faint line over it, a wash under the
+    -- mouse.
+    local function Line(parent)
+        local line = CreateFrame("Frame", nil, parent)
+        line:SetSize(CONTENT_WIDTH, ENTRY)
+        line:EnableMouse(true)
+        line.hover = W.Flat(line, "BACKGROUND", { 1, 1, 1, 0.035 })
+        line.hover:SetAllPoints(line)
+        line.hover:Hide()
+        line:SetScript("OnEnter", function(self) self.hover:Show() end)
+        line:SetScript("OnLeave", function(self) self.hover:Hide() end)
+        W.Hairline(line, SEPARATOR, 0, CARD_PAD, CARD_PAD)
+        return line
+    end
+
+    local function ListRow(page)
+        page.pair = nil
+        local row = CreateFrame("Frame", nil, page.section.card)
+        row.count = 0
+        function row.Measure()
+            return LIST_TOP + math.max(1, row.count) * ENTRY + 8
+        end
+        row.empty = W.Text(row, 12, W.DIM)
+        row.empty:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, -(LIST_TOP + 12))
+        row.lines = {}
+        AddRow(page.section, row)
+        return row
+    end
+
+    -- Shows `count` entries, and lays the page out again if that changed.
+    local function Counted(row, count)
+        row.empty:SetShown(count == 0)
+        for index = count + 1, #row.lines do row.lines[index]:Hide() end
+        if row.count ~= count then
+            row.count = count
+            Relayout()
+        end
+    end
+
+    local function PlaceLine(row, line, index)
+        line:ClearAllPoints()
+        line:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -(LIST_TOP + (index - 1) * ENTRY))
+        line:Show()
+    end
+
+    -- The cooldown manager's list.
+    -- spec = { title (the box's hint), empty, addLabel, add(text) -> ok, message,
+    --          entries() -> list, describe(entry) -> name, icon, detail,
+    --          remove(index), choices, getChoice(index), setChoice(index, value),
+    --          hasChoice(entry), fixedChoice(entry) -> text }
+    local CHOICE_SEGMENT = 74
 
     function Page:IdList(spec)
-        self:EndRow()
-        local content = self.content
-        local top = self.y
+        local row = ListRow(self)
+        row.empty:SetText(spec.empty or "")
 
-        -- The box, its title over it, and the add buttons beside it.
-        local box = NewEditBox(content, PANEL_NAME .. "IdBox", 110, 9)
-        box:SetPoint("TOPLEFT", LEFT + 4, top - 18)
-        AddTitle(box, spec.title):SetPoint("BOTTOMLEFT", box, "TOPLEFT", 2, 2)
-
-        -- What the last add did: one line, never wrapped.
-        local status = AddText(content, LEFT + 4, top - 50, "", "GameFontHighlightSmall")
-        status:SetWidth(CONTENT_WIDTH - 2 * LEFT - 8)
-        status:SetWordWrap(false)
-
-        local function Added(kind)
-            local ok, message = spec.add(kind, box:GetText())
-            status:SetText(ok and message or ("|cffff5555" .. message .. "|r"))
-            if ok then box:SetText("") end
+        local box = W.TextBox(row, PANEL_NAME .. "IdBox", 220, 24, spec.title)
+        box:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, -18)
+        local function Add()
+            local ok, message = spec.add(box:GetText())
+            Options.Say(ok, message)
+            if ok then
+                box:SetText("")
+                if box.ShowHint then box:ShowHint() end
+            end
             box:ClearFocus()
             Refresh()
         end
+        local add = W.Button(row, spec.addLabel or "Add", 80, Add)
+        add:SetPoint("LEFT", box, "RIGHT", 10, 0)
+        box:SetScript("OnEnterPressed", Add)
+        row.box, row.add = box, add
 
-        local x = LEFT + 4 + 110 + 10
-        for _, button in ipairs(spec.buttons) do
-            AddButton(content, x, top - 19, button.label, 90, function() Added(button.kind) end)
-            x = x + 96
-        end
-        box:SetScript("OnEnterPressed", function() Added(spec.buttons[1].kind) end)
-        box:SetScript("OnEscapePressed", function(self)
-            self:SetText("")
-            self:ClearFocus()
-        end)
+        local choiceWidth = spec.choices and CHOICE_SEGMENT * #spec.choices or 0
 
-        -- The columns, measured from the row's right edge inwards: Remove,
-        -- then Up/Down if any, then the choice column.
-        local right = CONTENT_WIDTH - 2 * LEFT
-        local removeX = right - REMOVE_WIDTH
-        local choiceRight = removeX - 8 - (spec.move and 2 * 58 or 0)
-        local choiceX = choiceRight - CHOICE_WIDTH
-
-        local headTop = top - 72
-        AddText(content, LEFT + 4 + LIST_ICON + 8, headTop, "Spell or item", "GameFontNormalSmall")
-        if spec.column then
-            AddText(content, LEFT + choiceX + 4, headTop, spec.column, "GameFontNormalSmall")
-        end
-        AddRule(content, headTop - 14, right)
-
-        local listTop = headTop - 20
-        local emptyText = AddText(content, LEFT + 4, listTop - 8, spec.empty or "", "GameFontDisable")
-        local rows = {}
-
-        local function Row(index)
-            if rows[index] then return rows[index] end
-            local row = CreateFrame("Frame", nil, content)
-            row:SetSize(right, LIST_ROW)
-            row.icon = row:CreateTexture(nil, "ARTWORK")
-            row.icon:SetPoint("LEFT", 4, 0)
-            row.icon:SetSize(LIST_ICON, LIST_ICON)
-            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            row.text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-            row.text:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
-            row.text:SetJustifyH("LEFT")
-            row.text:SetWordWrap(false)
-            row.text:SetWidth((spec.choices and choiceX or choiceRight) - LIST_ICON - 20)
-
-            if spec.choices then
-                row.choice = AddChoice(row, choiceX, -2, CHOICE_WIDTH, spec.choices,
-                    function() return row.index and spec.getChoice(row.index) end,
-                    function(value)
-                        spec.setChoice(row.index, value)
-                        Refresh()
-                    end)
-                -- Where there is nothing to choose: what it does, in words,
-                -- in the same place.
-                row.fixed = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-                row.fixed:SetPoint("LEFT", row, "LEFT", choiceX + 12, 0)
-                row.fixed:SetJustifyH("LEFT")
-            end
-
-            row.remove = AddButton(row, removeX, -4, "Remove", REMOVE_WIDTH, function()
-                spec.remove(row.index)
+        local function MakeLine()
+            local line = Line(row)
+            line.icon = line:CreateTexture(nil, "ARTWORK")
+            line.icon:SetSize(ICON, ICON)
+            line.icon:SetPoint("LEFT", line, "LEFT", CARD_PAD, 0)
+            line.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            line.text = W.Text(line, 13)
+            line.text:SetPoint("LEFT", line.icon, "RIGHT", 10, 0)
+            line.text:SetWidth(CONTENT_WIDTH - 2 * CARD_PAD - ICON - 10 - choiceWidth - 50)
+            line.remove = W.IconButton(line, "close", 22, function()
+                spec.remove(line.index)
                 Refresh()
             end)
-            -- Moving up and down, only for a list whose order means something.
-            if spec.move then
-                row.down = AddButton(row, removeX - 58, -4, "Down", 54, function()
-                    spec.move(row.index, 1)
-                    Refresh()
-                end)
-                row.up = AddButton(row, removeX - 2 * 58, -4, "Up", 54, function()
-                    spec.move(row.index, -1)
-                    Refresh()
-                end)
+            line.remove:SetPoint("RIGHT", line, "RIGHT", -CARD_PAD + 4, 0)
+            W.Tooltip(line.remove, "Remove", "Stop tracking this.")
+            if spec.choices then
+                line.choice = W.Segmented(line, spec.choices, CHOICE_SEGMENT,
+                    function() return line.index and spec.getChoice(line.index) end,
+                    function(value)
+                        spec.setChoice(line.index, value)
+                        Refresh()
+                    end)
+                line.choice:SetPoint("RIGHT", line.remove, "LEFT", -12, 0)
+                -- Where there is nothing to choose: what it does, in words,
+                -- in the same place.
+                line.fixed = W.Text(line, 12, W.MUTED)
+                line.fixed:SetPoint("LEFT", line.choice, "LEFT", 8, 0)
             end
-            rows[index] = row
-            return row
+            return line
         end
 
-        refreshers[#refreshers + 1] = function()
+        Register(function()
             local entries = spec.entries()
             for index, entry in ipairs(entries) do
-                local row = Row(index)
-                row.index = index
-                row:ClearAllPoints()
-                row:SetPoint("TOPLEFT", content, "TOPLEFT", LEFT, listTop - (index - 1) * LIST_ROW)
+                local line = row.lines[index] or MakeLine()
+                row.lines[index] = line
+                line.index = index
+                PlaceLine(row, line, index)
                 local name, icon, detail = spec.describe(entry)
-                row.icon:SetTexture(icon)
-                row.text:SetText(name .. "  |cff999999" .. detail .. "|r")
-                if row.choice then
+                line.icon:SetTexture(icon)
+                line.text:SetText(name .. "  |cff808080" .. detail .. "|r")
+                if line.choice then
                     if spec.hasChoice(entry) then
-                        row.fixed:SetText("")
-                        row.fixed:Hide()
-                        row.choice:Show()
-                        row.choice:GenerateMenu()
+                        line.fixed:Hide()
+                        line.choice:Show()
+                        line.choice.Refresh()
                     else
-                        row.choice:Hide()
-                        row.fixed:SetText(spec.fixedChoice and spec.fixedChoice(entry) or "")
-                        row.fixed:Show()
+                        line.choice:Hide()
+                        line.fixed:SetText(spec.fixedChoice and spec.fixedChoice(entry) or "")
+                        line.fixed:Show()
                     end
                 end
-                for _, key in ipairs({ "up", "down", "remove" }) do
-                    if row[key] then row[key]:Enable() end
-                end
-                if row.up and index == 1 then row.up:Disable() end
-                if row.down and index == #entries then row.down:Disable() end
-                row:Show()
             end
-            for index = #entries + 1, #rows do rows[index]:Hide() end
-            if #entries == 0 then emptyText:Show() else emptyText:Hide() end
-            content:SetHeight(-listTop + math.max(1, #entries) * LIST_ROW + 12)
+            Counted(row, #entries)
+        end)
+        Options.idList = row
+        return row
+    end
+
+    -- THE PROFILES (Core\Profiles.lua): a name and Save, then a line per saved
+    -- profile with Load and Delete. Save asks first when the name is taken;
+    -- Load (it replaces every setting this character has) and Delete (it
+    -- cannot be undone) always do. A profile's name, clicked, goes into the
+    -- box, so saving again updates it.
+    function Page:Profiles()
+        local Profiles = Core.Profiles
+        local row = ListRow(self)
+        row.empty:SetText("No profiles yet.")
+
+        local box = W.TextBox(row, PANEL_NAME .. "ProfileName", 220, Profiles.MAX_NAME, "Profile name")
+        box:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, -18)
+        local save = W.TwoStep(row, "Save", "Overwrite?", 96, function()
+            local ok, message = Profiles.Save(box:GetText())
+            Options.Say(ok, message)
+            box:ClearFocus()
+            Refresh()
+        end, function() return Profiles.Exists(box:GetText()) end)
+        save:SetPoint("LEFT", box, "RIGHT", 10, 0)
+        box:SetScript("OnEnterPressed", function() save.press() end)
+        row.box, row.save = box, save
+
+        local function MakeLine()
+            local line = Line(row)
+            line.name = W.Button(line, "", 260, function(self)
+                box:SetText(self.profile)
+                if box.ShowHint then box:ShowHint() end
+            end, "flat")
+            line.name:SetPoint("LEFT", line, "LEFT", CARD_PAD - 6, 0)
+            line.name.label:ClearAllPoints()
+            line.name.label:SetPoint("LEFT", line.name, "LEFT", 6, 0)
+            line.name.label:SetFont(Style.FONT, 13, "")
+            line.delete = W.TwoStep(line, "Delete", "Really delete?", 110, function()
+                Options.Say(Profiles.Delete(line.profile))
+                Refresh()
+            end)
+            line.delete:SetPoint("RIGHT", line, "RIGHT", -CARD_PAD, 0)
+            line.load = W.TwoStep(line, "Load", "Really load?", 110, function()
+                Options.Say(Profiles.Load(line.profile))
+                Refresh()
+            end)
+            line.load:SetPoint("RIGHT", line.delete, "LEFT", -8, 0)
+            return line
         end
 
-        self.y = listTop - LIST_ROW
+        Register(function()
+            local names = Profiles.Names()
+            for index, name in ipairs(names) do
+                local line = row.lines[index] or MakeLine()
+                row.lines[index] = line
+                if line.profile ~= name then
+                    line.load.disarm()
+                    line.delete.disarm()
+                end
+                line.profile = name
+                line.name.profile = name
+                W.SetLabel(line.name, name)
+                PlaceLine(row, line, index)
+            end
+            Counted(row, #names)
+        end)
+        Options.profileList = row
+        return row
     end
 
-    function Page:Finish()
-        self:EndRow()
-        return -self.y + 12
+    local function NewPage()
+        return setmetatable({}, Page)
     end
 
     ---------------------------------------------------------------------------
-    -- Pages.lua describes the page; this file builds it.
+    -- THE SIDEBAR: the page's table of contents.
     ---------------------------------------------------------------------------
 
-    local describe
-    local tabs = {}      -- { name, title, subtitle, build, panel }, in order
+    local active, clicked
+
+    local function SetActive(section)
+        active = section
+        for _, entry in ipairs(sections) do
+            local button = entry.nav
+            if button then
+                button.selected = entry == section
+                button.accent:SetShown(button.selected)
+                W.PaintButton(button)
+            end
+        end
+    end
+    Options.Active = function() return active end
+
+    -- The section being read: the last one whose heading has reached the top
+    -- of the page - or, once the page is scrolled to its end, the last one.
+    -- A section picked in the sidebar stays lit until the page is scrolled
+    -- by hand, though the end of the page may come before its heading can
+    -- reach the top.
+    local function Follow(y)
+        if clicked then return end
+        local current = sections[1]
+        for _, section in ipairs(sections) do
+            if section.top and section.top - TOP_PAD <= y + 8 then current = section end
+        end
+        if scroller and y >= scroller.Limit() - 1 and scroller.Limit() > 0 then
+            current = sections[#sections]
+        end
+        if current ~= active then SetActive(current) end
+    end
+
+    local function GoTo(section)
+        clicked = section
+        SetActive(section)
+        scroller.ScrollTo((section.top or 0) - TOP_PAD)
+    end
+    Options.GoTo = GoTo
+
+    local function BuildSidebar()
+        local sidebar = CreateFrame("Frame", nil, window)
+        sidebar:SetPoint("TOPLEFT", window, "TOPLEFT", 0, -HEADER)
+        sidebar:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", 0, 0)
+        sidebar:SetWidth(SIDEBAR)
+        local bg = W.Flat(sidebar, "BACKGROUND", { 1, 1, 1, 0.025 })
+        bg:SetAllPoints(sidebar)
+        local rule = W.Flat(sidebar, "ARTWORK", W.FAINT)
+        rule:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
+        rule:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 0)
+        rule:SetWidth(W.Pixel(sidebar))
+
+        for index, section in ipairs(sections) do
+            local button = W.Button(sidebar, section.title, SIDEBAR - 16, function() GoTo(section) end, "flat")
+            button:SetHeight(NAV_ROW - 2)
+            button:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 8, -14 - (index - 1) * NAV_ROW)
+            button.label:ClearAllPoints()
+            button.label:SetPoint("LEFT", button, "LEFT", 16, 0)
+            button.label:SetFont(Style.FONT, 13, "")
+            button.accent = W.Flat(button, "ARTWORK", W.GOLD)
+            button.accent:SetPoint("TOPLEFT", button, "TOPLEFT", 0, -6)
+            button.accent:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 6)
+            button.accent:SetWidth(3)
+            button.accent:Hide()
+            button.section = section
+            section.nav = button
+        end
+
+        local version
+        if C_AddOns and C_AddOns.GetAddOnMetadata then
+            local ok, value = pcall(C_AddOns.GetAddOnMetadata, Core.ADDON_NAME, "Version")
+            version = ok and value or nil
+        end
+        if version then
+            local text = W.Text(sidebar, 11, W.DIM)
+            text:SetPoint("BOTTOMLEFT", sidebar, "BOTTOMLEFT", 24, 16)
+            text:SetText("Version " .. version)
+        end
+        window.sidebar = sidebar
+    end
+
+    ---------------------------------------------------------------------------
+    -- THE HEADER: the title, and the two things that are the whole UI's -
+    -- placing it (one unlock for everything, with a grid) and resetting it -
+    -- always in reach. Dragging it moves the window.
+    ---------------------------------------------------------------------------
+
+    local UNLOCK_LABEL, LOCK_LABEL = "Unlock UI", "Lock UI"
+
+    function Options.Close()
+        if not window then return end
+        W.ClosePopup()
+        window.closing = true
+        Style.FadeOut(window)
+    end
+
+    local function BuildHeader()
+        local header = CreateFrame("Frame", nil, window)
+        header:SetPoint("TOPLEFT", window, "TOPLEFT", 0, 0)
+        header:SetPoint("TOPRIGHT", window, "TOPRIGHT", 0, 0)
+        header:SetHeight(HEADER)
+        header:EnableMouse(true)
+        header:RegisterForDrag("LeftButton")
+        header:SetScript("OnDragStart", function() window:StartMoving() end)
+        header:SetScript("OnDragStop", function()
+            window:StopMovingOrSizing()
+            W.SnapBorders()
+        end)
+        local rule = W.Flat(header, "ARTWORK", W.FAINT)
+        rule:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
+        rule:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, 0)
+        rule:SetHeight(W.Pixel(header))
+
+        local icon = header:CreateTexture(nil, "ARTWORK")
+        icon:SetTexture(Core.MEDIA .. "icon")
+        icon:SetSize(24, 24)
+        icon:SetPoint("LEFT", header, "LEFT", 18, 0)
+        local title = W.Text(header, 16, W.GOLD, true)
+        title:SetPoint("LEFT", icon, "RIGHT", 10, 0)
+        title:SetText(TITLE)
+
+        local close = W.IconButton(header, "close", 28, Options.Close)
+        close:SetPoint("RIGHT", header, "RIGHT", -12, 0)
+        window.closeButton = close
+
+        local reset = W.TwoStep(header, "Reset everything", "Really reset?", 140, function()
+            if Core:ResetAll() then
+                Options.Say(true, "Everything is back to its defaults.")
+            else
+                Options.Say(false, "The UI cannot be reset in combat.")
+            end
+            Refresh()
+        end)
+        reset:SetPoint("RIGHT", close, "LEFT", -12, 0)
+        W.Tooltip(reset, "Reset everything",
+            "Every setting, size and position back to its default. Your cooldown list and your profiles stay.")
+        window.resetButton = reset
+
+        local unlock = W.Button(header, UNLOCK_LABEL, 110, function()
+            if not Core.ToggleUnlocked() then
+                Options.Say(false, "The UI cannot be unlocked in combat.")
+            end
+            Refresh()
+        end)
+        unlock:SetPoint("RIGHT", reset, "LEFT", -8, 0)
+        W.Tooltip(unlock, "Unlock UI",
+            "Drag anything on screen to move it; a grid shows to line things up. Right-click any of it, or click here again, to lock.")
+        Register(function()
+            local unlocked = Core.IsUnlocked()
+            W.SetLabel(unlock, unlocked and LOCK_LABEL or UNLOCK_LABEL)
+            W.SetStyle(unlock, unlocked and "active" or nil)
+        end)
+        window.unlockButton = unlock
+    end
+
+    ---------------------------------------------------------------------------
+    -- THE WINDOW
+    ---------------------------------------------------------------------------
+
+    local function BuildPage()
+        scrollFrame = CreateFrame("ScrollFrame", nil, window)
+        scrollFrame:SetPoint("TOPLEFT", window, "TOPLEFT", SIDEBAR + PAD - INSET, -HEADER - 1)
+        scrollFrame:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -PAD - GUTTER + INSET, 1)
+        content = CreateFrame("Frame", PANEL_NAME .. "Page", scrollFrame)
+        content:SetWidth(CONTENT_WIDTH + 2 * INSET)
+        content:SetHeight(1)
+        scrollFrame:SetScrollChild(content)
+        window.page = content
+
+        if describe then describe(NewPage()) end
+
+        scroller = Core.ScrollBar.Attach(scrollFrame, Follow)
+        -- Scrolling by hand lets the page say which section is being read.
+        scrollFrame:HookScript("OnMouseWheel", function() clicked = nil end)
+        scrollFrame:HookScript("OnMouseWheel", W.ClosePopup)
+        Options.scroller = scroller
+    end
+
+    local function Build()
+        if window then return end
+        window = CreateFrame("Frame", PANEL_NAME, UIParent)
+        window:SetSize(WIDTH, HEIGHT)
+        window:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
+        window:SetFrameStrata("DIALOG")
+        window:SetToplevel(true)
+        window:SetMovable(true)
+        window:SetClampedToScreen(true)
+        window:EnableMouse(true)
+        window:Hide()
+        local bg = W.Flat(window, "BACKGROUND", BACKGROUND)
+        bg:SetAllPoints(window)
+        window.border = Style.AddBorder(window)
+        W.KeepSnapped(window.border)
+        Options.window = window
+
+        BuildHeader()
+        BuildPage()
+        BuildSidebar()
+        BuildToast()
+
+        -- Esc closes it, as it does the game's own windows.
+        if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, PANEL_NAME) end
+
+        window:SetScript("OnShow", function(self)
+            self.closing = false
+            Relayout()
+            Refresh()
+            Follow(scrollFrame:GetVerticalScroll())
+        end)
+        window:SetScript("OnHide", function(self)
+            self.closing = false
+            W.ClosePopup()
+        end)
+    end
 
     function Options.Describe(build)
         describe = build
     end
 
-    -- A tab of its own: a page listed under the addon in Settings > AddOns.
-    -- The unlock and the reset stay on the main page only - they are the whole
-    -- UI's.
-    function Options.DescribeTab(name, title, subtitle, build)
-        tabs[#tabs + 1] = { name = name, title = title, subtitle = subtitle, build = build }
+    function Options.Open()
+        Build()
+        window.closing = false
+        Style.FadeIn(window)
     end
 
-    -- The two things that are the whole UI's, not a section's: placing it
-    -- (one unlock for everything) and resetting it. On the panel itself, above
-    -- the scrolling page, so they are always in reach.
-    local UNLOCK_LABEL, LOCK_LABEL = "Unlock UI", "Lock UI"
-    local RESET_LABEL, RESET_ARMED = "Reset everything", "Really reset?"
-
-    local function BuildToolbar(parent)
-        local unlock = AddButton(parent, 16, -58, UNLOCK_LABEL, 130, function()
-            Core.ToggleUnlocked()
-            Refresh()
-        end)
-        if unlock then
-            refreshers[#refreshers + 1] = function()
-                unlock:SetText(Core.IsUnlocked() and LOCK_LABEL or UNLOCK_LABEL)
-            end
-        end
-        parent.unlockButton = unlock
-
-        -- Two steps, because one click throws away every setting there is.
-        local reset = AddButton(parent, 152, -58, RESET_LABEL, 130, function(button)
-            if not button.armed then
-                button.armed = true
-                button:SetText(RESET_ARMED)
-                C_Timer.After(5, function()
-                    if button.armed then
-                        button.armed = false
-                        button:SetText(RESET_LABEL)
-                    end
-                end)
-                return
-            end
-            button.armed = false
-            button:SetText(RESET_LABEL)
-            Core:ResetAll()
-            Refresh()
-        end)
-        parent.resetButton = reset
-
-        local hint = AddText(parent, 292, -62,
-            "|cff999999Unlocked, drag anything to move it; a grid shows to line things up. Right-click any of it to lock.|r",
-            "GameFontHighlightSmall")
-        hint:SetPoint("RIGHT", parent, "RIGHT", -32, 0)
-        hint:SetWordWrap(true)
+    function Options.IsShown()
+        return window ~= nil and window:IsShown() and not window.closing
     end
 
-    local function BuildPage(parent, build, contentName, top)
-        local frame = CreateFrame("Frame", nil, parent)
-        frame:SetPoint("TOPLEFT", 8, top or -92)
-        frame:SetPoint("BOTTOMRIGHT", -26, 8)
-
-        local scroll = CreateFrame("ScrollFrame", nil, frame)
-        scroll:SetAllPoints()
-
-        local content = CreateFrame("Frame", contentName, scroll)
-        content:SetWidth(CONTENT_WIDTH)
-        content:SetHeight(1)
-        scroll:SetScrollChild(content)
-
-        local page = NewPage(content)
-        if build then build(page) end
-        content:SetHeight(page:Finish())
-
-        -- A refresher like any widget's, so every Refresh - showing the
-        -- panel included - fits the scrollbar to the content after the
-        -- content has been laid out.
-        refreshers[#refreshers + 1] = Core.ScrollBar.Attach(scroll)
-        parent.page = frame
-        return frame
-    end
-
-    local function BuildPanel()
-        panel = CreateFrame("Frame", PANEL_NAME, UIParent)
-        panel:Hide()
-
-        AddText(panel, 16, -16, TITLE, "GameFontNormalLarge")
-        local subtitle = AddText(panel, 16, -38,
-            "Unit frames, a castbar with swing bars, the five-second rule, combo points, an XP bar, cooldown bars, a chat copy window and quieter menus - one addon, one look.",
-            "GameFontHighlightSmall")
-        subtitle:SetPoint("RIGHT", panel, "RIGHT", -32, 0)
-
-        BuildToolbar(panel)
-        BuildPage(panel, describe, PANEL_NAME .. "Page")
-
-        panel:SetScript("OnShow", Refresh)
-
-        return panel
-    end
-
-    -- A tab's panel: its title and a line saying what it is, then its page -
-    -- no toolbar.
-    local function BuildTab(tab)
-        local frame = CreateFrame("Frame", PANEL_NAME .. tab.name, UIParent)
-        frame:Hide()
-
-        AddText(frame, 16, -16, tab.title, "GameFontNormalLarge")
-        local subtitle = AddText(frame, 16, -38, tab.subtitle or "", "GameFontHighlightSmall")
-        subtitle:SetPoint("RIGHT", frame, "RIGHT", -32, 0)
-        subtitle:SetWordWrap(true)
-
-        BuildPage(frame, tab.build, PANEL_NAME .. tab.name .. "Page", -66)
-        -- The page starts under the text above it however many lines that
-        -- text takes - known only once the panel has its width, so asked each
-        -- time it is shown.
-        frame:SetScript("OnShow", function()
-            local height = subtitle:GetStringHeight()
-            if type(height) == "number" and height > 0 then
-                frame.page:ClearAllPoints()
-                frame.page:SetPoint("TOPLEFT", 8, -(38 + height + 14))
-                frame.page:SetPoint("BOTTOMRIGHT", -26, 8)
-            end
-            Refresh()
-        end)
-        tab.panel = frame
-        return frame
-    end
-
-    -------------------------------------------------------------------------------
-    -- Registration: the panel is a category of the game's own options, under
-    -- Settings > AddOns, which is the one way into it. There are no slash
-    -- commands.
-    -------------------------------------------------------------------------------
-
-    local function Register()
-        BuildPanel()
-        for _, tab in ipairs(tabs) do BuildTab(tab) end
-
-        if not (Settings and Settings.RegisterCanvasLayoutCategory
-                and Settings.RegisterAddOnCategory) then
-            return
-        end
-        -- The category keeps the numeric ID the game gives it: an ID is what
-        -- Settings.OpenToCategory takes (C_SettingsUtil.OpenSettingsPanel),
-        -- and a name written over it would match nothing.
-        local ok, category = pcall(Settings.RegisterCanvasLayoutCategory, panel, TITLE)
-        if not (ok and category) then return end
-        pcall(Settings.RegisterAddOnCategory, category)
-
-        -- Each tab is listed under the addon's own entry.
-        if not Settings.RegisterCanvasLayoutSubcategory then return end
-        for _, tab in ipairs(tabs) do
-            pcall(Settings.RegisterCanvasLayoutSubcategory, category, tab.panel, tab.title)
-        end
+    function Options.Toggle()
+        if Options.IsShown() then Options.Close() else Options.Open() end
     end
 
     function Options.Refresh()
-        if panel then Refresh() end
+        if window and window:IsShown() then Refresh() end
     end
     Core.RefreshOptions = Options.Refresh
-
-    local loader = CreateFrame("Frame")
-    loader:RegisterEvent("PLAYER_LOGIN")
-    loader:SetScript("OnEvent", function(self)
-        self:UnregisterEvent("PLAYER_LOGIN")
-        Register()
-    end)
 end

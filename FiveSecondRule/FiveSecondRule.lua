@@ -24,14 +24,30 @@ do -- private scope
     NS.key = "fsr"
     NS.title = "5SR"
 
-    -- Only what is its own: everything else is the castbar's (see above).
+    -- Always on (the player, 2026-09-29), no switch. Its own size and layer
+    -- (sizes managed per bar since then); the look and text padding are the
+    -- castbar group's. It took the castbar's size until then: `sized` says
+    -- that was copied over once, so no bar changes size on the way.
     NS.defaults = {
-        enabled = true,
+        barWidth = 130,
+        barHeight = 20,
+        frameStrata = "MEDIUM",
+        sized = false,
     }
 
-    -- Saved keys that are not settings: where the bar was dragged to, once it
-    -- has been. Until then it has no position of its own.
+    -- Saved keys that are not settings: where the bar is. Until it is placed
+    -- on its own it sits in its row over the castbar, and these say where
+    -- that is, for the Positions boxes.
     NS.placement = { barLeft = true, barTop = true, placed = true }
+
+    function NS.Normalise(db)
+        local castbar = DogsForeverUI.Castbar.db
+        if not db.sized and castbar then
+            db.barWidth, db.barHeight = castbar.barWidth, castbar.barHeight
+            db.frameStrata = castbar.frameStrata
+            db.sized = true
+        end
+    end
 
     NS.mp5StartTime = 0
 
@@ -83,7 +99,7 @@ do -- private scope
             return
         end
 
-        if not NS.db.enabled or NS.noMana then return end
+        if NS.noMana then return end
 
         if event == "UNIT_POWER_UPDATE" then
             -- The one power signal that survives secret values: the player's mana

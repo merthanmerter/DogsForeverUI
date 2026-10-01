@@ -36,6 +36,17 @@ do -- private scope
     local Style = DogsForeverUI.Style
     local IsSecret = issecretvalue or function() return false end
 
+    UnitAuras.CHOICES = {
+        { value = "below", label = "Below" },
+        { value = "above", label = "Above" },
+        { value = "off",   label = "Off" },
+    }
+    -- The party's frames are a column, so a row above or below one would run
+    -- into the next: theirs go beside the frame, one setting for all four.
+    UnitAuras.PARTY_CHOICES = {
+        { value = "right", label = "Right" },
+        { value = "off",   label = "Off" },
+    }
     UnitAuras.UNITS = {
         { unit = "target",       key = "targetAuras",       label = "Target auras" },
         { unit = "focus",        key = "focusAuras",        label = "Focus auras" },
@@ -43,12 +54,13 @@ do -- private scope
         { unit = "pet",          key = "petAuras",          label = "Pet auras",
           iconScale = 15 / 17 },
     }
-    UnitAuras.CHOICES = {
-        { value = "below", label = "Below" },
-        { value = "above", label = "Above" },
-        { value = "off",   label = "Off" },
-    }
-    local VALID = { below = true, above = true, off = true }
+    for index = 1, 4 do
+        UnitAuras.UNITS[#UnitAuras.UNITS + 1] = {
+            unit = "party" .. index, key = "partyAuras", label = "Party auras",
+            choices = UnitAuras.PARTY_CHOICES, iconScale = 15 / 17,
+        }
+    end
+    local VALID = { below = true, above = true, off = true, right = true }
     local byUnit = {}
     for _, entry in ipairs(UnitAuras.UNITS) do byUnit[entry.unit] = entry end
 
@@ -70,11 +82,10 @@ do -- private scope
         if ok then return result end
     end
 
-    -- Where a unit's auras go: "below", "above" or "off". Off too while the
-    -- addon's frames are off - the game's own frames and auras are back then.
+    -- Where a unit's auras go: "below", "above" or "off".
     function UnitAuras.Side(unit)
         local entry, db = byUnit[unit], NS.db
-        if not entry or not db or not db.enabled then return "off" end
+        if not entry or not db then return "off" end
         local side = db[entry.key]
         return VALID[side] and side or "off"
     end
@@ -156,19 +167,25 @@ do -- private scope
         end
     end
 
-    -- Which way it grows, and where it hangs off the plate.
-    local function Place(container, plate, above)
+    -- Which way it grows, and where it hangs off the plate: `side` is "below",
+    -- "above" or "right" (the party's, beside the frame, level with its top).
+    local function Place(container, plate, side)
         local flow = type(AnchorUtil) == "table" and AnchorUtil.FlowDirection or {}
         local scale = plate.scale or 1
+        local above = side == "above"
         local point = above and "BOTTOMLEFT" or "TOPLEFT"
         Call(container, "SetFlowLayoutAnchorPoint", point)
         Call(container, "SetFlowLayoutGrowthDirection", flow.Right, above and flow.Up or flow.Down)
-        Call(container, "SetFlowLayoutMaximumLineSize", math.floor(NS.db.barWidth * scale + 0.5))
+        -- Rows as wide as the plate.
+        local width = NS.UnitPlate.Size(NS.db, plate)
+        Call(container, "SetFlowLayoutMaximumLineSize", width)
 
         -- Guarded: once it has groups the client restricts layout on the
         -- container, and an anchor it refused must not become an error.
         Call(container, "ClearAllPoints")
-        if above then
+        if side == "right" then
+            Call(container, "SetPoint", "TOPLEFT", plate, "TOPRIGHT", Style.BORDER_INSET + GAP, 0)
+        elseif above then
             -- Clear of the name and level row over the plate's border.
             Call(container, "SetPoint", "BOTTOMLEFT", plate, "TOPLEFT", 0,
                 NS.UnitPlate.TopRoom() * scale + GAP)
@@ -225,7 +242,7 @@ do -- private scope
         if container == nil then container = Create(unit, plate) end
         if not container then return end
 
-        Place(container, plate, side == "above")
+        Place(container, plate, side)
         Call(container, "SetEnabled", true)
         Call(container, "Show")
         ApplyOrder(container, unit, true)
@@ -248,11 +265,15 @@ do -- private scope
 
     local watcher = CreateFrame("Frame")
     for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED",
-                             "UNIT_TARGET", "UNIT_FACTION", "UNIT_PET" }) do
+                             "UNIT_TARGET", "UNIT_FACTION", "UNIT_PET",
+                             "GROUP_ROSTER_UPDATE" }) do
         pcall(watcher.RegisterEvent, watcher, event)
     end
     watcher:SetScript("OnEvent", function(_, event, unit)
-        if event == "PLAYER_TARGET_CHANGED" then
+        if event == "GROUP_ROSTER_UPDATE" then
+            -- Someone joined or left: party1 may be someone else now.
+            for index = 1, 4 do Changed("party" .. index) end
+        elseif event == "PLAYER_TARGET_CHANGED" then
             Changed("target")
             Changed("targettarget")
         elseif event == "PLAYER_FOCUS_CHANGED" then

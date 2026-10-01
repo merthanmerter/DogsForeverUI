@@ -59,7 +59,7 @@ do -- private scope
     local driverFollowed = false
 
     local function Wanted()
-        return NS.db ~= nil and NS.db.styleNamePlates == true
+        return NS.db ~= nil
     end
 
     local function HealthBar(unitFrame)

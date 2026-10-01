@@ -72,9 +72,11 @@ do -- private scope
         MultiBarRight = true, MultiBarLeft = true, MultiBar5 = true, MultiBar6 = true,
         MultiBar7 = true,
     }
+    -- The look, shared with the micro menu's buttons (MicroMenu.lua).
     local ICON_CROP = 0.08         -- the edge baked into every icon
     local BUTTON_INSET = 3         -- the border's room inside the button, and the gap
     local BORDER_PIXELS = 1        -- real pixels a line (see above)
+    Buttons.ICON_CROP, Buttons.BORDER_PIXELS = ICON_CROP, BORDER_PIXELS
     -- The frames' border with its middle (bevel) line taken out, and its gold
     -- darker (the player asked five times: 85%, 75%, 60%, 45%, then "just too
     -- gold" with the bevel on): the frames' 178,142,97 at 32%.
@@ -94,6 +96,10 @@ do -- private scope
     local PUSHED = { 0, 0, 0, 0.35 }
     local HOVER = { 1, 1, 1, 0.15 }
     local CHECKED_ALPHA = 0.35     -- the border's gold, as a wash
+    Buttons.HOVER = HOVER
+    Buttons.CHECKED = {
+        Style.BORDER_COLOR[1], Style.BORDER_COLOR[2], Style.BORDER_COLOR[3], CHECKED_ALPHA,
+    }
 
     local styled = setmetatable({}, { __mode = "k" })
     Buttons.parts = setmetatable({}, { __mode = "k" })   -- button -> what was made for it

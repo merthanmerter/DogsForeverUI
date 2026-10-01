@@ -65,8 +65,6 @@ do -- private scope
     -- about once the swinging has stopped.
     local IDLE_HOLD = 1.0
 
-    local PLACEMENT_LABEL = Style.PLACEMENT_LABEL
-
     -- Enum.PlayerSwingType, with its documented values behind it so a client
     -- without the table still loads.
     local SwingType = (type(Enum) == "table" and type(Enum.PlayerSwingType) == "table")
@@ -160,12 +158,10 @@ do -- private scope
         return bar.endTime ~= nil or bar.idleUntil ~= nil
     end
 
-    -- Whether the swing bars are on at all: Swing timers, their own switch.
-    -- The castbar's switch (Castbar) is the castbar's alone - the player asked
-    -- to turn each bar of the group on and off by itself.
+    -- Whether the swing bars are on at all: always, once the settings exist
+    -- (their switch went on 2026-09-29).
     local function Active()
-        local db = Options()
-        return db and db.showSwing and true or false
+        return Options() ~= nil
     end
 
     local function ShouldShow(bar)
@@ -206,13 +202,14 @@ do -- private scope
     end
 
     -- Everything that follows a setting: size, fill, background, fonts and
-    -- spark. Every one of them is the castbar's own setting. SetFont turns
-    -- the text white again; the range look goes back on in Refresh's
-    -- UpdateRange, after Layout has settled the bars' alpha.
+    -- spark. The size is the swing bars' own (swingWidth, swingHeight); the
+    -- text padding is the whole castbar group's. SetFont turns the text white
+    -- again; the range look goes back on in Refresh's UpdateRange, after
+    -- Layout has settled the bars' alpha.
     local function Restyle(bar)
         local db = Options()
 
-        bar:SetSize(db.barWidth, db.barHeight)
+        bar:SetSize(db.swingWidth, db.swingHeight)
         Paint(bar)
         Style.SetBackground(bar.bg, db.unlocked)
 
@@ -231,17 +228,18 @@ do -- private scope
         Style.SetFont(bar, bar.timeText, db.textPadding)
 
         if not bar.spark then bar.spark = Style.AddSpark(bar) end
-        bar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
+        bar.spark:SetHeight(db.swingHeight * Style.SPARK_HEIGHT)
         if not bar.endTime then bar.spark:Hide() end
     end
 
-    -- An empty bar at 0.0: what the game's bars show between swings.
+    -- An empty bar at 0.0: what the game's bars show between swings. Being
+    -- placed, just its name: the stripes say it is being placed.
     local function ShowIdle(bar)
         local db = Options()
         bar:SetMinMaxValues(0, 1)
         bar:SetValue(0)
         bar.typeText:SetText(bar.hand.label)
-        bar.timeText:SetText(db.unlocked and PLACEMENT_LABEL or "0.0")
+        bar.timeText:SetText(db.unlocked and "" or "0.0")
         if bar.spark then bar.spark:Hide() end
     end
 
@@ -266,7 +264,7 @@ do -- private scope
     -- again - and then bars go or come at once rather than fading.
     local function Layout(settled)
         local db = Options()
-        local height = db.barHeight
+        local height = db.swingHeight
         local instant = settled or not Active() or db.unlocked
 
         local shown = {}
@@ -298,7 +296,7 @@ do -- private scope
         end
 
         local count = math.max(1, #shown)
-        group:SetSize(db.barWidth, count * height + (count - 1) * STACK_GAP)
+        group:SetSize(db.swingWidth, count * height + (count - 1) * STACK_GAP)
 
         group:ClearAllPoints()
         if db.swingPlaced and db.swingLeft and db.swingBottom then
@@ -307,10 +305,15 @@ do -- private scope
             -- Not placed by the player yet: at the top of the castbar group,
             -- over the countdown and combo points' row when this character
             -- keeps one, with the same daylight as everything else in the
-            -- stack, and following the castbar wherever it is put.
+            -- stack, centred over the castbar and following it wherever it is
+            -- put. Where that is, written back for the Positions boxes.
             local above = STACK_GAP
-            if NS.RowInUse() then above = above + db.barHeight + STACK_GAP end
-            group:SetPoint("BOTTOMLEFT", NS.CastBar.castbar, "TOPLEFT", 0, above)
+            local row = NS.RowHeight()
+            if row > 0 then above = above + row + STACK_GAP end
+            group:SetPoint("BOTTOM", NS.CastBar.castbar, "TOP", 0, above)
+            local left, top = NS.OverCastbar(db.swingWidth, 0, above)
+            db.swingLeft = left
+            db.swingBottom = (GetScreenHeight() or 0) + top
         end
     end
 
@@ -419,7 +422,7 @@ do -- private scope
         local db = Options()
         if not db then return end
 
-        group:SetFrameStrata(db.frameStrata or "MEDIUM")
+        group:SetFrameStrata(db.swingStrata or "MEDIUM")
         group:SetMovable(true)
         -- After SetMovable: SetUserPlaced errors on a frame that is neither
         -- movable nor resizable. Cleared so the client's layout cache never
@@ -465,7 +468,7 @@ do -- private scope
                     bar.timeText:SetText(string.format("%.1f", remaining))
                     if bar.spark then
                         bar.spark:SetPoint("CENTER", bar, "LEFT",
-                            db.barWidth * (elapsed / duration), 0)
+                            db.swingWidth * (elapsed / duration), 0)
                     end
                 end
             elseif bar.idleUntil and now >= bar.idleUntil then

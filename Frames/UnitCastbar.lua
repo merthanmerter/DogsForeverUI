@@ -76,15 +76,22 @@ do -- private scope
     end
 
     -- What the unit is casting right now, asked of the game rather than pieced
-    -- together from events: name, start, end, whether it can be interrupted, and
-    -- whether it is a channel. Channels report the same values without the cast
-    -- ID, so the not-interruptible flag sits one place earlier.
+    -- together from events: name, start, end, whether it can be interrupted,
+    -- whether it is a channel, and the text to show. Channels report the same
+    -- values without the cast ID, so the not-interruptible flag sits one
+    -- place earlier.
+    --
+    -- The name only says that something is being cast; what is shown is the
+    -- second value, the cast's display text, as the game's own castbar shows
+    -- it (CastingBarMixin, self.Text:SetText(text)). They differ for the
+    -- spells behind picking things up and using objects, whose name is a
+    -- placeholder - "No Text" - and whose display text says what it is.
     local function ReadCast(unit)
-        local name, _, _, startMS, endMS, _, _, notInterruptible = UnitCastingInfo(unit)
-        if name then return name, startMS, endMS, notInterruptible, false end
+        local name, text, _, startMS, endMS, _, _, notInterruptible = UnitCastingInfo(unit)
+        if name then return name, startMS, endMS, notInterruptible, false, text end
 
-        local cname, _, _, cstartMS, cendMS, _, cnotInterruptible = UnitChannelInfo(unit)
-        if cname then return cname, cstartMS, cendMS, cnotInterruptible, true end
+        local cname, ctext, _, cstartMS, cendMS, _, cnotInterruptible = UnitChannelInfo(unit)
+        if cname then return cname, cstartMS, cendMS, cnotInterruptible, true, ctext end
     end
 
     -- The same for a unit whose casting is secret: the cast's time as a
@@ -99,15 +106,15 @@ do -- private scope
         if type(UnitCastingDuration) == "function" then
             local duration = UnitCastingDuration(unit)
             if Present(duration) then
-                local name, _, _, _, _, _, _, notInterruptible = UnitCastingInfo(unit)
-                return duration, name, notInterruptible, false
+                local _, text, _, _, _, _, _, notInterruptible = UnitCastingInfo(unit)
+                return duration, text, notInterruptible, false
             end
         end
         if type(UnitChannelDuration) == "function" then
             local duration = UnitChannelDuration(unit)
             if Present(duration) then
-                local name, _, _, _, _, _, notInterruptible = UnitChannelInfo(unit)
-                return duration, name, notInterruptible, true
+                local _, text, _, _, _, _, notInterruptible = UnitChannelInfo(unit)
+                return duration, text, notInterruptible, true
             end
         end
     end
@@ -266,7 +273,7 @@ do -- private scope
         local bar = self.bar
 
         -- Switched off, being placed, or no unit: gone at once.
-        if not db.enabled or not db.showCastbar or db.unlocked
+        if not db.showCastbar or db.unlocked
            or not self.plate:ShouldShow() then
             Style.HideNow(bar)
             return
@@ -277,7 +284,7 @@ do -- private scope
             return
         end
 
-        local ok, name, startMS, endMS, notInterruptible, channel =
+        local ok, name, startMS, endMS, notInterruptible, channel, text =
             pcall(ReadCast, self.unit)
 
         if not ok or not name or IsSecret(startMS) or IsSecret(endMS) then
@@ -310,7 +317,7 @@ do -- private scope
         -- Pinned after the paint, which sets the fill it hangs off.
         Style.PinSpark(bar.spark, bar)
         bar.spark:SetAlpha(Style.SparkAlpha(value, length))
-        bar.spellText:SetText(name)
+        if Present(text) then bar.spellText:SetText(text) else bar.spellText:SetText("") end
         bar.timeText:SetFormattedText("%.1f", length - elapsed)
         -- Everything is set before the bar is seen, and it fades in.
         Style.FadeIn(bar)

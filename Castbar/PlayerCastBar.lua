@@ -26,7 +26,6 @@ do -- private scope
     castbar:SetScript("OnMouseDown", function(_, button) onMouseDown(button) end)
     castbar:SetScript("OnMouseUp", function(_, button) onMouseUp(button) end)
 
-    local PLACEMENT_LABEL = Style.PLACEMENT_LABEL
     local PLACEMENT_NAME = "Castbar"   -- what it says it is while being placed
 
     local function Options()
@@ -106,7 +105,7 @@ do -- private scope
         end
 
         -- The same two places whether casting or being placed: then the bar's
-        -- name sits where the spell's does and the word where the time does.
+        -- name sits where the spell's does, and the time's is empty.
         castbar.spellText:SetJustifyH("LEFT")
         castbar.spellText:SetPoint("LEFT", castbar, "LEFT", 4, 0)
         -- The spell name gives way to the timer rather than running under it.
@@ -138,12 +137,13 @@ do -- private scope
     -- A cast has started: everything about it that does not change while it runs.
     function Begin()
         local db = Options()
-        if not db.enabled or db.unlocked then return end
+        if db.unlocked then return end
 
         local cast = DogsForeverUI.Castbar.cast
         Paint()
 
-        castbar.spellText:SetText(db.showText and cast.name or "")
+        -- Never nil (BeginCast), and possibly a secret, which may not be tested.
+        castbar.spellText:SetText(cast.name)
 
         if castbar.spark then
             -- Only a bar whose progress can be measured has somewhere to put it.
@@ -173,7 +173,7 @@ do -- private scope
         local db = Options()
         if db.unlocked then return end
 
-        if not db.enabled or not DogsForeverUI.Castbar.holdFailed then
+        if not DogsForeverUI.Castbar.holdFailed then
             Hide()
             return
         end
@@ -189,12 +189,6 @@ do -- private scope
 
     function OnUpdate()
         local db = Options()
-
-        -- Switched off: gone at once, not faded.
-        if not db.enabled then
-            Style.HideNow(castbar)
-            return
-        end
 
         if db.unlocked then
             ShowPlacementPreview()
@@ -271,14 +265,14 @@ do -- private scope
     end
 
     -- What the bar shows while it is being placed, as every bar here does: an
-    -- empty bar, so the black background and the outline give the exact
-    -- footprint, and the one word "unlocked" so the state is unmistakable.
+    -- empty bar, so the striped black background and the outline give the
+    -- exact footprint, and its name.
     function ShowPlacementPreview()
         Style.ShowNow(castbar)
         castbar:SetMinMaxValues(0, 1)
         castbar:SetValue(0)
         castbar.spellText:SetText(PLACEMENT_NAME)
-        castbar.timeText:SetText(PLACEMENT_LABEL)
+        castbar.timeText:SetText("")
         if castbar.spark then castbar.spark:Hide() end
     end
 

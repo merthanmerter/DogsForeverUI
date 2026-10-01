@@ -63,8 +63,9 @@ do -- private scope
         button = CreateFrame("Button", BUTTON_NAME, UIParent)
         button:SetSize(SIZE, SIZE)
         button:SetFrameStrata("MEDIUM")
+        -- The icon alone: no highlight and no hover effect (the player asked
+        -- for neither the game's blue glow nor a scale-up).
         button:SetNormalTexture(ICON)
-        button:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
         button:RegisterForClicks("LeftButtonUp")
         button:SetScript("OnClick", function()
             NS.ChatLog.Toggle()

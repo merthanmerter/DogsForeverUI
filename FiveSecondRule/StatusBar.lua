@@ -1,12 +1,12 @@
 -- The countdown bar.
 --
 -- One of the castbar group: drawn exactly like the castbar (Core\Style.lua) in
--- the palette's countdown colour, at the castbar's size and strata, with its
--- text padding - all read from the castbar's settings, so the two can never
--- drift apart. The spark and the seconds are always there. It sits just above the castbar, under the
--- swing bars, with the group's daylight between each, and goes wherever the
--- castbar goes - until it is dragged, when it stays where it was put. It is
--- unlocked and locked with the castbar.
+-- the palette's countdown colour, at its own size and layer (Sizes, "Five
+-- second rule"), with the group's text padding. The spark and the seconds are
+-- always there. It sits just above the castbar, centred on it, under the swing
+-- bars, with the group's daylight between each, and goes wherever the castbar
+-- goes - until it is dragged or given a position of its own (Positions), when
+-- it stays where it was put. It is unlocked and locked with the castbar.
 
 local StatusBar = {}
 DogsForeverUI.FiveSecondRule.StatusBar = StatusBar
@@ -39,28 +39,30 @@ do -- private scope
 
     -- Whether it has anything to show at all.
     local function Wanted()
-        return Options().enabled and not NS.noMana
+        return not NS.noMana
     end
 
     function Refresh()
         local db, group = Options(), Group()
 
-        -- POSITION, SIZE
+        -- POSITION, SIZE: its own.
         statusbar:ClearAllPoints()
-        statusbar:SetFrameStrata(group.frameStrata or "MEDIUM")
+        statusbar:SetFrameStrata(db.frameStrata or "MEDIUM")
 
         local unlocked = group.unlocked
 
-        statusbar:SetWidth(group.barWidth)
-        statusbar:SetHeight(group.barHeight)
+        statusbar:SetWidth(db.barWidth)
+        statusbar:SetHeight(db.barHeight)
         if db.placed then
-            -- Dragged somewhere of its own: it stays there.
+            -- Placed somewhere of its own: it stays there.
             statusbar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
         else
             -- Its row, shared with the combo points: just above the castbar,
-            -- centred on it, and wherever that goes.
-            statusbar:SetPoint("BOTTOM", DogsForeverUI.Castbar.CastBar.castbar,
-                "TOP", 0, DogsForeverUI.Castbar.STACK_GAP)
+            -- centred on it, and wherever that goes. Where that is, written
+            -- back for the Positions boxes.
+            local castbar = DogsForeverUI.Castbar
+            statusbar:SetPoint("BOTTOM", castbar.CastBar.castbar, "TOP", 0, castbar.STACK_GAP)
+            db.barLeft, db.barTop = castbar.OverCastbar(db.barWidth, db.barHeight, castbar.STACK_GAP)
         end
 
         -- The client caches named, user-placed frames in layout-local.txt and
@@ -88,26 +90,21 @@ do -- private scope
         Style.SetBackground(statusbar.bg, unlocked)
 
         -- TEXT: the seconds on the left; while being placed, the bar's name
-        -- there instead and "unlocked" on the right, as on every bar.
+        -- there instead, as on every bar.
         if not statusbar.label then
             statusbar.label = statusbar:CreateFontString(nil, "OVERLAY")
-            statusbar.stateText = statusbar:CreateFontString(nil, "OVERLAY")
         end
-        for _, label in ipairs({ statusbar.label, statusbar.stateText }) do
-            label:ClearAllPoints()
-            Style.SingleLine(label)
-            Style.SetFont(statusbar, label, group.textPadding)
-        end
-        statusbar.stateText:SetJustifyH("RIGHT")
-        statusbar.stateText:SetPoint("RIGHT", statusbar, "RIGHT", -4, 0)
-        statusbar.stateText:SetText("")
-        statusbar.label:SetJustifyH("LEFT")
-        statusbar.label:SetPoint("LEFT", statusbar, "LEFT", 4, 0)
-        statusbar.label:SetPoint("RIGHT", statusbar.stateText, "LEFT", -6, 0)
+        local label = statusbar.label
+        label:ClearAllPoints()
+        Style.SingleLine(label)
+        Style.SetFont(statusbar, label, group.textPadding)
+        label:SetJustifyH("LEFT")
+        label:SetPoint("LEFT", statusbar, "LEFT", 4, 0)
+        label:SetPoint("RIGHT", statusbar, "RIGHT", -4, 0)
 
         -- SPARK: always there, on every bar the addon draws.
         if not statusbar.spark then statusbar.spark = Style.AddSpark(statusbar) end
-        statusbar.spark:SetHeight(group.barHeight * Style.SPARK_HEIGHT)
+        statusbar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
         statusbar.spark:Show()
 
         -- VISIBILITY. A countdown already running is left to OnUpdate; with
@@ -122,13 +119,12 @@ do -- private scope
     end
 
     -- What the bar shows while it is being placed, as every bar here does:
-    -- empty, so the black background and the border show the exact footprint,
-    -- and labelled so its state is unmistakable.
+    -- empty, so the striped black background and the border show the exact
+    -- footprint, and named.
     function ShowPlacementPreview()
         Style.ShowNow(statusbar)
         statusbar:SetValue(0)
         statusbar.label:SetText(PLACEMENT_NAME)
-        statusbar.stateText:SetText(Style.PLACEMENT_LABEL)
         if statusbar.spark then statusbar.spark:Hide() end
     end
 

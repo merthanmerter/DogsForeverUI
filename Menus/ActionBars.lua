@@ -1,5 +1,5 @@
--- Action bars - and the bag bar - that auto-hide, and fade back in under the
--- mouse.
+-- Action bars that auto-hide, and fade back in under the mouse. (The bag bar is
+-- not one of them: it is gone until a bag is open - BagsBar.lua.)
 --
 -- Each of the game's bars is ticked on its own, in the Auto-hide bars options. A
 -- opted-in bar is transparent until the mouse is over it, fades in while it is,
@@ -21,8 +21,7 @@
 --     spell from it;
 --   * while something is on the cursor - a spell, a macro or an item being
 --     dragged - so there is somewhere to see to drop it;
---   * while a spell flyout is open, so moving onto it does not fade its bar;
---   * the bag bar alone: while any bag is open.
+--   * while a spell flyout is open, so moving onto it does not fade its bar.
 --
 -- Whether the mouse is over a bar is asked of the bar itself (IsMouseOver is
 -- geometry, so it answers the same whether the bar is visible or not), which
@@ -51,20 +50,17 @@ do -- private scope
         { key = "fadeActionBar8", label = "Action Bar 8", frames = { "MultiBar7" } },
         { key = "fadeStanceBar",  label = "Stance Bar",   frames = { "StanceBar" } },
         { key = "fadePetBar",     label = "Pet Bar",      frames = { "PetActionBar" } },
-        -- The whole bag bar: the backpack, the bag slots and the keyring are
-        -- all its children (Camelot\MainMenuBarBagButtons.xml). It replaced a
-        -- "collapse" that hid the slots until a bag was open. It also shows
-        -- while any bag is open (AnyBagOpen, below).
-        { key = "fadeBagBar",     label = "Bag Bar",      frames = { "BagsBar" }, bags = true },
+        -- The bag bar was here too until 2026-09-29, when the player had it
+        -- gone for good unless a bag is open (BagsBar.lua). Its saved switch,
+        -- fadeBagBar, is no longer a default, so it is pruned.
     }
 
-    -- Action Bars 3 to 8 and the bag bar auto-hide to start (the player asked,
-    -- 2026-09-27); 1, 2, the stance bar and the pet bar only once ticked. Added before the
+    -- Action Bars 3 to 8 auto-hide to start (the player asked, 2026-09-27); 1,
+    -- 2, the stance bar and the pet bar only once ticked. Added before the
     -- saved settings are read (ADDON_LOADED), so they are kept and not pruned.
     Bars.HIDDEN_TO_START = {
         fadeActionBar3 = true, fadeActionBar4 = true, fadeActionBar5 = true,
         fadeActionBar6 = true, fadeActionBar7 = true, fadeActionBar8 = true,
-        fadeBagBar = true,
     }
     for _, entry in ipairs(Bars.LIST) do
         NS.defaults[entry.key] = Bars.HIDDEN_TO_START[entry.key] == true
@@ -93,11 +89,13 @@ do -- private scope
     NS.defaults.fadeOutDelay = 3
     Bars.MIN_DELAY, Bars.MAX_DELAY = 0, 3
 
+    -- Also the micro menu's (MicroMenu.lua): it is under Auto-hide too.
     local function Delay()
         local delay = NS.db.fadeOutDelay
         if type(delay) ~= "number" or delay < Bars.MIN_DELAY then return 3 end
         return math.min(delay, Bars.MAX_DELAY)
     end
+    Bars.Delay = Delay
 
     -- The fade and the mouse test are the micro menu's too: NS.Fade and
     -- NS.MouseOver in Menus.lua.
@@ -111,15 +109,6 @@ do -- private scope
                 return frame
             end
         end
-    end
-
-    local function EditModeOpen()
-        local manager = _G.EditModeManagerFrame
-        if type(manager) ~= "table" or type(manager.IsEditModeActive) ~= "function" then
-            return false
-        end
-        local ok, active = pcall(manager.IsEditModeActive, manager)
-        return ok and active and true or false
     end
 
     local function CursorHolding()
@@ -147,23 +136,14 @@ do -- private scope
         return Shown(spells) and Shown(spells.SpellBookFrame)
     end
 
-    -- Any bag open - one bag, the backpack, the keyring or the combined
-    -- window - the way the game counts it itself (ContainerFrame.lua).
-    local function AnyBagOpen()
-        if type(IsAnyBagOpen) ~= "function" then return false end
-        local ok, open = pcall(IsAnyBagOpen)
-        return ok and open and true or false
-    end
-
     -- One step of every bar towards where it should be. Alpha is written only
     -- while a bar is moving, so a bar at rest costs a comparison.
     function Bars:Update(delta)
         delta = delta or 0
         local db = NS.db
-        local everyBar = EditModeOpen() or SpellbookOpen() or CursorHolding()
+        local everyBar = NS.EditModeOpen() or SpellbookOpen() or CursorHolding()
             or FlyoutOpen()
         local delay = Delay()
-        local bagOpen = AnyBagOpen()
 
         for _, entry in ipairs(Bars.LIST) do
             local frame = Frame(entry)
@@ -178,7 +158,7 @@ do -- private scope
                     faded[entry] = state
                 end
 
-                local shown = everyBar or (entry.bags and bagOpen) or NS.MouseOver(frame)
+                local shown = everyBar or NS.MouseOver(frame)
                 NS.Fade(frame, state, shown, delta, delay)
             elseif state then
                 -- Opted out: handed back as it was.

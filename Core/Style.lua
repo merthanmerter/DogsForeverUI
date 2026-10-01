@@ -62,11 +62,10 @@ do -- private scope
 
     Style.SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
 
-    -- While a bar is being placed it says what it is and that it is unlocked,
-    -- as the swing bars always have: its name on the left, this word on the
-    -- right. A bar that reads only "unlocked" leaves the player guessing which
-    -- one it is.
-    Style.PLACEMENT_LABEL = "unlocked"
+    -- While a bar is being placed it says what it is - its name on the left -
+    -- and wears diagonal stripes over its black background (SetBackground).
+    -- It used to say "unlocked" on the right too; the player: "it's obvious
+    -- they're unlocked" (2026-09-29). The stripes say it instead.
 
     ---------------------------------------------------------------------------
     -- THE PALETTE
@@ -280,15 +279,64 @@ do -- private scope
     end
 
     -- The part of a bar that is not filled. While the bar is being placed it is
-    -- plain black instead, so the outline and the label are all there is to
-    -- read.
+    -- plain black instead, with diagonal stripes over it in the border's gold,
+    -- so a piece being placed reads as one at a glance - the outline, the
+    -- stripes and its name are all there is to it.
+    --
+    -- The stripes are the game's own: the tiling texture it draws over an
+    -- absorb shield on a health bar (Blizzard_UnitFrame's
+    -- TotalAbsorbBarOverlayTemplate), repeated across the background at its
+    -- own size, so they are the same on any bar. Made the first time a bar is
+    -- unlocked, right over its background and under everything else on it. A
+    -- client without the file gets no stripes rather than the solid green the
+    -- game draws for a missing texture.
     local PLACING_BACKGROUND = { 0, 0, 0, 1 }
+    Style.STRIPES = "Interface\\RaidFrame\\Shield-Overlay"
+    Style.STRIPE_COLOR = { Style.BORDER_COLOR[1], Style.BORDER_COLOR[2], Style.BORDER_COLOR[3], 0.55 }
+
+    local stripesKnown
+    local function HaveStripes()
+        if stripesKnown == nil then
+            stripesKnown = true
+            -- Trusted only if it knows a file every client has.
+            if type(GetFileIDFromPath) == "function" then
+                local okKnown, known = pcall(GetFileIDFromPath, "Interface\\Icons\\INV_Misc_QuestionMark")
+                if okKnown and known then
+                    local ok, id = pcall(GetFileIDFromPath, Style.STRIPES)
+                    stripesKnown = ok and id ~= nil
+                end
+            end
+        end
+        return stripesKnown
+    end
+
+    local stripes = setmetatable({}, { __mode = "k" })   -- background -> its stripes
+
+    local function Stripes(texture)
+        local stripe = stripes[texture]
+        if stripe or not HaveStripes() then return stripe end
+        stripe = texture:GetParent():CreateTexture(nil, "BACKGROUND")
+        local layer, sublevel = "BACKGROUND", 0
+        if texture.GetDrawLayer then layer, sublevel = texture:GetDrawLayer() end
+        stripe:SetDrawLayer(layer or "BACKGROUND", math.min(7, (sublevel or 0) + 1))
+        stripe:SetTexture(Style.STRIPES, "REPEAT", "REPEAT")
+        stripe:SetHorizTile(true)
+        stripe:SetVertTile(true)
+        stripe:SetAllPoints(texture)
+        local c = Style.STRIPE_COLOR
+        stripe:SetVertexColor(c[1], c[2], c[3], c[4])
+        stripes[texture] = stripe
+        return stripe
+    end
+    Style.StripesOf = function(texture) return stripes[texture] end
 
     function Style.SetBackground(texture, unlocked)
         local colour = unlocked and PLACING_BACKGROUND or Style.BACKGROUND_COLOR
         texture:SetColorTexture(colour[1], colour[2], colour[3], colour[4])
         texture:SetVertexColor(1, 1, 1)
         texture:SetAlpha(1)
+        local stripe = unlocked and Stripes(texture) or stripes[texture]
+        if stripe then stripe:SetShown(unlocked and true or false) end
         return texture
     end
 
@@ -480,6 +528,7 @@ do -- private scope
         local shape = Shape(radius, lines, width, gap)
         local cut = radius * px
         local out = (lines * width + gap) * px
+        border.out = out
         local bar = border:GetParent()
         border:ClearAllPoints()
         border:SetPoint("TOPLEFT", bar, "TOPLEFT", -out, out)
@@ -579,6 +628,29 @@ do -- private scope
     -- addon has just changed itself: the rescale below only follows the UI's
     -- own scale, and may run before the addon has caught up with it.
     function Style.Refit(border) pcall(Fit, border) end
+
+    -- A border's outer edges put on whole screen pixels, where its bar is
+    -- now. Every line is a whole number of pixels in from those edges, so
+    -- each lands exactly on the pixel grid. Without it, a thin border round a
+    -- box sitting between pixels (the options window's boxes, at any UI scale
+    -- that is not a whole number of pixels to the unit, and while its page
+    -- scrolls) drew some sides and lost others: a one-pixel line between two
+    -- pixels can round away to nothing.
+    --
+    -- It MEASURES the bar, so it is only for the addon's own frames - never a
+    -- nameplate's, which refuse to be measured - and it holds only until the
+    -- bar moves: call it again after.
+    function Style.SnapBorder(border)
+        local bar, out = border:GetParent(), border.out
+        if not (bar and out) then return end
+        local px = Grid(bar)
+        local left, right, top, bottom = bar:GetLeft(), bar:GetRight(), bar:GetTop(), bar:GetBottom()
+        if not (left and right and top and bottom) or px <= 0 then return end
+        local function Nudge(v) return (math.floor(v / px + 0.5) - v / px) * px end
+        border:ClearAllPoints()
+        border:SetPoint("TOPLEFT", bar, "TOPLEFT", -out + Nudge(left), out + Nudge(top))
+        border:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", out + Nudge(right), -out + Nudge(bottom))
+    end
 
     local rescale = CreateFrame("Frame")
     rescale:RegisterEvent("UI_SCALE_CHANGED")
@@ -719,10 +791,9 @@ do -- private scope
         return Evaluated(UnitPowerPercent, unit, nil, false, sparkCurve)
     end
 
-    -- The two placement labels, for a bar with no text of its own to wear
-    -- them in (combo points, the XP bar): the name on the left, giving way to
-    -- the word on the right. On a frame of their own above the bar, so a fill
-    -- or a segment drawn over the bar cannot cover them.
+    -- The placement label, for a bar with no text of its own to wear it in
+    -- (combo points, the XP bar): its name on the left. On a frame of its own
+    -- above the bar, so a fill or a segment drawn over the bar cannot cover it.
     local PLACEMENT_TEXT_MIN = 8   -- a thin bar still says what it is
 
     function Style.AddPlacementLabels(bar)
@@ -730,27 +801,18 @@ do -- private scope
         holder:SetAllPoints(bar)
         holder:SetFrameLevel(bar:GetFrameLevel() + 5)
 
-        local labels = {
-            holder = holder,
-            name = holder:CreateFontString(nil, "OVERLAY"),
-            state = holder:CreateFontString(nil, "OVERLAY"),
-        }
+        local labels = { holder = holder, name = holder:CreateFontString(nil, "OVERLAY") }
         Style.SingleLine(labels.name)
-        Style.SingleLine(labels.state)
-        labels.state:SetJustifyH("RIGHT")
-        labels.state:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
         labels.name:SetJustifyH("LEFT")
         labels.name:SetPoint("LEFT", bar, "LEFT", 4, 0)
-        labels.name:SetPoint("RIGHT", labels.state, "LEFT", -6, 0)
+        labels.name:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
         return labels
     end
 
     -- Shown while the bar is being placed, empty the rest of the time.
     function Style.ShowPlacementLabels(labels, bar, name, unlocked, padding)
         Style.SetFont(bar, labels.name, padding, PLACEMENT_TEXT_MIN)
-        Style.SetFont(bar, labels.state, padding, PLACEMENT_TEXT_MIN)
         labels.name:SetText(unlocked and name or "")
-        labels.state:SetText(unlocked and Style.PLACEMENT_LABEL or "")
     end
 
     -- One line, always: a long label in a narrow bar is cut short with an

@@ -8,8 +8,8 @@ One addon for the **WoW Forever** client (1.60.1, interface 16001), in one look:
 | **Castbars** | one group, bottom to top: your casting bar; the five-second rule countdown — or, for a rogue or cat druid, the combo points, with the game's taken off the target frame — in one row above it; and the auto-attack swing bars at the top |
 | **XP bar** | an XP bar of its own, at any size, with the game's faded out |
 | **Chat** | a window you can select and copy chat from |
-| **Menus** | a micro menu that shows only under the mouse, action bars and the bag bar that auto-hide until the mouse is over them (Action Bars 3 to 8 and the bag bar to start), and the beta's Issue Reporter hidden |
-| **Cooldowns** | a cooldown manager in its own settings tab: spells and items you add by ID, as bars while on cooldown, in line with the castbar over the player frame; spell and item IDs at the foot of tooltips to find them by |
+| **Menus** | a micro menu in the addon's look with the game's icons, a bag button second and the addon's options button last, placed with the UI and shown only under the mouse; the bag bar gone until a bag is open; action bars that auto-hide until the mouse is over them (Action Bars 3 to 8 to start); and the beta's Issue Reporter hidden |
+| **Cooldowns** | a cooldown manager: spells and items you add by ID, as bars while on cooldown, in line with the castbar over the player frame; spell and item IDs at the foot of tooltips to find them by |
 | **Fishing** | with a fishing pole in hand, a double right-click in the world casts Fishing — nothing to set up |
 
 It replaces five addons that used to be separate — Dog's Frames Forever, Dog's
@@ -21,11 +21,25 @@ A new addon folder needs a **full restart of the game**, not a `/reload`.
 
 ## Options
 
-There are **no slash commands**. Everything is on **one page** in the game's
-Settings — *Options → AddOns → **Dog's Forever UI*** — except the cooldown
-manager's list, which has a page of its own listed under it (*Cooldown
-manager*). At the top of the main page, always in reach, are the two buttons
-that act on the whole UI:
+There are **no slash commands**, and the addon is **not in the game's
+Settings**. It has a window of its own, opened and closed by **its button at
+the end of the micro menu** (the addon's icon; lit while the window is open) —
+the one way in. Esc or the cross closes it; drag its header to move it.
+
+The window is drawn in the frames' look (`Options\Widgets.lua`): the frames'
+gold border and dark background, the addon's font, and controls made of the
+same flat bars — **switches** that fill gold and slide, **sliders** that are a
+thin gold bar with a thumb, **segmented** choices with the picked one gold,
+bordered number boxes (Enter, Tab or clicking away keeps a number; Esc puts the
+old one back; Tab goes on to the next box), and a list for the draw layer.
+Every setting has **what it does written under its name**. A change takes
+effect at once. What a click did that is not plain to see — a profile saved, an
+ID refused — shows in a **toast** at the foot of the window.
+
+It is still **one page**: the sidebar on the left is its table of contents. A
+click glides the page to that section, and the section you are reading is lit
+as you scroll. In the header, always in reach, are the two buttons that act on
+the whole UI:
 
 - **Unlock UI** puts every part on screen to be dragged at once — unit frames,
   the castbar group, the XP bar, the cooldown bars and icons — and covers the screen with a **grid** to line
@@ -34,25 +48,35 @@ that act on the whole UI:
   (The lock waits until the click is over, so right-clicking a unit frame does
   not also open its unit menu.) It waits for the end of combat.
 - **Reset everything** puts every setting of every part back to its default —
-  two clicks, since one throws all of it away. Not in combat.
+  two clicks (the first turns it red, *Really reset?*), since one throws all
+  of it away. Not in combat.
 
-Under them the page scrolls, in sections, each setting two to a row with its
-explanation in its tooltip: **Unit frames**, **Castbars** (with the swing
-timers, the five-second rule, the combo points and how long a failed cast is
-held), **XP bar**, **Menus and chat**, **Auto-hide bars** (and how long
-they wait), **Sizes** (one row each for the unit frames, the castbars and the
-XP bar with their width, heights and draw layer, then the text padding) and
-last **Positions** (one row each for the player, target, focus and
-target-of-target frames, the castbars and the XP bar, with X and Y boxes that
-follow a drag on the grid; a typed position marks that piece as yours). Every centred bar —
+**Everything the addon draws is always on** (2026-09-29): there is no
+*Enabled* anywhere, and no switch for the castbar, its spell name, the swing
+timers, the five-second rule, the combo points, the XP bar and its rested XP,
+the level, the incoming heals, the nameplates' look or the cooldown manager. A
+failed cast is held 0.6s. Turning the addon off in the addon list is how the
+game's own come back. Saved values of the retired switches are dropped at
+login.
+
+The sections, each a card of settings: **Unit frames** (small switches two to
+a row: class and reaction colours, target and focus casts, health text,
+resource text - the name is always shown; then where each frame's auras go),
+**Cooldown manager** (see *Cooldowns* below), **Auto-hide** (the micro menu, a
+small switch per action bar two to a row, and how long they wait), **Extras**
+(the chat copy button, hiding the Issue Reporter), **Sizes** (one row each for
+the unit frames, the castbar, the swing timers (the three as one group), the
+five second rule, the combo points, the XP bar and the cooldown bars with
+their width, heights and draw layer, then the text padding - the castbar
+group's is one for all its bars), **Positions** (one row each for the player,
+target, focus, target-of-target and pet frames, the party's column, the
+castbar, the swing timers (their Y is their bottom edge, since they grow
+upwards), the five second rule, the combo points, the XP bar, the cooldown
+bars, the loot rolls and the micro menu, with X and Y boxes that
+follow a drag on the grid; a typed position marks that piece as yours) and
+last **Profiles**. Every centred bar —
 the castbar group and the XP bar — keeps its centre when its width changes,
 growing or shrinking on both sides.
-
-Unit frames and XP bar each have an **Enabled** box, and the castbar group has
-one box per bar — **Castbar** (the castbar alone), **Swing timers**, **Five
-second rule** and **Combo points** — so each can be switched off by itself,
-since a part of one addon cannot be switched off in the addon list. A bar
-switched off hands the game's own back where there is one.
 
 There are **no colour settings**. The look is fixed, so every bar matches every
 other.
@@ -111,9 +135,13 @@ one place, `Core\Style.lua`:
   pinned to the fill texture itself and their visibility is a curve the game
   evaluates (`UnitHealthPercent`/`UnitPowerPercent` with a `C_CurveUtil`
   curve), handed straight to `SetAlpha`; the addon never sees the numbers;
-- while it is being placed, an empty black bar saying what it is on the left —
-  *Player*, *Target*, *Focus*, *ToT*, *Castbar*, *Main Hand*, *5SR*, *Combo
-  points*, *XP bar* — and `unlocked` on the right.
+- while it is being placed, an empty black bar with **diagonal stripes** over it
+  in the border's gold (the game's own absorb-shield stripe texture,
+  `Interface\RaidFrame\Shield-Overlay`, tiled; `Style.SetBackground`), saying
+  what it is on the left — *Player*, *Target*, *Focus*, *ToT*, *Castbar*, *Main
+  Hand*, *5SR*, *Combo points*, *XP bar*, *Cooldowns*, *Micro menu*, *Loot
+  rolls*. No "unlocked" word (removed 2026-09-29): the stripes say it. A
+  client without the stripe file gets none rather than solid green.
 
 **The palette** starts from two muted colours, #43582f for health and #19366e
 for resources, and pulls every other colour to the same two tones so the set
@@ -139,9 +167,23 @@ change of hue. A grey stays grey.
 
 ## Settings
 
-One saved table, `DogsForeverUIDB`, with a section per module. Every section is
+One saved table, `DogsForeverUIDB`, with a section per module. It is saved per
+character (`SavedVariablesPerCharacter`): every setting, position and cooldown
+list belongs to the character that set it. Every section is
 created once and never replaced, so anything holding a reference to one — a
 module, the options panel — keeps looking at the settings in use.
+
+**Profiles** (`Core\Profiles.lua`, last section of the options page) are the
+one account-wide table, `DogsForeverUIProfiles` (`SavedVariables`): a copy of
+every module's settings under a name. *Save* takes a copy of this character's
+settings (asking first when the name is taken). Each saved profile is a line
+with *Load*, which copies it over this character's settings the way a reset
+copies the defaults — sections refilled in place, anything missing from the
+defaults, the UI locked, not in combat — and *Delete*. Both ask first. Clicking
+a profile's name puts it in the box, to save over it. A profile does
+not carry what a reset keeps: the cooldown manager's list stays each
+character's own. The table follows the same late-arrival and never-overwrite
+rules as the settings below.
 
 This client does not reliably have the saved table in place by the time
 `ADDON_LOADED` fires, so the addon runs on defaults at once and copies the file
@@ -335,9 +377,63 @@ target* in the game's Combat options and its plate goes with it. It changes with
 no event worth the name behind it, so its plate re-reads who it is on a slower
 beat of the same timer that draws the bars.
 
+### The party
+
+**Four party frames** (party1–party4) in the target frame's design — name row,
+level, crown, health and resource bars with their texts, the incoming heals,
+the click to target and the unit menu — at a **size and layer of their own**
+(Sizes → *Party frames*: width, health, power, layer; 120 × 24 + 8 to start,
+0.8 of the unit frames'; their text at 0.8, `UnitPlate.PARTY_SCALE`), in **one column** down the left of the screen
+(party1 on top, against the left edge - its border's width in - and centred
+top to bottom as drawn, name row to last border; `NS.PlaceParty`, which keeps
+it centred when the party frames' size changes until it is placed). The column is
+placed as one: dragging any of them with *Unlock UI* moves all four, and
+Positions has one *Party* row (party1's top left). Each step down is a frame's
+bars, its name row, its border and 8 of daylight (`UnitPlate.PartyStep`).
+Each shows the member's **role** as a small icon right after the level (a
+third larger than the crown; the name's margins widen to keep clear of it): the game's own
+tank / healer / damage icons, the ones its raid-style frames use
+(`GetMicroIconForRole`'s atlases, the older `roleicon-tiny-*` where missing),
+from `UnitGroupRolesAssigned`, repainted on `PLAYER_ROLES_ASSIGNED` and roster
+changes. No role chosen, or one the client keeps secret: no icon.
+A member **out of range** is drawn see-through (alpha 0.55, the whole frame
+with its auras), as the game's own party frames do (`UnitInRange`: out when the
+range could be checked and it is not in it), on the frames' redraw timer. A
+secret answer is handed untested to `SetAlphaFromBoolean`. Fully drawn while
+the frames are being placed.
+Their buffs and debuffs go **to the right** of each frame (*Party auras*:
+*Right* or *Off*; a row above or below would run into the next frame). No
+party castbars and no party pets.
+
+**Shown when the game shows its party frames**: a secure state driver on each
+(`[group:raid] hide; [@partyN,exists] show; hide`), so the game shows and
+hides them in combat too — a member that exists, in a group that is not a raid
+(party1–4 still exist in a raid, where the raid frames are the group's).
+
+**"Use Raid-Style Party Frames"** (Edit Mode → Party Frames, or a gamepad UI)
+is read, never written (`EditModeManagerFrame:UseRaidStylePartyFrames`). On,
+these four step aside and the game's raid-style frames are the party's. Those —
+and the raid frames — keep everything of the game's except their textures
+(`Frames\RaidFrames.lua`): the health and resource fills become this addon's
+flat fill with its sheen and shade (in the game's colours), and the
+backgrounds behind them the frames' dark background. A post-hook on
+`CompactUnitFrame_SetUpFrame` does it to each frame as the game sets it up
+(frames named `CompactParty…`/`CompactRaid…` only), and the ones already made
+are gone over at login.
+
+**The game's party frames** are faded while these are the party's: the four
+member frames and their pets (alpha 0, mouse off out of combat) and the
+party background. The `PartyFrame` container itself is left alone and stays in
+Edit Mode — its box there is where the raid-style option is switched. The game
+sets the members' alpha itself (phasing) and the background's (its opacity
+slider), so the frames' redraw timer takes them down again, and each gets
+back the alpha the game last gave it when raid-style is switched on. No hook
+and no field on any of them.
+
 ### The game's nameplates
 
-*Style nameplates* (on by default) gives the game's own nameplates this look —
+The addon always gives the game's own nameplates this look (the *Style
+nameplates* switch was retired on 2026-09-29) —
 **style only**: their health bar gets the flat fill with its sheen and shade,
 the black background and the border (`Frames\NamePlates.lua`), and the level
 loses its box beside the bar: it is plain text inside the bar's left end, ahead
@@ -390,24 +486,21 @@ click area, which only untainted code may do in combat. What was added to a
 plate is kept in the addon's own table, keyed by the plate.
 
 **Nameplates the game keeps from addons** (friendly ones inside instances)
-are never handed to an addon, and keep the game's look. So with the look on,
-the addon holds the game's own setting that shows friendly players' nameplates
+are never handed to an addon, and keep the game's look. So the addon holds the
+game's own setting that shows friendly players' nameplates
 as their name only (`nameplateShowOnlyNameForFriendlyPlayerUnits`, which the
 game applies to those plates too): it is set at login, and again whenever it
 is turned off - from the game's options too - never in combat but as soon as
 combat ends. It applies everywhere; the game has no instance-only form of it.
-Unticking *Style nameplates* sets it back to the game's default, and with the
-look off the addon leaves it alone.
-Unticked, every styled plate gets the game's bar art and background back and
-the addon's parts are hidden.
 
 ---
 
 ## Castbars
 
 A casting bar of your own, which **replaces** the game's rather than editing it:
-the game's bar goes off screen while Castbars is enabled and comes straight back
-when it is not. It is the bottom of one group, which reads, **bottom to top**:
+the game's bar is kept off screen. It is always on, like every part of the
+group (no switches since 2026-09-29). It is the bottom of one group, which
+reads, **bottom to top**:
 
 1. the castbar;
 2. one row shared by the **five-second rule countdown** and the **combo
@@ -415,33 +508,42 @@ when it is not. It is the bottom of one group, which reads, **bottom to top**:
 3. the **auto-attack swing bars** — main hand, off hand, ranged — which replace
    the game's swing timer the same way.
 
-All of it is the same size and look, placed and locked together, all in the
-Castbars section of the options. The row in the middle is kept only for a character with something
-to put in it: a warrior has neither mana nor combo points, so a warrior's swing
-bars sit straight on the castbar.
+All of it is the same look, placed and locked together, but **each bar has its
+own size, layer and place** (2026-09-29): the *Castbar*, *Swing timers* (the
+three as one group), *Five second rule* and *Combo points* rows under Sizes and
+Positions. The castbar's size was all of theirs before; each took a copy of it
+once, so nothing changed size on the way. Until a bar is given a place of its
+own (dragged or typed), it stays in the group, centred over the castbar and
+following it, and its Positions boxes show where that is. The row in the middle
+is kept only for a character with something to put in it, and is as tall as
+what is in it: a warrior has neither mana nor combo points, so a warrior's
+swing bars sit straight on the castbar.
 
 The bar is only drawn while something is casting, so to place it, unlock the UI
 (*Unlock UI* at the top of the options). The whole group then stays on screen, each bar named and
-saying `unlocked`;
+striped;
 drag the castbar and the rest come with it, or drag any of the others to put it
 somewhere of its own. Right-click any of them to lock
 the UI again. Out of the box the castbar's top edge is **about 64% of the way down the
 screen** (770 on a UI 1200 tall), centred, at any resolution or UI scale; a new width keeps the group
-centred where it is. *Castbar* and *Swing timers* switch the castbar and the swing
-bars off each on their own, and the game's castbar or swing timer comes back.
+centred where it is.
 
 ### What it shows
 
-The spell's name on the left, seconds remaining on the right, and a spark at the
-leading edge — each can be turned off. The name is always one line: a long name
+The cast's name on the left, seconds remaining on the right, and a spark at the
+leading edge, always. The name is the cast's **display text**, the second value
+of `UnitCastingInfo`, as the game's own castbar shows it — not the spell's name,
+which for the spells behind picking up quest items and using objects is the
+placeholder "No Text"; with no display text the bar shows no name rather than a
+placeholder (the target and focus castbars too). The name is always one line: a long name
 in a narrow bar is truncated rather than wrapped. A cast fills; a channel drains.
 The colour says what kind of cast it is: #ffbb20 gold casting, green channelling, grey
 when it cannot be interrupted, red when it failed.
 
 **A cast that finishes starts fading out the moment it is done.** Nothing is
 held at zero waiting for the stop event, because a bar sitting at `0.0` reads as
-a bar that is stuck. Only a cast that *failed* is held, in red, for as long as
-the *Hold failed casts* slider says. Every bar in the castbars group — the
+a bar that is stuck. Only a cast that *failed* is held, in red, for 0.6s (a
+slider once; fixed since 2026-09-29). Every bar in the castbars group — the
 castbar, the target's and the focus's, the swing bars, the five-second
 countdown and the combo points — **fades in** (0.15s) and **out** (0.3s)
 rather than appearing and vanishing (`Style.FadeIn`/`FadeOut`); a swing bar on
@@ -621,27 +723,88 @@ a line arriving mid-drag would move the text out from under your selection.
 
 ## Menus
 
-**The micro menu** loses the gold frame around the whole row and the dark plate
-behind it, keeps each button's own background, and is **invisible until the
-mouse is over it**: it fades in while the mouse is on it and fades out half a
-second after it leaves — the same fade as the action bars below. It is only
-faded: it stays where it is, its keybindings work, and its buttons still answer
-the mouse. Whether the mouse is over it is asked of the menu itself every frame,
-so the gaps between buttons need no special handling.
+**The micro menu is in the action buttons' look** (no setting — it is the
+look): each button drawn exactly as an action button, a square 28 units a
+side with the frames' background behind it, the action buttons' thin bevelled
+border round it and **a square picture filling it** — as far as there is one,
+the picture the game gives that button's own window: the professions window's
+hammer and axe (`INV_SideTab_Professions_c60`), the Progress Track window's
+shield (the `Legacy-up-c60` atlas, centred at its own proportions), the group
+finder's eye (read off the Looking For Group window's first side tab — that
+window loads only when first opened, so the eye is remembered in the saved
+settings once seen, and until then a group of people shows), the collections
+window's Appearances portrait (the purple robe), the Guild & Communities
+window's portrait — and in a guild with a designed tabard, **the guild's
+tabard**, as that window shows it with the guild picked: the square filled
+with the tabard's colour and the emblem on it, drawn by the game's own
+`SetLargeGuildTabardTextures` on the addon's textures (the round tabard ring
+left out: the square has its border), following a guild joined, left or its
+tabard redone — the spellbook's portrait (the General skill line's icon),
+the quest log's and adventure guide's round portraits (trimmed past the rim), the
+shop's portrait, the red question mark for the game menu. **The talents button shows the player's
+spec**: the talent tree with the most points (the first of a tie), its icon as
+the talents window's tree header has it — on this client the three trees are
+groups of the active config's one trait tree, so it follows dual spec too —
+and with no points spent the talents window's own class icon. Each button has
+a list, tried in order, so what the client lacks falls to the nearest plain
+icon. The game's pictures themselves cannot be drawn this
+way: each is an atlas with a tall bronze frame baked round a narrow plate, and
+cut out of it the plates stood as thin grey strips inside the squares (tried
+2026-09-29). The character button shows the player's portrait; a file the
+client lacks falls back to the question mark. The game's art on each button
+is made invisible by vertex alpha, which the game never sets, checked again every
+frame. The states are the action buttons': a soft light under the mouse, the
+gold wash while the button's window is open, that wash flashing with the game's
+alert flash, and a greyed icon when disabled. The latency bar and notification
+badges stay. The row's gold frame and dark plate are gone.
 
-**Action bars and the bag bar auto-hide**, each one that is ticked —
-*Auto-hide bars*, its own section under the menu settings, lists Action Bar 1–8,
-the stance bar, the pet bar and the bag bar under Edit Mode's names. Action Bars
-3 to 8 and the bag bar are ticked to start (asked for 2026-09-27; saved settings
-from before that had the action bars off, so they are switched on once, and a
-bar unticked afterwards stays unticked); 1, 2, stance and pet are not. The bag
-bar goes as a whole — backpack, bag slots, keyring, all children of the one
-frame — and nothing inside it is shown, hidden or faded; it also stays shown
+**The addon lays the menu out**: one row, 32 apart, in the game's order with the
+bag button **second, after the character**. The game still lays its grid out
+(MicroMenu:Layout); a post-hook anchors each button to the addon's row right
+after, every time, so a button the game shows or hides closes up the row. Each
+game button takes the mouse on its square only. Lent to a vehicle's bar, the row
+goes where the game put the menu, in the rows the game asked for.
+
+**It is placed with the rest of the UI**: *Unlock UI* shows it in the
+placement look to drag (right-click locks), and *Positions* has its X and Y.
+Until placed, it sits on the game's menu — bottom edges level and centred on the
+game's menu's centre, so the longer row (the bag button in it) grows evenly both
+ways, kept on screen. It is out of Edit Mode now.
+
+It is also **invisible until the mouse is over it** (*Micro Menu* under
+*Auto-hide*): the action bars' fade, and their *Hide after* wait. It is only
+faded, so its buttons and keybindings still work; it shows while the UI is
+unlocked. Whether the mouse is over it is asked of the row itself, gaps and bag
+button included.
+
+**The bag bar is gone until a bag is open**, and **a bag button second in the
+micro menu** opens the bags instead. This is the look, with no setting
+(asked for 2026-09-29; before that the bar auto-hid under the mouse like the
+action bars, and before 2026-09-27 its slots "collapsed"). The bar is hidden
+whole — backpack, bag slots, keyring, all children of the one frame, nothing
+inside it touched — exactly as the game hides it itself for a gamepad. It shows
 while any bag is open (the game's own IsAnyBagOpen: any bag, the keyring or the
-combined window). It replaced a
-"collapse" that hid the bag slots until a bag was opened. A ticked bar fades back in while the mouse is over it (0.2s),
+combined window) and while Edit Mode is open, so it can still be placed; a bar
+the game hid is left for the game to show. Should Edit Mode ever anchor a
+protected frame to it, it waits for the end of combat rather than have the game
+refuse the call.
+
+The bag button is the addon's own, a child of the micro menu, so it takes the
+menu's scale and fade. It wears the micro buttons' look: the game's own backpack
+icon filling the square, washed gold while a bag is open. It clicks as the
+backpack does: an item on the cursor goes into the backpack, the open-all-bags
+modifier opens every bag, a plain click opens or shuts the backpack; its tooltip
+has the keybinding and the free slots. It is not in the game's own layout (no
+layoutIndex), so the game's code never counts it; the addon's row puts it second.
+
+**Action bars auto-hide**, each one that is ticked —
+*Auto-hide*, its own section under the menu settings, lists the micro menu, then Action Bar 1–8,
+the stance bar and the pet bar under Edit Mode's names. Action Bars 3 to 8 are
+ticked to start (asked for 2026-09-27; saved settings from before that had them
+off, so they are switched on once, and a bar unticked afterwards stays
+unticked); 1, 2, stance and pet are not. A ticked bar fades back in while the mouse is over it (0.2s),
 and fades out (0.4s) once the mouse has been gone for *Hide after* — a slider,
-3 seconds to start, from 0 to 3 in tenths. The micro menu keeps its own half second. It is
+3 seconds to start, from 0 to 3 in tenths; the micro menu takes the same wait. It is
 only its alpha: it stays where Edit Mode put it, its buttons still take clicks
 and its keybindings still fire. Alpha is not a protected call, so it works in
 combat, and Edit Mode has no opacity setting for action bars, so nothing else
@@ -651,10 +814,12 @@ something is on the cursor (a spell or item being dragged — there has to be
 somewhere to drop it), and while a spell flyout is open. Opted out, a bar's alpha
 goes straight back.
 
-Each can be switched off in the Menus and chat section, which gives the game its menu back.
+Each can be switched off under Auto-hide (the menu and the bars) or Extras.
+The bags cannot: they are the look.
 
-The menu's frame and plate and the bars are only ever **faded**, never shown,
-hidden or moved, and no field is written onto a Blizzard frame.
+The menu's frame and plate and the action bars are only ever **faded**, never
+shown, hidden or moved; the bag bar is only ever shown or hidden, whole; and no
+field is written onto a Blizzard frame.
 
 **The Issue Reporter** — the beta's bug box and the "Press F6 to submit an issue"
 lines it adds to tooltips — is hidden while *Hide the Issue Reporter* is on (the
@@ -699,8 +864,8 @@ is placed.
 
 ## Cooldowns
 
-The cooldown manager: spells and items you add by ID, in a tab of its own under
-Dog's Forever UI in Settings > AddOns (*Cooldown manager*). Each is a bar with
+The cooldown manager: spells and items you add by ID, in the *Cooldown manager*
+section of the options window. Each is a bar with
 its icon on the left, its name and the time left ("45s", "1m 30s", rounded up
 to the second as the action buttons' own numbers are; a buff bar's time is
 truncated, as the game's own buff timers are), running down to empty,
@@ -729,17 +894,17 @@ a missing buff proves nothing, so only a buff actually seen counts then; one
 out-of-combat cast settles it. A buff already on you when the list refreshes
 is noticed too. What is learned is kept on the list entry, so it is saved.
 
-A cooldown and a buff seen: the *Tracks* column has a dropdown — *Cooldown*
+A cooldown and a buff seen: its line has a choice side by side — *Cooldown*
 (the default), *Duration* (a bar for its buff while that is on you), *Both*.
 Otherwise it says in words what the spell tracks: a spell with a cooldown its
 *Cooldown* (until a buff is seen); one without, its *Duration* — or *Nothing*,
 once it is seen to leave no buff. Items only ever show their cooldown.
 
-**The tab** is the title, the explanation (the page's own text, which the list
-starts under however many lines it takes), *Enabled* and *Show IDs on
-tooltips*, *Bars grow*, the ID box with *Add spell* / *Add item* and one line
-saying what the last add did, then the list under *Spell or item* / *Tracks*
-headings: icon, name and ID, the Tracks column, *Remove*.
+**The section** is the explanation under its heading, *IDs on tooltips*,
+*Bars grow* (Upward / Downward), then the list: the ID box with
+one *Add* button (the toast says what the add did), and a line per entry —
+icon, name and ID, what it tracks, and a cross to remove it. The page below
+moves down as the list grows.
 
 **Spells with no cooldown track their buff.** A spell whose base cooldown is 0
 (Seal of Command, Battle Shout — static spell data, read when the list or the
@@ -781,8 +946,14 @@ in that mode are kept, as bars.
 **Adding one.** *Show IDs on tooltips* (on to start) puts "Spell ID 2983" or
 "Item ID 6948", small and grey, at the foot of the tooltip of anything with one:
 spells, items, buffs and debuffs, pet and stance buttons, macros and items on
-action buttons, toys and mounts. Type the number into the box and press *Add
-spell* or *Add item* (Enter adds a spell). Each row can be removed; there is no
+action buttons, toys and mounts. Type the number into the box and press *Add*
+(or Enter). The addon works out what it is: an ID only a spell has is that
+spell, one only an item has that item. Spell and item IDs overlap, so where
+both have it, it takes the one you have — the spell in your spellbook (any
+rank), the item in your bags or worn; if that does not settle it, nothing is
+added and the line names both. Typing the kind first always settles it:
+`spell 2983`, `item 6948`, `Item ID 6948` as the tooltip writes it, `s2983`,
+`i6948`. Each row can be removed; there is no
 reordering — the bars stack in the order added. The list is yours rather than
 a setting, so *Reset everything* leaves it alone.
 

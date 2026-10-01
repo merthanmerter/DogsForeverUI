@@ -30,7 +30,7 @@ do -- private scope
     end
 
     local function ShouldHide()
-        return NS.db and NS.db.enabled and true or false
+        return NS.db ~= nil
     end
 
     function BlizzardComboFrame.Refresh()

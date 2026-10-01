@@ -457,7 +457,7 @@ do -- private scope
         MapRanks()
         local ids, any = Durations.SpellIDs()
 
-        if not any or not NS.db.enabled then
+        if not any then
             if container then
                 Call(container, "SetEnabled", false)
                 Call(container, "Hide")
