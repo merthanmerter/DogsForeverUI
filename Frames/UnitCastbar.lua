@@ -7,10 +7,11 @@
 -- POLLED, NOT EVENTED
 -- The player's own castbar has to be exact to the frame, because it is what the
 -- player is watching while they press things; a target's does not. This one is
--- read from UnitCastingInfo on the same timer that repaints the bars, which is
--- twenty times a second and needs no event bookkeeping, no cast IDs and no
--- guarding against a spell queued on top of another. The one thing polling
--- cannot see is *why* a cast ended, so the interrupt is an event.
+-- read from UnitCastingInfo - every frame while it is on screen, and when the
+-- unit starts a cast or a new target or focus is taken (Frames.lua) - which
+-- needs no event bookkeeping, no cast
+-- IDs and no guarding against a spell queued on top of another. The one thing
+-- polling cannot see is *why* a cast ended, so the interrupt is an event.
 --
 -- WHEN THE CLIENT WILL NOT SAY
 -- A unit whose spellcasting is restricted - most other players, on this
@@ -119,10 +120,9 @@ do -- private scope
         end
     end
 
-    local function EnumValue(group, key, fallback)
-        local enum = type(Enum) == "table" and Enum[group]
-        return type(enum) == "table" and enum[key] or fallback
-    end
+    local function Remaining(duration) return duration:GetRemainingDuration() end
+
+    local EnumValue = DogsForeverUI.EnumValue
     local IMMEDIATE = EnumValue("StatusBarInterpolation", "Immediate", 0)
     local ELAPSED = EnumValue("StatusBarTimerDirection", "ElapsedTime", 0)
     local REMAINING = EnumValue("StatusBarTimerDirection", "RemainingTime", 1)
@@ -172,8 +172,15 @@ do -- private scope
         self.bar.spark:SetAlpha(0)
     end
 
+    -- Painted only when the state changes, as this runs every frame of a cast
+    -- (`painted` is cleared when the fill's colour is set some other way, and
+    -- when the bar is resized). The spark is pinned after the paint, which
+    -- sets the fill it hangs off.
     function methods:Paint(state)
+        if self.painted == state then return end
+        self.painted = state
         Style.Paint(self.bar, STATE_COLOR[state] or STATE_COLOR.casting)
+        Style.PinSpark(self.bar.spark, self.bar)
     end
 
     -- Size, position and fonts: everything that follows a setting.
@@ -188,6 +195,7 @@ do -- private scope
 
         bar:ClearAllPoints()
         bar:SetSize(width, height)
+        self.painted = nil          -- the spark's height follows the bar's
 
         -- Under the plate, which is where the game puts a target's cast bar -
         -- unless the unit's auras are set below it (UnitAuras.lua), when it
@@ -240,26 +248,26 @@ do -- private scope
         self.interruptedUntil = 0
 
         local state = channel and "channel" or "casting"
-        self:Paint(state)
-        local fill = bar:GetStatusBarTexture()
         if IsSecret(notInterruptible) then
+            self:Paint(state)
+            local fill = bar:GetStatusBarTexture()
             if fill and type(fill.SetVertexColorFromBoolean) == "function" and CreateColor then
                 local grey, own = STATE_COLOR.uninterruptible, STATE_COLOR[state]
                 fill:SetVertexColorFromBoolean(notInterruptible,
                     CreateColor(grey[1], grey[2], grey[3], 1), CreateColor(own[1], own[2], own[3], 1))
+                self.painted = nil
             end
-        elseif notInterruptible == true then
-            self:Paint("uninterruptible")
+        else
+            self:Paint(notInterruptible == true and "uninterruptible" or state)
         end
 
         bar:SetTimerDuration(duration, IMMEDIATE, channel and REMAINING or ELAPSED)
-        Style.PinSpark(bar.spark, bar)
         -- Where the edge is cannot be judged, so the spark is simply there.
         bar.spark:SetAlpha(1)
 
         if Present(name) then bar.spellText:SetText(name) else bar.spellText:SetText("") end
         bar.timeText:SetText("")
-        local okLeft, left = pcall(function() return duration:GetRemainingDuration() end)
+        local okLeft, left = pcall(Remaining, duration)
         if okLeft and (IsSecret(left) or type(left) == "number") then
             bar.timeText:SetFormattedText("%.1f", left)
         end
@@ -314,8 +322,6 @@ do -- private scope
         local value = channel and (length - elapsed) or elapsed
         bar:SetMinMaxValues(0, length)
         bar:SetValue(value)
-        -- Pinned after the paint, which sets the fill it hangs off.
-        Style.PinSpark(bar.spark, bar)
         bar.spark:SetAlpha(Style.SparkAlpha(value, length))
         if Present(text) then bar.spellText:SetText(text) else bar.spellText:SetText("") end
         bar.timeText:SetFormattedText("%.1f", length - elapsed)

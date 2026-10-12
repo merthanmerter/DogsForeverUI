@@ -14,7 +14,9 @@
 -- the game does itself when a gamepad takes over (MainActionBar_InitializeGamepad,
 -- Blizzard_ActionBar\Shared\MainActionBar.lua). It shows again while any bag is
 -- open - one bag, the backpack, the keyring or the combined window, the game's
--- own IsAnyBagOpen - and while Edit Mode is open, so it can still be placed.
+-- own IsAnyBagOpen - and while Edit Mode or the addon's Unlock Mode is open,
+-- so it can still be placed (it is a piece of Unlock Mode since 2026-10-03:
+-- ActionBars\GameFrames.lua places and sizes it).
 -- Only a bar hidden here is shown again here: if the game hid it (a gamepad),
 -- the game shows it. BagsBar is not protected, but a protected frame anchored to
 -- it in Edit Mode would make it so, and then it is left as it is until combat
@@ -42,8 +44,9 @@
 -- was built. Its size is its own and survives the re-anchoring, so the anchor is
 -- all there is to restore.
 --
--- `hooksecurefunc` is the only hook: it runs after Blizzard's code rather than
--- instead of it, and nothing is written onto a Blizzard frame.
+-- `hooksecurefunc` and the bar's OnShow `HookScript` are the only hooks: they
+-- run after Blizzard's code rather than instead of it, and nothing is written
+-- onto a Blizzard frame.
 
 local Bags = {}
 DogsForeverUI.Menus.BagsBar = Bags
@@ -53,8 +56,7 @@ do -- private scope
     local NS = DogsForeverUI.Menus
 
     -- The game's own backpack icon (Camelot\MainMenuBarBagButtons.xml, bagIcon).
-    Bags.ICON = "Interface\\Icons\\ui-hud-actionbar-bag"
-    local BAG_ICON = Bags.ICON
+    local BAG_ICON = "Interface\\Icons\\ui-hud-actionbar-bag"
     local BACKPACK = 0 -- Enum.BagIndex.Backpack
 
     ---------------------------------------------------------------------------
@@ -77,7 +79,7 @@ do -- private scope
     local function UpdateBar(bagOpen)
         local bar = _G.BagsBar
         if not bar then return end
-        if bagOpen or NS.EditModeOpen() then
+        if bagOpen or NS.EditModeOpen() or DogsForeverUI.IsUnlocked() then
             if hiddenByUs and MayChange(bar) then
                 hiddenByUs = false
                 bar:Show()
@@ -120,6 +122,11 @@ do -- private scope
         end
     end
 
+    -- Whether a bag is open, as Bags:Update last read it (the game's
+    -- IsAnyBagOpen walks every bag: asked once per change, not per button).
+    local bagOpen = false
+    local function BagOpen() return bagOpen end
+
     -- The micro buttons' own look (MicroMenu.lua), lit while any bag is open
     -- as a micro button is while its window is. Just its square: the menu's
     -- row places it (second, after the character).
@@ -131,13 +138,22 @@ do -- private scope
         button:SetScript("OnReceiveDrag", function() PutItemInBackpack() end)
         button:SetScript("OnEnter", ShowTooltip)
         button:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        NS.MicroMenu.Skin(button, BAG_ICON, AnyBagOpen)
+        NS.MicroMenu.Skin(button, BAG_ICON, BagOpen)
         return button
     end
 
     function Bags:Update()
-        UpdateBar(AnyBagOpen())
+        bagOpen = AnyBagOpen()
+        UpdateBar(bagOpen)
     end
+
+    -- WHEN IT IS LOOKED AT AGAIN - never on a timer: a bag window shown or
+    -- hidden (ContainerFrame.OpenBag / CloseBag, sent by every bag window,
+    -- the combined one too), placing (Unlock Mode, Edit Mode), combat ending
+    -- (a protected bar waits for it), and the game showing the bar itself (a
+    -- gamepad given up). Asked the frame after, once however many came: a
+    -- window's OnHide runs while it is still going.
+    local Soon, soonFrame = DogsForeverUI.Waker(function() Bags:Update() end)
 
     ---------------------------------------------------------------------------
     -- The backpack's mask.
@@ -150,7 +166,7 @@ do -- private scope
         end
     end
 
-    local watcher
+    local watching = false
     local maskRepaired = false
 
     function Bags:Apply()
@@ -165,15 +181,21 @@ do -- private scope
             self.button = MakeButton(_G.MicroMenu)
         end
 
-        if not watcher then
+        if not watching then
+            watching = true
             -- The game hiding the bar for a gamepad is the game's to undo.
             for _, name in ipairs({ "MainActionBar_InitializeGamepad", "MainActionBar_UnInitializeMKB" }) do
                 if type(_G[name]) == "function" then
                     hooksecurefunc(name, function() hiddenByUs = false end)
                 end
             end
-            watcher = CreateFrame("Frame")
-            watcher:SetScript("OnUpdate", function() Bags:Update() end)
+            for _, name in ipairs({ "OpenBag", "CloseBag", "OpenAllBags", "CloseAllBags" }) do
+                EventRegistry:RegisterCallback("ContainerFrame." .. name, Soon, Bags)
+            end
+            DogsForeverUI.WatchPlacing(Soon)
+            soonFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            soonFrame:SetScript("OnEvent", Soon)
+            if _G.BagsBar then _G.BagsBar:HookScript("OnShow", Soon) end
         end
 
         self:Update()

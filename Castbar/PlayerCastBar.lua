@@ -82,12 +82,12 @@ do -- private scope
         -- BORDER
         if not castbar.border then castbar.border = Style.AddBorder(castbar) end
 
-        -- BACKGROUND: plain black while the bar is being placed.
+        -- BACKGROUND
         if not castbar.bg then
             castbar.bg = castbar:CreateTexture(nil, "BACKGROUND")
         end
         castbar.bg:SetAllPoints(true)
-        Style.SetBackground(castbar.bg, db.unlocked)
+        Style.SetBackground(castbar.bg)
 
         -- TEXT
         -- Two labels rather than one: the spell on the left, the time left on
@@ -264,44 +264,40 @@ do -- private scope
         ShowPlacementPreview()
     end
 
-    -- What the bar shows while it is being placed, as every bar here does: an
-    -- empty bar, so the striped black background and the outline give the
-    -- exact footprint, and its name.
+    -- What the bar shows in Edit Mode, as it really looks: a full bar in its
+    -- colour, with its name in the spell's place.
     function ShowPlacementPreview()
         Style.ShowNow(castbar)
         castbar:SetMinMaxValues(0, 1)
-        castbar:SetValue(0)
+        Paint()
+        castbar:SetValue(1)
         castbar.spellText:SetText(PLACEMENT_NAME)
         castbar.timeText:SetText("")
         if castbar.spark then castbar.spark:Hide() end
     end
 
-    -- Dragging, and a right-click to lock it again once it is placed. There is
-    -- no right-click to unlock: placement is turned on with the button in the
-    -- options, which is the only way to it now that the bar is not on screen
-    -- to be clicked most of the time.
+    -- Dragging, while unlocked. Placement is turned on and off from the
+    -- options and the placing dialog, the only way to it now that the bar is
+    -- not on screen to be clicked most of the time.
     function onMouseDown(button)
         if button == "LeftButton" and Options().unlocked then
-            castbar:StartMoving()
+            DogsForeverUI.Snap.Start(castbar)
         end
     end
-
-    function onMouseUp(button)
-        if DogsForeverUI.RightClickLock(DogsForeverUI.Castbar, button) then return end
-        if button ~= "LeftButton" then return end
-
-        castbar:StopMovingOrSizing()
-
-        -- A dragged position is the player's, and is never recomputed by the
-        -- addon.
-        --
-        -- Only the position is written. Dragging cannot resize this bar -
-        -- StartMoving is the only thing onMouseDown calls, and StartSizing is
-        -- never called at all - so reading the width and height back here
-        -- changed nothing except to round them: a size set to exactly 100 came
-        -- back as 100.0000305175781 and was saved that way, creeping a little
-        -- further on every drag and quietly overwriting a size typed into the
-        -- options panel.
+    -- Where the bar is now, kept: a drag's end, a nudge, or - locked or not -
+    -- following what it is anchored to (Core\Snap.lua).
+    --
+    -- A dragged position is the player's, and is never recomputed by the
+    -- addon.
+    --
+    -- Only the position is written. Dragging cannot resize this bar -
+    -- StartMoving is the only thing onMouseDown calls, and StartSizing is
+    -- never called at all - so reading the width and height back here
+    -- changed nothing except to round them: a size set to exactly 100 came
+    -- back as 100.0000305175781 and was saved that way, creeping a little
+    -- further on every drag and quietly overwriting a size typed into the
+    -- options panel.
+    local function SavePlace()
         local db = Options()
         db.autoPlaced = false
         db.barLeft = castbar:GetLeft()
@@ -310,6 +306,14 @@ do -- private scope
         Refresh()
 
         DogsForeverUI.RefreshOptions()
+    end
+
+    DogsForeverUI.Snap.Register(castbar, { save = SavePlace, name = "Castbar", id = "castbar" })
+
+    function onMouseUp(button)
+        if button ~= "LeftButton" then return end
+        DogsForeverUI.Snap.Stop(castbar)
+        SavePlace()
     end
 
     -- Expose Field Variables and Functions

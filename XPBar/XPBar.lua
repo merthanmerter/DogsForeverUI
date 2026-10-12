@@ -27,7 +27,7 @@ do -- private scope
     local Style = DogsForeverUI.Style
     local IsSecret = issecretvalue
 
-    local Place, Refresh, Update, ToggleLock, Lock, Unlock
+    local Place, Refresh, Update, Lock, Unlock
 
     NS.key = "xp"
     NS.title = "XP bar"
@@ -59,12 +59,24 @@ do -- private scope
     bar.border = Style.AddBorder(bar)
     -- The spark at the end of the XP, as on the castbar.
     bar.spark = Style.AddSpark(bar)
-    -- No text on the bar - except, while it is being placed, its name, as on
-    -- every bar.
-    bar.placementLabels = Style.AddPlacementLabels(bar)
 
     NS.bar = bar
     NS.rested = rested
+
+    -- THE HONOR BAR, stacked over the XP bar: as wide, two thirds as tall,
+    -- two pixels between their borders. Shown whenever the game would show its
+    -- own (honor watched as XP, a battleground, world PvP), which is faded out
+    -- like its XP bar (BlizzardXPBar.lua). Not the XP bar's child: at the
+    -- level cap, with no XP bar, it takes the XP bar's place.
+    local HONOR_GAP = 2 + 2 * Style.BORDER_INSET
+    local honor = CreateFrame("StatusBar", "DogsForeverUIHonorBar", UIParent)
+    honor:Hide()
+    honor:EnableMouse(true)   -- for the tooltip
+    honor.bg = honor:CreateTexture(nil, "BACKGROUND")
+    honor.bg:SetAllPoints(honor)
+    honor.border = Style.AddBorder(honor)
+    honor.spark = Style.AddSpark(honor)
+    NS.honor = honor
 
     -- How far above the bottom of the screen the bar sits when the game's own
     -- XP bar cannot be measured: about where that bar is by default.
@@ -207,18 +219,45 @@ do -- private scope
         if db.barLeft == nil or db.barTop == nil then Place() end
     end
 
-    -- What the bar shows right now: the XP in it and the rested XP beyond it.
-    function Update()
-        local db = NS.db
+    -- Whether the game would show its honor bar: its own answer
+    -- (StatusTrackingManagerMixin:CanShowBar).
+    local function HonorToShow()
+        local manager, info = _G.StatusTrackingBarManager, _G.StatusTrackingBarInfo
+        if type(manager) ~= "table" or type(info) ~= "table" then return false end
+        return Call(manager.CanShowBar, manager, info.BarsEnum.Honor) and true or false
+    end
 
-        if db.unlocked then
-            bar:Show()
-            bar:SetMinMaxValues(0, 1)
-            bar:SetValue(0)
-            rested:SetValue(0)
-            bar.spark:SetAlpha(0)
+    local function UpdateHonor()
+        if not HonorToShow() then
+            honor:Hide()
             return
         end
+        honor:ClearAllPoints()
+        if bar:IsShown() then
+            honor:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 0, HONOR_GAP)
+        else
+            honor:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT")
+        end
+        honor:Show()
+
+        local current, max = UnitHonor("player"), UnitHonorMax("player")
+        if IsSecret(current) or IsSecret(max) then
+            honor:SetMinMaxValues(0, max)
+            honor:SetValue(current)
+            honor.spark:SetAlpha(0)
+            return
+        end
+        if type(max) ~= "number" or max <= 0 then max = 1 end
+        current = type(current) == "number" and current or 0
+        honor:SetMinMaxValues(0, max)
+        honor:SetValue(current)
+        honor.spark:SetAlpha(Style.SparkAlpha(current, max))
+    end
+
+    -- What the bar shows right now: the XP in it and the rested XP beyond it.
+    -- (In Edit Mode it shows the real XP, as it really looks.)
+    local function UpdateXP()
+        local db = NS.db
 
         local rep = WatchedReputation()
         if rep then
@@ -239,7 +278,19 @@ do -- private scope
             return
         end
 
-        if not XPToShow() then bar:Hide(); return end
+        if not XPToShow() then
+            -- Nothing to show (the level cap) - but still there to be placed.
+            if db.unlocked then
+                bar:Show()
+                bar:SetMinMaxValues(0, 1)
+                bar:SetValue(0)
+                rested:SetValue(0)
+                bar.spark:SetAlpha(0)
+            else
+                bar:Hide()
+            end
+            return
+        end
         bar:Show()
         local xpColour = Style.XP_COLOR
         bar:SetStatusBarColor(xpColour[1], xpColour[2], xpColour[3], 1)
@@ -267,6 +318,11 @@ do -- private scope
         rested:SetMinMaxValues(0, max)
         rested:SetValue(math.min(current + restedXP, max))
     end
+
+    function Update()
+        UpdateXP()
+        UpdateHonor()
+    end
     NS.Update = Update
 
     function Refresh()
@@ -286,13 +342,16 @@ do -- private scope
         bar:EnableMouse(true)
 
         Style.Paint(bar, Style.XP_COLOR)
-        -- Solid: the rested stretch is its own colour in the bar. It is not
-        -- faded out while unlocked - this frame carries the background too -
-        -- but simply empty then (see Update).
+        -- Solid: the rested stretch is its own colour in the bar.
         Style.Paint(rested, Style.RESTED_COLOR)
-        Style.SetBackground(bar.bg, db.unlocked)
-        Style.ShowPlacementLabels(bar.placementLabels, bar, "XP bar", db.unlocked)
+        Style.SetBackground(bar.bg)
         Style.PinSpark(bar.spark, bar)
+
+        honor:SetFrameStrata(db.frameStrata or "MEDIUM")
+        honor:SetSize(db.barWidth, math.max(1, math.floor(db.barHeight * 2 / 3 + 0.5)))
+        Style.Paint(honor, Style.HONOR_COLOR)
+        Style.SetBackground(honor.bg)
+        Style.PinSpark(honor.spark, honor)
 
         NS.BlizzardXPBar.Refresh()
         Update()
@@ -328,29 +387,54 @@ do -- private scope
     end)
     bar:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 
-    -- Dragging, while unlocked, and a right-click to lock it again once it is
-    -- placed. Only the position is written: a drag cannot resize the bar, and
+    honor:SetScript("OnEnter", function(self)
+        local current, max = UnitHonor("player"), UnitHonorMax("player")
+        if not GameTooltip or IsSecret(current) or IsSecret(max)
+           or type(max) ~= "number" or max <= 0 then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(string.format("Honor: %s / %s (%d%%)", Number(current), Number(max),
+            math.floor(current / max * 100)))
+        local level = UnitHonorLevel("player")
+        if type(level) == "number" and not IsSecret(level) then
+            GameTooltip:AddLine(string.format("Honor level %d", level), 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
+    honor:SetScript("OnLeave", bar:GetScript("OnLeave"))
+
+    -- Dragging, while unlocked. Only the position is written: a drag cannot resize the bar, and
     -- reading the size back would only round it.
     bar:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and NS.db.unlocked then self:StartMoving() end
+        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(self) end
     end)
-    bar:SetScript("OnMouseUp", function(self, button)
-        if DogsForeverUI.RightClickLock(NS, button) then return end
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        self:StopMovingOrSizing()
+    -- Where the bar is now, kept: a drag's end, a nudge, or - locked or not -
+    -- following what it is anchored to (Core\Snap.lua).
+    local function SavePlace()
         local db = NS.db
         db.autoPlaced = false
-        db.barLeft = self:GetLeft()
-        db.barTop = -1 * (GetScreenHeight() - self:GetTop())
+        db.barLeft = bar:GetLeft()
+        db.barTop = -1 * (GetScreenHeight() - bar:GetTop())
         Refresh()
         DogsForeverUI.RefreshOptions()
+    end
+    bar:SetScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not NS.db.unlocked then return end
+        DogsForeverUI.Snap.Stop(self)
+        SavePlace()
     end)
+    DogsForeverUI.Snap.Register(bar, {
+        save = SavePlace,
+        name = "XP Bar", id = "xp",
+    })
 
     for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_XP_UPDATE", "UPDATE_EXHAUSTION",
                              "PLAYER_LEVEL_UP", "PLAYER_UPDATE_RESTING", "ENABLE_XP_GAIN",
                              "DISABLE_XP_GAIN",
                              -- A reputation changing, or another one watched.
-                             "UPDATE_FACTION", "MAJOR_FACTION_RENOWN_LEVEL_CHANGED" }) do
+                             "UPDATE_FACTION", "MAJOR_FACTION_RENOWN_LEVEL_CHANGED",
+                             -- Honor, and the zones that bring its bar up.
+                             "HONOR_XP_UPDATE", "HONOR_LEVEL_UPDATE", "ZONE_CHANGED",
+                             "ZONE_CHANGED_NEW_AREA" }) do
         pcall(NS.RegisterEvent, NS, event)
     end
     NS:SetScript("OnEvent", function(_, event)
@@ -364,10 +448,6 @@ do -- private scope
         end
         Update()
     end)
-
-    function ToggleLock()
-        if NS.db.unlocked then Lock() else Unlock() end
-    end
 
     function Unlock()
         NS.db.unlocked = true
@@ -384,7 +464,6 @@ do -- private scope
     NS.Refresh = Refresh
     NS.Lock = Lock
     NS.Unlock = Unlock
-    NS.ToggleLock = ToggleLock
 
     DogsForeverUI:RegisterModule(NS)
 end

@@ -47,7 +47,7 @@ do -- private scope
         if not GameTooltip then return end
 
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(DogsForeverUI.TITLE)
+        GameTooltip:SetText("Copy Chat")
         GameTooltip:AddLine("Open this chat in a window you can select and copy from.",
             1, 1, 1, true)
         GameTooltip:Show()
@@ -84,7 +84,19 @@ do -- private scope
     function ChatButton.Refresh()
         if not NS.db.showButton then
             if button then button:Hide() end
+            -- (The header's row closes up behind it.)
+            NS.Look.Layout()
             return false
+        end
+
+        -- With the chat's header (ChatLook.lua): one of its row, a letter
+        -- like the rest (C).
+        local look = NS.Look
+        if look.Header() then
+            Build()
+            button:Show()
+            look.AddOwn("copy", button)
+            return true
         end
 
         local anchorTo, point, relativePoint, x, y = Anchor()

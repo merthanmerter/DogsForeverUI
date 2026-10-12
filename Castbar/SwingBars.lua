@@ -37,9 +37,9 @@
 -- Stacked above the castbar - ranged, off hand, main hand, top to bottom, so
 -- the main hand is nearest the castbar - with the same daylight between each
 -- as between the castbar and the five-second-rule bar. A hand that is not swinging gives up its row,
--- so the stack always sits snug against the castbar. Until they are dragged
--- they are anchored to the castbar itself, so they go wherever it goes; once
--- dragged, they stay where they were put.
+-- so the stack always sits snug against its bottom. By default over the
+-- castbar, worked out once; they never move with it (only when anchored to
+-- it on purpose, in Edit Mode).
 
 local SwingBars = {}
 DogsForeverUI.Castbar.SwingBars = SwingBars
@@ -158,15 +158,22 @@ do -- private scope
         return bar.endTime ~= nil or bar.idleUntil ~= nil
     end
 
-    -- Whether the swing bars are on at all: always, once the settings exist
-    -- (their switch went on 2026-09-29).
-    local function Active()
-        return Options() ~= nil
+    -- The game's own switch (Options > Advanced > Enable Swing Timer, and
+    -- Edit Mode's Swing Timer box: the showSwingTimer CVar). Off there, the
+    -- swing bars are off here too - Unlock Mode included (the player,
+    -- 2026-10-03: "swing timers should respect blizzard settings").
+    SwingBars.GAME_CVAR = "showSwingTimer"
+    function SwingBars.GameOn()
+        local get = (type(C_CVar) == "table" and C_CVar.GetCVar) or GetCVar
+        if type(get) ~= "function" then return true end
+        local ok, value = pcall(get, SwingBars.GAME_CVAR)
+        if not ok or value == nil then return true end
+        return value ~= "0"
     end
 
     local function ShouldShow(bar)
         local db = Options()
-        if not Active() then return false end
+        if not SwingBars.GameOn() then return false end
         if db.unlocked then return true end
         return CanSwing(bar.hand) and IsBusy(bar)
     end
@@ -211,7 +218,7 @@ do -- private scope
 
         bar:SetSize(db.swingWidth, db.swingHeight)
         Paint(bar)
-        Style.SetBackground(bar.bg, db.unlocked)
+        Style.SetBackground(bar.bg)
 
         for _, label in ipairs({ bar.typeText, bar.timeText }) do
             label:ClearAllPoints()
@@ -232,12 +239,12 @@ do -- private scope
         if not bar.endTime then bar.spark:Hide() end
     end
 
-    -- An empty bar at 0.0: what the game's bars show between swings. Being
-    -- placed, just its name: the stripes say it is being placed.
+    -- An empty bar at 0.0: what the game's bars show between swings. In Edit
+    -- Mode, as it really looks mid-swing: full, in its colour, and its name.
     local function ShowIdle(bar)
         local db = Options()
         bar:SetMinMaxValues(0, 1)
-        bar:SetValue(0)
+        bar:SetValue(db.unlocked and 1 or 0)
         bar.typeText:SetText(bar.hand.label)
         bar.timeText:SetText(db.unlocked and "" or "0.0")
         if bar.spark then bar.spark:Hide() end
@@ -260,12 +267,12 @@ do -- private scope
     -- Bars fade in and out, as every castbar does (Style.FadeIn/FadeOut). A bar
     -- on its way out keeps its row until it has faded - `leaving` - so the one
     -- above does not slide over it; OnUpdate lays the stack out again when it
-    -- is gone. `settled` is a settings change - switched off, placed, locked
-    -- again - and then bars go or come at once rather than fading.
+    -- is gone. `settled` is a settings change - placed, locked again - and
+    -- then bars go or come at once rather than fading.
     local function Layout(settled)
         local db = Options()
         local height = db.swingHeight
-        local instant = settled or not Active() or db.unlocked
+        local instant = settled or db.unlocked
 
         local shown = {}
         for _, bar in ipairs(bars) do
@@ -298,46 +305,55 @@ do -- private scope
         local count = math.max(1, #shown)
         group:SetSize(db.swingWidth, count * height + (count - 1) * STACK_GAP)
 
+        -- By default at the top of the castbar group, over the countdown and
+        -- combo points' row when this character keeps one, with the same
+        -- daylight as everything else in the stack, centred over the
+        -- castbar: worked out ONCE (a first start, a reset - which clears
+        -- swingPlaced), and from then on where it is - it never moves with
+        -- the castbar (Castbar.lua, OverCastbar).
+        local above = STACK_GAP
+        local row = NS.RowHeight()
+        if row > 0 then above = above + row + STACK_GAP end
+        if not db.swingPlaced and NS.GroupSettled() then
+            local left, top = NS.OverCastbar(db.swingWidth, 0, above)
+            db.swingLeft = left
+            db.swingBottom = (GetScreenHeight() or 0) + top
+            db.swingPlaced = true
+        end
         group:ClearAllPoints()
         if db.swingPlaced and db.swingLeft and db.swingBottom then
             group:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", db.swingLeft, db.swingBottom)
         else
-            -- Not placed by the player yet: at the top of the castbar group,
-            -- over the countdown and combo points' row when this character
-            -- keeps one, with the same daylight as everything else in the
-            -- stack, centred over the castbar and following it wherever it is
-            -- put. Where that is, written back for the Positions boxes.
-            local above = STACK_GAP
-            local row = NS.RowHeight()
-            if row > 0 then above = above + row + STACK_GAP end
+            -- (The first moments after login, before the castbar has its
+            -- place: shown over it.)
             group:SetPoint("BOTTOM", NS.CastBar.castbar, "TOP", 0, above)
-            local left, top = NS.OverCastbar(db.swingWidth, 0, above)
-            db.swingLeft = left
-            db.swingBottom = (GetScreenHeight() or 0) + top
         end
     end
 
     function onMouseDown(button)
         if button == "LeftButton" and Options().unlocked then
-            group:StartMoving()
+            DogsForeverUI.Snap.Start(group)
         end
     end
-
-    -- A right-click locks the castbar and these with it, as on the castbar.
-    function onMouseUp(button)
-        if DogsForeverUI.RightClickLock(DogsForeverUI.Castbar, button) then return end
-        if button ~= "LeftButton" or not Options().unlocked then return end
-
-        group:StopMovingOrSizing()
-
-        -- The player's position from here on, and never recomputed. Only the
-        -- position is written, for the same reason as on the castbar.
+    -- Where the group is now, kept: the player's position from here on, and
+    -- never recomputed. Only the position is written, for the same reason as
+    -- on the castbar. A drag's end, a nudge, or - locked or not - following
+    -- what it is anchored to (Core\Snap.lua).
+    local function SavePlace()
         local db = Options()
         db.swingLeft = group:GetLeft()
         db.swingBottom = group:GetBottom()
         db.swingPlaced = true
 
         SwingBars.Refresh()
+    end
+
+    DogsForeverUI.Snap.Register(group, { save = SavePlace, name = "Swing Timers", id = "swing" })
+
+    function onMouseUp(button)
+        if button ~= "LeftButton" or not Options().unlocked then return end
+        DogsForeverUI.Snap.Stop(group)
+        SavePlace()
     end
 
     ---------------------------------------------------------------------------
@@ -363,7 +379,7 @@ do -- private scope
             local hand = bar.hand
             local outOfRange = false
 
-            if type(api) == "table" and Active() and CanSwing(hand) then
+            if type(api) == "table" and CanSwing(hand) then
                 if type(api.EnableRangeCheck) == "function" then
                     pcall(api.EnableRangeCheck, hand.swingType, true)
                 end
@@ -390,7 +406,7 @@ do -- private scope
         if IsSecret(swingType) then return end
         local bar = byType[swingType]
         local db = Options()
-        if not bar or not Active() or db.unlocked or not CanSwing(bar.hand) then
+        if not bar or db.unlocked or not CanSwing(bar.hand) then
             return
         end
 
@@ -410,7 +426,7 @@ do -- private scope
 
         bar:SetMinMaxValues(0, duration)
         bar:SetValue(0)
-        bar.timeText:SetText(string.format("%.1f", duration))
+        bar.timeText:SetFormattedText("%.1f", duration)
         if bar.spark then bar.spark:Show() end
     end
 
@@ -442,14 +458,16 @@ do -- private scope
             if db.unlocked or not bar.endTime then ShowIdle(bar) end
         end
 
-        if Active() then group:Show() else group:Hide() end
+        -- The game's swing timer off: the whole group away, so Unlock Mode
+        -- has no piece for it either (its mover follows the group).
+        group:SetShown(SwingBars.GameOn())
     end
 
     -- Drawn every frame, as the castbar is: a bar that creeps forward on a
     -- slower beat reads as stuttering.
     function SwingBars.OnUpdate()
         local db = Options()
-        if not db or not Active() or db.unlocked then return end
+        if not db or db.unlocked then return end
 
         local now = GetTime()
         local relayout = false
@@ -465,7 +483,7 @@ do -- private scope
                 else
                     local elapsed = duration - remaining
                     bar:SetValue(elapsed)
-                    bar.timeText:SetText(string.format("%.1f", remaining))
+                    bar.timeText:SetFormattedText("%.1f", remaining)
                     if bar.spark then
                         bar.spark:SetPoint("CENTER", bar, "LEFT",
                             db.swingWidth * (elapsed / duration), 0)
@@ -489,6 +507,15 @@ do -- private scope
         if relayout then Layout() end
     end
 
+    -- Whether OnUpdate still has anything to do: a bar swinging, holding for
+    -- the next swing, or fading out of its row.
+    function SwingBars.Busy()
+        for _, bar in ipairs(bars) do
+            if bar.endTime or bar.idleUntil or bar.leaving then return true end
+        end
+        return false
+    end
+
     -- True when the event was one of these, so the core can stop looking.
     function SwingBars.OnEvent(event, ...)
         if event == "PLAYER_SWING" then
@@ -506,6 +533,10 @@ do -- private scope
             -- A hand has gained or lost something to swing with.
             Layout()
             UpdateRange()
+        elseif event == "CVAR_UPDATE" then
+            -- The game's swing timer switched on or off: at once.
+            if ... ~= SwingBars.GAME_CVAR then return false end
+            SwingBars.Refresh()
         else
             return false
         end

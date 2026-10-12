@@ -35,10 +35,16 @@ do -- private scope
         -- The icon beside the chat that opens the window - the only way in, so
         -- turning it off turns the copy window off.
         showButton = true,
+        -- How many of the addon's defaults for the game's own chat settings
+        -- have been set, each once (ChatLook.lua, DEFAULTS): 1 - font size
+        -- 14 then 12, 2 and 3 - font size 12.
+        chatDefaults = 0,
     }
 
     function NS.Refresh()
         NS.ChatButton.Refresh()
+        -- (After a reset: the game's chat settings the addon's again.)
+        NS.Look.TryDefaults()
     end
     NS.Init = NS.Refresh
 

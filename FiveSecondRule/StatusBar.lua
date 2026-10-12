@@ -3,10 +3,10 @@
 -- One of the castbar group: drawn exactly like the castbar (Core\Style.lua) in
 -- the palette's countdown colour, at its own size and layer (Sizes, "Five
 -- second rule"), with the group's text padding. The spark and the seconds are
--- always there. It sits just above the castbar, centred on it, under the swing
--- bars, with the group's daylight between each, and goes wherever the castbar
--- goes - until it is dragged or given a position of its own (Positions), when
--- it stays where it was put. It is unlocked and locked with the castbar.
+-- always there. By default it sits just above the castbar, centred on it,
+-- under the swing bars, with the group's daylight between each - worked out
+-- once (a first start, a reset); it never moves with the castbar after that
+-- (only when anchored to it on purpose, in Edit Mode).
 
 local StatusBar = {}
 DogsForeverUI.FiveSecondRule.StatusBar = StatusBar
@@ -16,7 +16,7 @@ do -- private scope
     local NS = DogsForeverUI.FiveSecondRule
     local Style = DogsForeverUI.Style
 
-    local Refresh, ShowPlacementPreview, OnUpdate
+    local Refresh, ShowPreview, OnUpdate
     local onMouseDown, onMouseUp
 
     local statusbar = CreateFrame("StatusBar", "DogsForeverUIFiveSecondBar", UIParent)
@@ -25,7 +25,6 @@ do -- private scope
     statusbar:SetScript("OnMouseDown", function(_, button) onMouseDown(button) end)
     statusbar:SetScript("OnMouseUp", function(_, button) onMouseUp(button) end)
     local mp5delay = 5
-    local PLACEMENT_NAME = "5SR"   -- what it says it is while being placed
 
     -- The countdown's own settings: whether it is on, where it sits.
     local function Options()
@@ -53,16 +52,18 @@ do -- private scope
 
         statusbar:SetWidth(db.barWidth)
         statusbar:SetHeight(db.barHeight)
+        -- Its default: its row, shared with the combo points, just above the
+        -- castbar and centred on it - taken once (a reset clears `placed`).
+        local castbar = DogsForeverUI.Castbar
+        if not db.placed and castbar.GroupSettled() then
+            db.barLeft, db.barTop = castbar.OverCastbar(db.barWidth, db.barHeight, castbar.STACK_GAP)
+            db.placed = true
+        end
         if db.placed then
-            -- Placed somewhere of its own: it stays there.
             statusbar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
         else
-            -- Its row, shared with the combo points: just above the castbar,
-            -- centred on it, and wherever that goes. Where that is, written
-            -- back for the Positions boxes.
-            local castbar = DogsForeverUI.Castbar
+            -- (Before the castbar has its place: shown over it.)
             statusbar:SetPoint("BOTTOM", castbar.CastBar.castbar, "TOP", 0, castbar.STACK_GAP)
-            db.barLeft, db.barTop = castbar.OverCastbar(db.barWidth, db.barHeight, castbar.STACK_GAP)
         end
 
         -- The client caches named, user-placed frames in layout-local.txt and
@@ -87,10 +88,9 @@ do -- private scope
             statusbar.bg = statusbar:CreateTexture(nil, "BACKGROUND")
         end
         statusbar.bg:SetAllPoints(true)
-        Style.SetBackground(statusbar.bg, unlocked)
+        Style.SetBackground(statusbar.bg)
 
-        -- TEXT: the seconds on the left; while being placed, the bar's name
-        -- there instead, as on every bar.
+        -- TEXT: the seconds on the left.
         if not statusbar.label then
             statusbar.label = statusbar:CreateFontString(nil, "OVERLAY")
         end
@@ -112,19 +112,18 @@ do -- private scope
         if not Wanted() then
             Style.HideNow(statusbar)
         elseif unlocked then
-            ShowPlacementPreview()
-        elseif (NS.mp5StartTime or 0) <= 0 then
+            ShowPreview()
+        elseif (NS.mp5StartTime or 0) <= 0 or not NS.ManaActive() then
             Style.HideNow(statusbar)
         end
     end
 
-    -- What the bar shows while it is being placed, as every bar here does:
-    -- empty, so the striped black background and the border show the exact
-    -- footprint, and named.
-    function ShowPlacementPreview()
+    -- What the bar shows in Edit Mode, as it really looks: a countdown just
+    -- begun.
+    function ShowPreview()
         Style.ShowNow(statusbar)
-        statusbar:SetValue(0)
-        statusbar.label:SetText(PLACEMENT_NAME)
+        statusbar:SetValue(mp5delay)
+        statusbar.label:SetFormattedText("%.1fs", mp5delay)
         if statusbar.spark then statusbar.spark:Hide() end
     end
 
@@ -141,7 +140,14 @@ do -- private scope
         end
 
         if Unlocked() then
-            ShowPlacementPreview()
+            ShowPreview()
+            return
+        end
+
+        -- Not on mana now (a druid in cat or bear form): out of sight, still
+        -- counting (FiveSecondRule.ManaActive).
+        if not NS.ManaActive() then
+            Style.HideNow(statusbar)
             return
         end
 
@@ -166,26 +172,21 @@ do -- private scope
         end
     end
 
-    -- Dragging, and a right-click to lock the group again once it is placed.
-    -- There is no right-click to unlock: placement is turned on with the button
-    -- in the options, which is the only way to it now that the bar is not on
-    -- screen to be clicked most of the time.
+    -- Dragging, while unlocked. Placement is turned on and off from the
+    -- options and the placing dialog, the only way to it now that the bar is
+    -- not on screen to be clicked most of the time.
     function onMouseDown(button)
         if button == "LeftButton" and Unlocked() then
-            statusbar:StartMoving()
+            DogsForeverUI.Snap.Start(statusbar)
         end
     end
-
-    function onMouseUp(button)
-        if DogsForeverUI.RightClickLock(DogsForeverUI.Castbar, button) then return end
-        if button ~= "LeftButton" or not Unlocked() then return end
-
-        statusbar:StopMovingOrSizing()
-
-        -- Dragged: somewhere of its own from now on, no longer under the
-        -- castbar. Only the position is written: dragging cannot resize this
-        -- bar, and reading the size back only rounded it - a size of exactly
-        -- 100 came back as 100.0000305175781 and crept further on every drag.
+    -- Where the bar is now, kept: somewhere of its own from now on, no
+    -- longer under the castbar. Only the position is written: dragging
+    -- cannot resize this bar, and reading the size back only rounded it - a
+    -- size of exactly 100 came back as 100.0000305175781 and crept further on
+    -- every drag. A drag's end, a nudge, or - locked or not - following what
+    -- it is anchored to (Core\Snap.lua).
+    local function SavePlace()
         local db = Options()
         db.placed = true
         db.barLeft = statusbar:GetLeft()
@@ -193,6 +194,14 @@ do -- private scope
 
         Refresh()
         DogsForeverUI.RefreshOptions()
+    end
+
+    DogsForeverUI.Snap.Register(statusbar, { save = SavePlace, name = "5SR", id = "fsr" })
+
+    function onMouseUp(button)
+        if button ~= "LeftButton" or not Unlocked() then return end
+        DogsForeverUI.Snap.Stop(statusbar)
+        SavePlace()
     end
 
     StatusBar.statusbar = statusbar

@@ -19,11 +19,7 @@ do -- private scope
     local EASE = 14        -- per second: how quickly the page catches up
     local THUMB = { Style.BORDER_COLOR[1], Style.BORDER_COLOR[2], Style.BORDER_COLOR[3] }
 
-    -- Cursor coordinates come back in screen units.
-    local function CursorY(frame)
-        local _, y = GetCursorPosition()
-        return y / frame:GetEffectiveScale()
-    end
+    local CursorY = DogsForeverUI.CursorY
 
     -- scrollFrame: a ScrollFrame with its scroll child set. `onScroll(y)` is
     -- told every time the page moves. Answers the scroller:

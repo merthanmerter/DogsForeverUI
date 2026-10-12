@@ -10,10 +10,13 @@
 --   * the bag bar is gone until a bag is open, and a bag button second in the
 --     micro menu opens the bags instead (BagsBar.lua - the look, no setting);
 --     the backpack's icon is repaired there too;
+--   * the bags' Clean Up button joins stacks and sorts by type, rarity, value
+--     or name first, picked from its right-click menu (BagSort.lua);
 --   * any action bar ticked auto-hides, and fades back in under the mouse
 --     (ActionBars.lua);
---   * every action button in the addon's look, the bars at 80% of the game's
---     size and the end caps gone (ActionButtons.lua - the look, no setting);
+--   * every action button in the addon's look and the end caps gone
+--     (ActionButtons.lua - the look, no setting; the bars and their sizes are
+--     ActionBars\ActionBars.lua's);
 --   * the beta's Issue Reporter box and its tooltip hints hidden
 --     (IssueReporter.lua).
 --
@@ -43,6 +46,7 @@ do -- private scope
         unlocked = false,        -- the micro menu is placed with the rest of the UI
         quietMicroMenu = true,   -- the micro menu shows only under the mouse
         hideIssueReporter = true, -- the beta's Issue Reporter box and hints
+        bagSort = "type",        -- what Clean Up sorts the bags by first, its right-click menu's pick (BagSort.lua)
         -- The group finder's icon, once read off its window (MicroMenu.lua):
         -- that window loads only when first opened. Not a setting, so a reset
         -- keeps it.
@@ -94,12 +98,7 @@ do -- private scope
     -- Whether Edit Mode is open: the faded bars and the bag bar all show then,
     -- so they can be seen to be placed.
     function NS.EditModeOpen()
-        local manager = _G.EditModeManagerFrame
-        if type(manager) ~= "table" or type(manager.IsEditModeActive) ~= "function" then
-            return false
-        end
-        local ok, active = pcall(manager.IsEditModeActive, manager)
-        return ok and active and true or false
+        return DogsForeverUI.EditModeOpen()
     end
 
     -- The menus are the game's, built before any addon runs; the hooks go on
@@ -144,6 +143,7 @@ do -- private scope
         NS.MicroMenu:Apply()
         NS.ActionBars:Apply()
         NS.IssueReporter:Apply()
+        NS.BagSort:Apply()
     end)
 
     DogsForeverUI:RegisterModule(NS)

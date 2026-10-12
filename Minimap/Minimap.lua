@@ -23,16 +23,16 @@
 -- the game says the minimap was rescaled.
 --
 -- THE TITLE sits right on the map as the player frame's name sits on its
--- frame, in that frame's NAME BAND exactly (UnitPlate: black fading out to
--- both ends under a thin gold line that fades the same way, the same height),
--- the map's width, from the map's edge out, the map's border drawn over its
--- foot. The
--- game's header row is moved into it and laid along its middle: tracking at
--- the left end, the calendar at the right, the clock before it, the zone name
--- between (see PlaceRow). Edit Mode's "header underneath" puts the strip back
--- on the game's anchors each time it is applied, so the band follows it:
--- under the map, the row moved in again after the game's own code (a
--- post-hook, not a replacement).
+-- frame, in that frame's NAME BAND's height but drawing nothing - no
+-- background, no line - exactly the minimap's width - border's outer edge to
+-- border's outer edge - from the map's edge out, the map's border reaching
+-- over its foot. The game's header row is moved into it and laid along its
+-- middle: the zone name at the left end, tracking at the right, the calendar
+-- before it, the clock before that (see PlaceRow). Above or below the map by
+-- the addon's own setting, Header below (on by default - HeaderBelow); Edit
+-- Mode's "Header Underneath" puts the strip back on the game's anchors each
+-- time it is applied, so the row is moved in again after the game's own code
+-- (a post-hook, not a replacement).
 --
 -- EDIT MODE'S BOX fits the title and the map with its border, 2 units out
 -- all round (see FitEditBox): the game's is the whole cluster, sized for the
@@ -58,12 +58,16 @@
 -- corner, the difficulty flag under the dial, the group finder's eye smaller
 -- and inside the bottom left corner (the coordinates' mirror), and addons'
 -- edge buttons moved from the old circle to the square's edge (see BUTTONS
--- ROUND THE EDGE below).
+-- ROUND THE EDGE below) - though those are now gathered into a drawer beside
+-- the map, behind a handle on the map's side (Buttons.lua).
 --
 -- Nothing of the game's is given a field or has its scripts replaced; the
 -- only things of the game's moved are the header row, the dial, the
--- coordinates, the mail and difficulty flags, the eye in its default place and
--- the minimap's Edit Mode box.
+-- coordinates, the mail and difficulty flags (the difficulty flag's banner
+-- faded and its player count laid on its skull), the eye in its default
+-- place and the minimap's Edit Mode box; the calendar and tracking buttons
+-- are resized and their art faded under letters of the addon's (see THE
+-- HEADER'S LETTERS).
 
 local MinimapLook = {}
 DogsForeverUI.Minimap = MinimapLook
@@ -74,9 +78,7 @@ do -- private scope
 
     MinimapLook.MASK = Style.FLAT_TEXTURE
 
-    local function Faded(region)
-        if region and region.SetAlpha then region:SetAlpha(0) end
-    end
+    local Faded = DogsForeverUI.Fade
 
     local function Square()
         local map = _G.Minimap
@@ -87,79 +89,39 @@ do -- private scope
         local cluster = _G.MinimapCluster
         if cluster then Faded(cluster.BorderTop) end
     end
-    MinimapLook.Square = Square
 
     ---------------------------------------------------------------------------
     -- THE TITLE
     ---------------------------------------------------------------------------
 
-    -- The band wears the player frame's NAME BAND exactly - its look from
-    -- UnitPlate.NAME_BAND (black fading out to both ends under a gold line
-    -- that fades the same way) and its height (UnitPlate.TopRoom), and it sits
-    -- on the map as that band sits on its frame: the map's width, from its
-    -- edge out, the border drawn over its foot. The fallbacks are the same
-    -- numbers, for a load without the frames.
-    local function NameBand()
-        local UnitPlate = DogsForeverUI.Frames and DogsForeverUI.Frames.UnitPlate
-        local look = UnitPlate and UnitPlate.NAME_BAND or { alpha = 0.55, lineAlpha = 0.9, fade = 0.35 }
-        local height = UnitPlate and UnitPlate.TopRoom and UnitPlate.TopRoom() or 24
-        return look, height
-    end
-    MinimapLook.NameBand = NameBand
+    -- The band takes the player frame's NAME BAND's height (UnitPlate.
+    -- TopRoom), and EXACTLY THE MINIMAP'S WIDTH: from the border's outer edge
+    -- on one side to the other's. It sits on the map's edge, the border over
+    -- its foot.
+    local NameBand = DogsForeverUI.Frames.UnitPlate.NameBand
     -- The row inside it: PAD in from each end, GAP between neighbours.
     MinimapLook.PAD, MinimapLook.GAP = 4, 4
     -- Edit Mode's box, this much outside the title and the map's border.
     MinimapLook.EDIT_PADDING = 2
 
-    local underneath = false   -- Edit Mode's "header underneath"
-
-    -- One of the band's two layers, three pieces: a fade in over the outer
-    -- `fade` of the width, solid, a fade out (a texture fades one way only) -
-    -- UnitPlate's own construction.
-    local function Pieces(band, sub, colour, alpha)
-        local pieces = {}
-        local r, g, b = colour[1], colour[2], colour[3]
-        for i = 1, 3 do
-            local piece = band:CreateTexture(nil, "BACKGROUND", nil, sub)
-            piece:SetTexture(Style.FLAT_TEXTURE)
-            if i == 2 or not (piece.SetGradient and CreateColor) then
-                piece:SetVertexColor(r, g, b, i == 2 and alpha or alpha / 2)
-            elseif i == 1 then
-                piece:SetGradient("HORIZONTAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, alpha))
-            else
-                piece:SetGradient("HORIZONTAL", CreateColor(r, g, b, alpha), CreateColor(r, g, b, 0))
-            end
-            pieces[i] = piece
-        end
-        return pieces
+    -- HEADER BELOW: the addon's own setting now (ActionBars\GameFrames.lua,
+    -- minimapHeaderBelow; the player, 2026-10-03: below by default, put back
+    -- by a reset), not Edit Mode's "Header Underneath" - which the game takes
+    -- in only from its layout as it loads, and which a preset in use cannot
+    -- hold. The band is drawn above or below the map by it, whatever the
+    -- game's own setting says; the cluster is hung by the map and the band
+    -- together, so it follows.
+    local function HeaderBelow()
+        local game = DogsForeverUI.GameFrames
+        local db = game and game.db
+        if type(db) ~= "table" then return true end
+        return db.minimapHeaderBelow ~= false
     end
+    MinimapLook.HeaderBelow = HeaderBelow
 
-    -- The pieces across the band's width, as UnitPlate lays its own: the
-    -- black its full height, the line one real pixel tall on its outer edge -
-    -- the top, or the bottom when the band is under the map.
-    local function LayOutBand(band)
-        local width = band:GetWidth() or 0
-        if width <= 0 then return end
-        local look = NameBand()
-        local edge = math.floor(width * look.fade + 0.5)
-        local from, to = { 0, edge, width - edge }, { edge, width - edge, width }
-        local outer = underneath and "BOTTOMLEFT" or "TOPLEFT"
-        for i = 1, 3 do
-            local fill, line = band.fill[i], band.line[i]
-            fill:ClearAllPoints()
-            fill:SetPoint("TOPLEFT", band, "TOPLEFT", from[i], 0)
-            fill:SetPoint("BOTTOMLEFT", band, "BOTTOMLEFT", from[i], 0)
-            fill:SetWidth(to[i] - from[i])
-            line:ClearAllPoints()
-            line:SetPoint(outer, band, outer, from[i], 0)
-            line:SetWidth(to[i] - from[i])
-            if PixelUtil and PixelUtil.SetHeight then
-                PixelUtil.SetHeight(line, 1, 1)
-            else
-                line:SetHeight(1)
-            end
-        end
-    end
+    -- The band draws nothing: no black, no gold line (the player asked,
+    -- 2026-10-02 - the row bare on the map's edge). It is only the place the
+    -- row is laid along, and part of Edit Mode's box.
 
     -- How far the map's border reaches out past the map, in the band's units
     -- (the border is in the map's, which Edit Mode's minimap size scales).
@@ -170,15 +132,19 @@ do -- private scope
         if not bandScale or bandScale == 0 then return out end
         return out * map:GetEffectiveScale() / bandScale
     end
+    MinimapLook.BorderOut = BorderOut
 
     -- The game's header row, laid along the band's middle - the middle of the
-    -- part the map's border does not cover, `lift` from the band's own:
-    -- tracking at the left end, the calendar at the right, the clock before
-    -- it, the zone name between, cut short before the clock. Each is anchored
-    -- by its middle, so every icon and label sits on the one line.
-    local function PlaceRow(band, lift)
+    -- part the map's border does not cover, `lift` from the band's own: the
+    -- zone name at the left end (the player asked, 2026-10-02), tracking at
+    -- the right, the calendar before it, the clock before that, the zone name
+    -- cut short before the clock. Each is anchored
+    -- by its middle, so every icon and label sits on the one line. `side`:
+    -- how far the band reaches past the map each side (the border's reach),
+    -- so the row keeps PAD in from the map's edge, where it always was.
+    local function PlaceRow(band, lift, side)
         local cluster = _G.MinimapCluster
-        local PAD, GAP = MinimapLook.PAD, MinimapLook.GAP
+        local PAD, GAP = MinimapLook.PAD + (side or 0), MinimapLook.GAP
         local tracking, calendar = cluster.Tracking, _G.GameTimeFrame
         local clock, zone = _G.TimeManagerClockButton, cluster.ZoneTextButton
 
@@ -189,36 +155,34 @@ do -- private scope
         strip:SetPoint("LEFT", band, "LEFT", PAD, lift)
         strip:SetPoint("RIGHT", band, "RIGHT", -PAD, lift)
 
-        if tracking then
-            tracking:ClearAllPoints()
-            tracking:SetPoint("LEFT", band, "LEFT", PAD, lift)
-        end
-        if calendar then
-            calendar:ClearAllPoints()
-            calendar:SetPoint("RIGHT", band, "RIGHT", -PAD, lift)
-        end
-        local rightOf = calendar
-        if clock then
-            clock:ClearAllPoints()
-            if calendar then
-                clock:SetPoint("RIGHT", calendar, "LEFT", -GAP / 2, 0)
+        -- From the right end inwards: tracking, the calendar, the clock -
+        -- each hung off the one before it, or off the band's end when the
+        -- ones before are missing. Each is exactly as wide as its text (the
+        -- clock's time against its right edge), so LETTER_GAP is the space
+        -- between the texts themselves.
+        local rightOf
+        local function Next(frame)
+            frame:ClearAllPoints()
+            if rightOf then
+                frame:SetPoint("RIGHT", rightOf, "LEFT", -MinimapLook.LETTER_GAP, 0)
             else
-                clock:SetPoint("RIGHT", band, "RIGHT", -PAD, lift)
+                frame:SetPoint("RIGHT", band, "RIGHT", -PAD, lift)
             end
+            rightOf = frame
+        end
+        if tracking then Next(tracking) end
+        if calendar then Next(calendar) end
+        if clock then
+            Next(clock)
             local ticker = _G.TimeManagerClockTicker
             if ticker then
                 ticker:ClearAllPoints()
                 ticker:SetPoint("RIGHT", clock, "RIGHT", 0, 0)
             end
-            rightOf = clock
         end
         if zone then
             zone:ClearAllPoints()
-            if tracking then
-                zone:SetPoint("LEFT", tracking, "RIGHT", GAP, 0)
-            else
-                zone:SetPoint("LEFT", band, "LEFT", PAD, lift)
-            end
+            zone:SetPoint("LEFT", band, "LEFT", PAD, lift)
             if rightOf then
                 zone:SetPoint("RIGHT", rightOf, "LEFT", -GAP, 0)
             else
@@ -230,6 +194,139 @@ do -- private scope
                 text:SetPoint("LEFT", zone, "LEFT", 0, 0)
                 text:SetPoint("RIGHT", zone, "RIGHT", 0, 0)
             end
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- THE HEADER'S LETTERS. The calendar and tracking stay the game's buttons
+    -- - their clicks, tooltips and menu - but not its art: the bronze-framed
+    -- pictures, each a different size and off the clock's line, are faded
+    -- (the player, 2026-10-02: "they look terrible and not aligned") and each
+    -- button shows text instead, centred on it so they sit on one line with
+    -- the clock: the day of the month for the calendar, T for tracking. In
+    -- the clock's own font (the font object its time inherits), so the same
+    -- size, but the game's gold - the zone name's own. Plain text: a drawn
+    -- calendar tile and a magnifying glass came first, then an underline,
+    -- and the player wanted none of them. A little dimmed until the mouse is
+    -- over them, and a pixel down while pressed. Each button is ICON_SIZE
+    -- tall and exactly as wide as its text, so the row's gaps are the same
+    -- between every pair of texts; HIT_PAD more each side takes clicks.
+    --
+    -- The game sets the calendar's art again each time the date is refreshed
+    -- (GameTimeFrame_SetDate, looked up by name when it is called), so it is
+    -- faded again, and the day written, after that (a post-hook).
+    ---------------------------------------------------------------------------
+    MinimapLook.ICON_SIZE = 15
+    MinimapLook.ICON_ALPHA = 0.8        -- at rest; 1 under the mouse
+    MinimapLook.LETTER_FONT = "WhiteNormalNumberFont"   -- TimeManagerClockTicker's
+    MinimapLook.LETTER_COLOR = { 1, 0.82, 0 }   -- NORMAL_FONT_COLOR, the zone name's gold
+    MinimapLook.LETTER_GAP = 6          -- between the clock's, the day's and the T's texts
+    MinimapLook.HIT_PAD = 3
+    MinimapLook.TRACKING_LETTER = "T"
+
+    local function FadeArt(button)
+        for _, get in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture" }) do
+            local texture = type(button[get]) == "function" and button[get](button)
+            if texture then texture:SetAlpha(0) end
+        end
+    end
+
+    -- The glyph brightens under the mouse and moves a pixel while pressed.
+    local function Respond(button, glyph)
+        local function Rest() glyph:SetAlpha(MinimapLook.ICON_ALPHA) end
+        local function At(x, y)
+            glyph:ClearAllPoints()
+            glyph:SetPoint("CENTER", button, "CENTER", x, y)
+        end
+        Rest()
+        At(0, 0)
+        button:HookScript("OnEnter", function() glyph:SetAlpha(1) end)
+        button:HookScript("OnLeave", Rest)
+        button:HookScript("OnMouseDown", function() At(1, -1) end)
+        button:HookScript("OnMouseUp", function() At(0, 0) end)
+    end
+
+    -- Text on a button, in the clock's font and the zone name's gold, held
+    -- in a frame of its own so it brightens and is pressed as one.
+    local function Letters(button)
+        local size, colour = MinimapLook.ICON_SIZE, MinimapLook.LETTER_COLOR
+        local glyph = CreateFrame("Frame", nil, button)
+        glyph:SetSize(size, size)
+        glyph:EnableMouse(false)
+
+        local label = glyph:CreateFontString(nil, "OVERLAY")
+        local font = _G[MinimapLook.LETTER_FONT] or _G.GameFontNormal
+        if font then label:SetFontObject(font) end
+        label:SetTextColor(colour[1], colour[2], colour[3])
+        label:SetPoint("CENTER", glyph, "CENTER", 0, 0)
+        glyph.label = label
+
+        local pad = MinimapLook.HIT_PAD
+        button:SetHitRectInsets(-pad, -pad, 0, 0)
+        Respond(button, glyph)
+        return glyph
+    end
+
+    -- The button exactly as wide as its text; ICON_SIZE until the font has
+    -- measured it.
+    local function FitWidth(button, glyph, ...)
+        local width = math.ceil(glyph.label:GetStringWidth() or 0)
+        if width <= 0 then width = MinimapLook.ICON_SIZE end
+        button:SetWidth(width)
+        glyph:SetWidth(width)
+        for _, other in ipairs({ ... }) do other:SetWidth(width) end
+    end
+
+    local function CalendarDay()
+        local glyph, button = MinimapLook.calendarIcon, _G.GameTimeFrame
+        FadeArt(button)
+        if not glyph then return end
+        local now = C_DateAndTime and C_DateAndTime.GetCurrentCalendarTime and C_DateAndTime.GetCurrentCalendarTime()
+        glyph.label:SetText(now and now.monthDay or "")
+        FitWidth(button, glyph)
+    end
+
+    local function BuildCalendarIcon()
+        local button = _G.GameTimeFrame
+        if not button or MinimapLook.calendarIcon then return end
+        local size = MinimapLook.ICON_SIZE
+        button:SetSize(size, size)
+        MinimapLook.calendarIcon = Letters(button)
+        if type(_G.GameTimeFrame_SetDate) == "function" then
+            hooksecurefunc("GameTimeFrame_SetDate", CalendarDay)
+        end
+        CalendarDay()
+    end
+
+    local function BuildTrackingIcon()
+        local tracking = _G.MinimapCluster and _G.MinimapCluster.Tracking
+        local button = tracking and tracking.Button
+        if not button or MinimapLook.trackingIcon then return end
+        local size = MinimapLook.ICON_SIZE
+        tracking:SetSize(size, size)
+        button:SetSize(size, size)
+        Faded(tracking.Background)
+        FadeArt(button)
+
+        local glyph = Letters(button)
+        glyph.label:SetText(MinimapLook.TRACKING_LETTER)
+        FitWidth(button, glyph, tracking)
+        MinimapLook.trackingIcon = glyph
+    end
+
+    local function BuildIcons()
+        BuildCalendarIcon()
+        BuildTrackingIcon()
+    end
+
+    -- Measured again whenever the header is placed: at load the font may not
+    -- have measured anything yet.
+    local function FitLetters()
+        local day, letter = MinimapLook.calendarIcon, MinimapLook.trackingIcon
+        if day then FitWidth(_G.GameTimeFrame, day) end
+        if letter then
+            local tracking = _G.MinimapCluster.Tracking
+            FitWidth(tracking.Button, letter, tracking)
         end
     end
 
@@ -277,28 +374,33 @@ do -- private scope
     end
     MinimapLook.FitEditBox = FitEditBox
 
-    -- The band on the map's edge - above it, or under it - the map's width,
-    -- as the player frame's sits on its frame, and the game's header row
-    -- moved into it.
+    -- The band on the map's edge - above it, or under it - from the map's
+    -- border's outer edge on the left to its outer edge on the right, and the
+    -- game's header row moved into it.
     local function PlaceHeader()
         local band, map = MinimapLook.band, _G.Minimap
         local cluster = _G.MinimapCluster
         if not (band and map and cluster and cluster.BorderTop) then return end
         local out = BorderOut(band)
+        local underneath = HeaderBelow()
         band:ClearAllPoints()
         if underneath then
-            band:SetPoint("TOPLEFT", map, "BOTTOMLEFT", 0, 0)
-            band:SetPoint("TOPRIGHT", map, "BOTTOMRIGHT", 0, 0)
+            band:SetPoint("TOPLEFT", map, "BOTTOMLEFT", -out, 0)
+            band:SetPoint("TOPRIGHT", map, "BOTTOMRIGHT", out, 0)
         else
-            band:SetPoint("BOTTOMLEFT", map, "TOPLEFT", 0, 0)
-            band:SetPoint("BOTTOMRIGHT", map, "TOPRIGHT", 0, 0)
+            band:SetPoint("BOTTOMLEFT", map, "TOPLEFT", -out, 0)
+            band:SetPoint("BOTTOMRIGHT", map, "TOPRIGHT", out, 0)
         end
         local _, height = NameBand()
         band:SetHeight(height)
-        LayOutBand(band)
+        FitLetters()
         -- The map's border covers the band's foot: centre on the rest.
-        PlaceRow(band, (underneath and -1 or 1) * out / 2)
+        PlaceRow(band, (underneath and -1 or 1) * out / 2, out)
         FitEditBox()
+        -- The addon buttons' handle keeps clear of the map's border, whose
+        -- reach a rescale changes.
+        local buttons = MinimapLook.Buttons
+        if buttons and buttons.Place then buttons.Place() end
     end
     MinimapLook.PlaceHeader = PlaceHeader
 
@@ -310,15 +412,13 @@ do -- private scope
         local band = CreateFrame("Frame", nil, cluster)
         band:SetFrameLevel(cluster:GetFrameLevel())
         band:EnableMouse(false)
-        local look = NameBand()
-        band.fill = Pieces(band, -8, { 0, 0, 0 }, look.alpha)
-        band.line = Pieces(band, -7, Style.BORDER_COLOR, look.lineAlpha)
-        band:SetScript("OnSizeChanged", LayOutBand)
         MinimapLook.band = band
 
+        -- The game's own Header Underneath applied (a layout loading): its
+        -- row put back on its anchors - moved into the band again, on the
+        -- side the addon's setting says.
         if type(cluster.SetHeaderUnderneath) == "function" then
-            hooksecurefunc(cluster, "SetHeaderUnderneath", function(_, below)
-                underneath = below and true or false
+            hooksecurefunc(cluster, "SetHeaderUnderneath", function()
                 PlaceHeader()
                 MinimapLook.PlaceFlags()
             end)
@@ -327,6 +427,11 @@ do -- private scope
         -- moves the box's frame: fit the box again after.
         if type(cluster.Layout) == "function" then
             hooksecurefunc(cluster, "Layout", FitEditBox)
+        end
+        -- The game anchoring its box again, or working its clamp out again
+        -- (Edit Mode keeps every system on screen by it): ours after.
+        for _, method in ipairs({ "AnchorSelectionFrame", "UpdateClampOffsets" }) do
+            if type(rawget(cluster, method)) == "function" then hooksecurefunc(cluster, method, FitEditBox) end
         end
         if cluster.Selection and cluster.Selection.HookScript then
             cluster.Selection:HookScript("OnShow", FitEditBox)
@@ -363,7 +468,6 @@ do -- private scope
         dial:SetFrameLevel(map:GetFrameLevel() + 8)
         dial:SetAlpha(1)
     end
-    MinimapLook.PlaceDial = PlaceDial
 
     local function PlaceCoords()
         local map = _G.Minimap
@@ -394,11 +498,62 @@ do -- private scope
     -- GameFontHighlightSmall's size, if the game has not given them a font yet.
     MinimapLook.COORDS_SIZE = 10
 
+    -- THE DIFFICULTY FLAG'S LOOK (the player asked, 2026-10-01): no banner
+    -- behind it, and the player count on the skull's bottom right corner,
+    -- like an item's stack count (chosen from four sketches; the count in the
+    -- skull's middle was rejected). The banner - its backing and its border,
+    -- in each of the flag's three modes (Default, Guild, ChallengeMode) - is
+    -- faded; the game only ever sets their atlas (SetFlipped), never their
+    -- alpha. The count is laid under the skull by the mode's layout frame
+    -- (VerticalLayoutFrame, or the guild mode's HorizontalLayoutFrame) each
+    -- time the flag updates, so it is put on the corner right after each
+    -- layout (a post-hook), outlined as stack counts are.
+    MinimapLook.COUNT_OFFSET = { x = 3, y = -2 }   -- out past the corner a little
+    local function CountOnSkull(holder)
+        local text = holder and holder.Text
+        if not (text and holder.DifficultyTextures) then return end
+        local skull
+        for _, texture in ipairs(holder.DifficultyTextures) do
+            if texture:IsShown() then skull = texture end
+        end
+        if not skull then return end
+        local offset = MinimapLook.COUNT_OFFSET
+        text:ClearAllPoints()
+        text:SetPoint("BOTTOMRIGHT", skull, "BOTTOMRIGHT", offset.x, offset.y)
+        text:SetJustifyH("RIGHT")
+        local file, size, flags = text:GetFont()
+        if file and (type(flags) ~= "string" or not flags:find("OUTLINE")) then
+            text:SetFont(file, size or MinimapLook.COORDS_SIZE, "OUTLINE")
+        end
+    end
+
+    local function StyleDifficulty()
+        local flag = _G.MinimapCluster and _G.MinimapCluster.InstanceDifficulty
+        if not flag or MinimapLook.difficultyDone then return end
+        MinimapLook.difficultyDone = true
+        for _, key in ipairs({ "Default", "Guild", "ChallengeMode" }) do
+            local mode = flag[key]
+            if mode then
+                Faded(mode.Background)
+                Faded(mode.Border)
+            end
+        end
+        -- The holders of the skull and the count: the default mode itself,
+        -- and the guild mode's Instance row.
+        for _, holder in ipairs({ flag.Default, flag.Guild and flag.Guild.Instance }) do
+            if holder and type(holder.Layout) == "function" then
+                hooksecurefunc(holder, "Layout", CountOnSkull)
+                CountOnSkull(holder)
+            end
+        end
+    end
+
     -- The mail (and crafting order) flags into the map's top left corner,
     -- the dial's mirror; the game hangs them under the tracking button. The
     -- dungeon difficulty flag under the dial, which it would cover otherwise
     -- (the game hangs it under the header's right end).
     local function PlaceFlags()
+        StyleDifficulty()
         local cluster, map = _G.MinimapCluster, _G.Minimap
         if not (cluster and map) then return end
         local inset = MinimapLook.MAIL_INSET
@@ -449,13 +604,15 @@ do -- private scope
         local function Held(v) return math.max(-r, math.min(r, v / r * reach)) end
         return Held(x), Held(y)
     end
-    MinimapLook.OntoSquare = OntoSquare
 
     -- Move a button that sits on the round edge to the square's, once per
     -- placing: a place this file gave it is not moved again.
     local function ToSquareEdge(frame)
         local map = _G.Minimap
         if busy or not map or frame:GetNumPoints() ~= 1 then return end
+        -- Kept in the addon buttons' drawer (Buttons.lua), not on the edge.
+        local buttons = MinimapLook.Buttons
+        if buttons and buttons.Has and buttons.Has(frame) then return end
         local point, relative, relativePoint, x, y = frame:GetPoint(1)
         if point ~= "CENTER" or relative ~= map or relativePoint ~= "CENTER" then return end
         if type(x) ~= "number" or type(y) ~= "number" then return end
@@ -528,7 +685,6 @@ do -- private scope
         eye:ClearAllPoints()
         Base(eye, "SetPoint")(eye, "CENTER", map, "BOTTOMLEFT", offset, offset)
     end
-    MinimapLook.PlaceEye = PlaceEye
 
     local function LibDBIconHandles(button)
         local stub = _G.LibStub
@@ -557,7 +713,6 @@ do -- private scope
             end
         end
     end
-    MinimapLook.FindButtons = FindButtons
 
     local function BuildCorners()
         local cluster = _G.MinimapCluster
@@ -643,6 +798,7 @@ do -- private scope
     local function Apply()
         Build()
         BuildHeader()
+        BuildIcons()
         -- Again as the game's pieces arrive: the clock comes with
         -- Blizzard_TimeManager, loaded after the minimap.
         PlaceHeader()

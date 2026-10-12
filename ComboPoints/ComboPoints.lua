@@ -12,8 +12,9 @@
 -- row as it - just above the castbar, centred on it, under the swing bars -
 -- since the two are never wanted together: a rogue has no mana. Its size and
 -- layer are its own (Sizes, "Combo points"); it takes the castbar's placement
--- mode and text padding, and goes wherever the castbar goes until it is
--- dragged or given a position of its own (Positions). Always on, no switch.
+-- mode and text padding. That row is its default, worked out once; it never
+-- moves with the castbar after that (only when anchored to it on purpose, in
+-- Edit Mode). Always on, no switch.
 --
 -- NOTHING IS READ. GetComboPoints is SecretWhenUnitPowerRestricted, so the
 -- count is never compared or counted with. Each segment is a status bar of its
@@ -79,8 +80,6 @@ do -- private scope
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints(true)
     bar.border = Style.AddBorder(bar)
-    -- Its name, while it is being placed - above the segments.
-    bar.placementLabels = Style.AddPlacementLabels(bar)
 
     local segments, dividers = {}, {}
     NS.bar = bar
@@ -173,7 +172,8 @@ do -- private scope
         -- Placed with the castbar group - by a character that has combo points
         -- to show: nobody else has anything to place here.
         if Group().unlocked then
-            for _, segment in ipairs(segments) do segment:SetValue(0) end
+            -- In Edit Mode, as it really looks: every point lit.
+            for _, segment in ipairs(segments) do segment:SetValue(#segments) end
             if UsesComboPoints() then Style.ShowNow(bar) else Style.HideNow(bar) end
             return
         end
@@ -201,15 +201,18 @@ do -- private scope
         bar:ClearAllPoints()
         bar:SetFrameStrata(db.frameStrata or "MEDIUM")
         bar:SetSize(db.barWidth, db.barHeight)
+        -- Its default: the countdown's row, just above the castbar and
+        -- centred on it - taken once (a reset clears `placed`); it never
+        -- moves with the castbar after that.
+        if not db.placed and castbar.GroupSettled() then
+            db.barLeft, db.barTop = castbar.OverCastbar(db.barWidth, db.barHeight, castbar.STACK_GAP)
+            db.placed = true
+        end
         if db.placed then
-            -- Placed somewhere of its own: it stays there.
             bar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
         else
-            -- The countdown's row: just above the castbar, centred on it, and
-            -- wherever that goes. Where that is, written back for the
-            -- Positions boxes.
+            -- (Before the castbar has its place: shown over it.)
             bar:SetPoint("BOTTOM", castbar.CastBar.castbar, "TOP", 0, castbar.STACK_GAP)
-            db.barLeft, db.barTop = castbar.OverCastbar(db.barWidth, db.barHeight, castbar.STACK_GAP)
         end
         bar:SetMovable(true)
         -- After SetMovable: SetUserPlaced errors on a frame that is neither
@@ -219,9 +222,7 @@ do -- private scope
         -- Clickable only while being placed: the drag is all a click does.
         bar:EnableMouse(group.unlocked and true or false)
 
-        Style.SetBackground(bar.bg, group.unlocked)
-        Style.ShowPlacementLabels(bar.placementLabels, bar, "Combo points", group.unlocked,
-            group.textPadding)
+        Style.SetBackground(bar.bg)
         Layout()
 
         NS.BlizzardComboFrame.Refresh()
@@ -229,20 +230,27 @@ do -- private scope
     end
 
     bar:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and Group().unlocked then self:StartMoving() end
+        if button == "LeftButton" and Group().unlocked then DogsForeverUI.Snap.Start(self) end
     end)
-    bar:SetScript("OnMouseUp", function(self, button)
-        -- A right-click locks the castbar group again once it is placed.
-        if DogsForeverUI.RightClickLock(DogsForeverUI.Castbar, button) then return end
-        if button ~= "LeftButton" or not Group().unlocked then return end
-        self:StopMovingOrSizing()
-        -- Dragged: somewhere of its own from now on, no longer in the row.
+    -- Where the bar is now, kept: somewhere of its own from now on, no
+    -- longer in the row. A drag's end, a nudge, or - locked or not -
+    -- following what it is anchored to (Core\Snap.lua).
+    local function SavePlace()
         local db = NS.db
         db.placed = true
-        db.barLeft = self:GetLeft()
-        db.barTop = -1 * (GetScreenHeight() - self:GetTop())
+        db.barLeft = bar:GetLeft()
+        db.barTop = -1 * (GetScreenHeight() - bar:GetTop())
         Refresh()
         DogsForeverUI.RefreshOptions()
+    end
+    DogsForeverUI.Snap.Register(bar, {
+        save = SavePlace,
+        name = "Combo Points", id = "combo",
+    })
+    bar:SetScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not Group().unlocked then return end
+        DogsForeverUI.Snap.Stop(self)
+        SavePlace()
     end)
 
     NS:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -252,12 +260,17 @@ do -- private scope
     end
     pcall(NS.RegisterEvent, NS, "UPDATE_SHAPESHIFT_FORM")
 
-    NS:SetScript("OnEvent", function(_, event)
+    NS:SetScript("OnEvent", function(_, event, _, powerType)
         if event == "PLAYER_ENTERING_WORLD" then
             Refresh()
         elseif event == "UNIT_MAXPOWER" then
             Layout()
             Update()
+        elseif event == "UNIT_POWER_FREQUENT" and not IsSecret(powerType)
+               and (powerType == "MANA" or powerType == "RAGE") then
+            -- Mana and rage move all the time and never touch combo points
+            -- (a druid's change of form has events of its own).
+            return
         else
             Update()
         end

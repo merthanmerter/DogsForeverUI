@@ -19,7 +19,7 @@
 -- Between the two, in one row, sit the five-second countdown (FiveSecondRule\)
 -- and the combo points (ComboPoints\), which are part of the same group: the
 -- same size and look from this module's settings, placed and locked with it,
--- and shown in the options' Castbars section. See RowInUse for the order.
+-- and sized in the options' Sizes section. See RowHeight for the order.
 
 DogsForeverUI.Castbar = CreateFrame("Frame")
 
@@ -28,7 +28,7 @@ do -- private scope
 
     local CenterBar, onEvent, onUpdate
     local BeginCast, EndCast, ReadCast, EventIsOurs, Refresh
-    local ToggleLock, Lock, Unlock
+    local Lock, Unlock
 
     NS.key = "castbar"
     NS.title = "Castbars"
@@ -123,14 +123,20 @@ do -- private scope
     -- hand swung; the rest say that a hand gained or lost something to swing
     -- with, or that the target moved in or out of reach. Each one on its own,
     -- for the same reason as above.
+    -- (CVAR_UPDATE: the game's own swing timer switch, SwingBars.GameOn.)
     for _, event in ipairs({ "PLAYER_SWING", "PLAYER_SWING_RANGE_UPDATE",
-                             "PLAYER_TARGET_CHANGED", "WEAPON_SLOT_CHANGED" }) do
+                             "PLAYER_TARGET_CHANGED", "WEAPON_SLOT_CHANGED", "CVAR_UPDATE" }) do
         pcall(NS.RegisterEvent, NS, event)
     end
     pcall(NS.RegisterUnitEvent, NS, "UNIT_ATTACK_SPEED", "player")
     NS:RegisterEvent("PLAYER_ENTERING_WORLD")
 
-    NS:SetScript("OnEvent", function(_, event, ...) onEvent(event, ...) end)
+    -- The per-frame drawing runs only while there is something to draw: a
+    -- cast, a failed one held, a swing bar swinging, holding or fading out of
+    -- its row, or the group being placed. Otherwise the frame is hidden,
+    -- which stops its OnUpdate and nothing else - a hidden frame still gets
+    -- its events, and every event (and every Refresh) shows it again.
+    NS:SetScript("OnEvent", function(_, event, ...) onEvent(event, ...); NS:Show() end)
     NS:SetScript("OnUpdate", function() onUpdate() end)
 
     -- First start, and after a reset.
@@ -150,10 +156,12 @@ do -- private scope
         end
     end
 
-    -- Where a bar of the group that has not been placed on its own goes: in
-    -- the group, centred over the castbar, `above` its top edge, and
-    -- following it wherever it is put. Answers the TOPLEFT for the Positions
-    -- boxes, worked out from the castbar's settings rather than measured.
+    -- Where a bar of the group goes by default: centred over the castbar,
+    -- `above` its top edge. Answers the TOPLEFT, worked out from the castbar's
+    -- settings rather than measured. The bars of the group take it ONCE - a
+    -- first start, a reset - and from then on stay where they are: none of
+    -- them moves with the castbar (the player, 2026-10-02: nothing moves with
+    -- anything unless anchored to it on purpose, in Edit Mode).
     function NS.OverCastbar(width, height, above)
         local db = NS.db
         local left = (db.barLeft or 0) + ((db.barWidth or 0) - width) / 2
@@ -161,24 +169,30 @@ do -- private scope
         return left, top
     end
 
-    -- A width that keeps a bar centred where it was, for a bar placed on its
-    -- own (one still in the group is centred over the castbar anyway).
+    -- A width box's onChange that keeps a bar centred where it was: a new
+    -- width moves its left by half the change, so it grows or shrinks on both
+    -- sides instead of out to the right. With `placedKey`, only while that
+    -- says it is placed on its own (one still in the castbar group is
+    -- centred over the castbar anyway).
     function NS.KeepCentred(db, placedKey, leftKey)
         return function(old, new)
-            if type(old) == "number" and type(new) == "number" and db()[placedKey]
-               and db()[leftKey] then
+            if type(old) == "number" and type(new) == "number"
+               and (placedKey == nil or db()[placedKey]) and db()[leftKey] then
                 db()[leftKey] = db()[leftKey] + (old - new) / 2
             end
         end
     end
 
-    -- Default placement: centred horizontally, its top edge about 64% of the
+    -- Default placement: centred horizontally, its top edge about 69% of the
     -- way down the screen - the whole group, since the swing bars and the
-    -- countdown hang off this bar. Where the player put it: first 65% (about
-    -- 20 below the old -756 on their UI 1200 units tall), then 10 higher -
-    -- 770 of their 1200. A share of the screen rather than a pixel count, so
-    -- it lands in the same place at any resolution or UI scale.
-    local TOP_SHARE       = 770 / 1200
+    -- countdown hang off this bar, and the cooldown bars follow its top. Where
+    -- the player put it: first 65% (about 20 below the old -756 on their UI
+    -- 1200 units tall), then 10 higher - 770 of their 1200 - then 60 lower
+    -- with the unit frames' row (Frames.lua ROW_TOP, -840 to -900, 2026-10-01),
+    -- so the two keep the same gap: 830 of their 1200. A share of the screen
+    -- rather than a pixel count, so it lands in the same place at any
+    -- resolution or UI scale.
+    local TOP_SHARE       = 830 / 1200
 
     -- The daylight between two bars of the group, and what it takes to get it.
     -- Every bar draws its border on a frame three pixels *outside* itself, so a
@@ -195,24 +209,27 @@ do -- private scope
     -- ranged, bottom to top. The row is kept only for a character with something to put in
     -- it: a warrior has neither, and gets the swing bars straight on the
     -- castbar.
-    function NS.RowInUse()
-        return NS.RowHeight() > 0
-    end
-
-    -- How tall the countdown and combo points' row over the castbar is: the
-    -- taller of whichever of them this character has and has left in the
-    -- row (one placed elsewhere takes no room there); 0 for none.
+    --
+    -- How tall the countdown and combo points' row over the castbar is, for
+    -- the swing bars' default place above it: the taller of whichever of
+    -- them this character has; 0 for none.
     function NS.RowHeight()
         local height = 0
         local fsr, combo = DogsForeverUI.FiveSecondRule, DogsForeverUI.ComboPoints
-        if fsr and fsr.db and fsr.ClassHasMana() and not fsr.db.placed then
+        if fsr and fsr.db and fsr.ClassHasMana() then
             height = math.max(height, fsr.db.barHeight or 0)
         end
-        if combo and combo.db and combo.ClassUses() and not combo.db.placed then
+        if combo and combo.db and combo.ClassUses() then
             height = math.max(height, combo.db.barHeight or 0)
         end
         return height
     end
+
+    -- Whether the castbar has its final place for this session (the screen's
+    -- size is known once the world is entered): until then the group's bars
+    -- only show over it, and take their own places after.
+    local settled = false
+    function NS.GroupSettled() return settled end
 
     -- A new width keeps the castbar where it was centred: it grows or shrinks
     -- by half on each side rather than out to the right. The bars still in
@@ -221,6 +238,16 @@ do -- private scope
         if type(old) ~= "number" or type(new) ~= "number" then return end
         local db = NS.db
         if db.barLeft then db.barLeft = db.barLeft + (old - new) / 2 end
+    end
+
+    -- The castbar's own default top, as a TOPLEFT offset (negative): what
+    -- CenterBar gives it. The cooldown bars' first place and the default
+    -- layout (Core\DefaultPlaces.lua) take theirs from it.
+    NS.TOP_SHARE = TOP_SHARE
+    function NS.DefaultTop()
+        local screenHeight = GetScreenHeight() or 0
+        if screenHeight <= 0 then return nil end
+        return -screenHeight * TOP_SHARE
     end
 
     function CenterBar()
@@ -356,6 +383,7 @@ do -- private scope
             -- out there lands in the wrong coordinate space. Only an
             -- addon-chosen position is recomputed here, never a dragged one.
             if NS.db.autoPlaced then CenterBar() end
+            settled = true
             Refresh()
             return
         end
@@ -400,6 +428,10 @@ do -- private scope
     function onUpdate()
         NS.CastBar:OnUpdate()
         NS.SwingBars.OnUpdate()
+        if not (NS.db.unlocked or cast.active or GetTime() < NS.holdUntil
+                or NS.SwingBars.Busy()) then
+            NS:Hide()
+        end
     end
 
     -------------------------------------------------------------------------
@@ -417,15 +449,12 @@ do -- private scope
         for _, module in ipairs({ DogsForeverUI.FiveSecondRule, DogsForeverUI.ComboPoints }) do
             if module and module.db and module.Redraw then module.Redraw() end
         end
+        NS:Show()
     end
 
-    -- The bar is off screen except while something is casting, so placement is
-    -- turned on with the button in the options rather than by clicking a bar
-    -- that is not there.
-    function ToggleLock()
-        if NS.db.unlocked then Lock() else Unlock() end
-    end
-
+    -- Unlocked and locked with the rest of the UI, in Edit Mode
+    -- (DogsForeverUI.lua): the bar is off screen except while something is
+    -- casting, so it shows there as a full bar to be placed.
     function Unlock()
         NS.db.unlocked = true
         NS.CastBar:Unlock()
@@ -441,7 +470,6 @@ do -- private scope
     NS.Refresh = Refresh
     NS.Lock = Lock
     NS.Unlock = Unlock
-    NS.ToggleLock = ToggleLock
 
     DogsForeverUI:RegisterModule(NS)
 end

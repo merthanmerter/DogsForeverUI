@@ -1,22 +1,25 @@
 ## Interface: 16001
 ## Title: Dog's Forever UI
-## Notes: Unit frames, a castbar with swing bars, the five-second rule, combo points, an XP bar, a breath bar, cooldown bars, movable loot rolls, a chat copy window and quieter menus - one addon, one look. Options from its own button in the micro menu.
+## Notes: Unit frames, a castbar with swing bars, the five-second rule, combo points, an XP bar, a breath bar, a flight path timer, cooldown bars, a threat bar, movable loot rolls, loot toasts, a chat copy window and quieter menus - one addon, one look. Options from its own button in the micro menu.
 ## Version: 1.0.0
 ## Author: Dog
 ## Category: Interface
 ## IconTexture: Interface\AddOns\DogsForeverUI\Media\icon
 ## SavedVariablesPerCharacter: DogsForeverUIDB
-## SavedVariables: DogsForeverUIProfiles
+## SavedVariables: DogsForeverUIProfiles, DogsForeverUIFlights
 
 DogsForeverUI.lua
 
 Core\Style.lua
+Core\Panel.lua
 Core\Fonts.lua
 Core\Profiles.lua
+Core\Snap.lua
 
 Frames\Frames.lua
 Frames\BlizzardFrames.lua
 Frames\UnitPlate.lua
+Frames\PartyPets.lua
 Frames\UnitCastbar.lua
 Frames\UnitAuras.lua
 Frames\Totems.lua
@@ -39,30 +42,52 @@ XPBar\XPBar.lua
 XPBar\BlizzardXPBar.lua
 
 MirrorTimers\MirrorTimers.lua
+MirrorTimers\FlightRoutes.lua
+MirrorTimers\FlightTimer.lua
 
 LootRolls\LootRolls.lua
+LootRolls\LootToasts.lua
 
 Cooldowns\Cooldowns.lua
 Cooldowns\Durations.lua
 Cooldowns\TooltipIDs.lua
 
+Threat\Threat.lua
+
 Chat\Chat.lua
 Chat\ChatLog.lua
 Chat\ChatButton.lua
+Chat\ChatLook.lua
 
 Menus\Menus.lua
 Menus\MicroMenu.lua
 Menus\BagsBar.lua
+Menus\BagSort.lua
 Menus\OptionsButton.lua
 Menus\ActionBars.lua
 Menus\ActionButtons.lua
 Menus\IssueReporter.lua
 
+ActionBars\ActionBars.lua
+ActionBars\Paint.lua
+
 Minimap\Minimap.lua
+Minimap\Buttons.lua
+ActionBars\GameFrames.lua
+Core\DefaultPlaces.lua
+Core\GameDefaults.lua
+
+Objectives\Objectives.lua
 
 Fishing\Fishing.lua
+
+Skinning\Skinning.lua
 
 Options\ScrollBar.lua
 Options\Widgets.lua
 Options\Panel.lua
 Options\Pages.lua
+Options\Unlock.lua
+Options\Keybinds.lua
+Options\Install.lua
+Options\GameMenu.lua

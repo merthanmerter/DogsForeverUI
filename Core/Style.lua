@@ -26,10 +26,18 @@ do -- private scope
     Style.FLAT_TEXTURE = "Interface\\Buttons\\WHITE8X8"
 
     -- Behind every bar, for the part of it that is not filled: a plain black
-    -- tone, nearly opaque, drawn as a colour rather than from a file. It used
+    -- tone, drawn as a colour rather than from a file. It used
     -- to be a texture in Media\, and when that file went missing the game drew
     -- its stand-in for a missing texture - solid green - behind every bar.
-    Style.BACKGROUND_COLOR = { 0.05, 0.05, 0.05, 0.9 }
+    -- At half (the player, 2026-10-03: "our empty action bar background, xp
+    -- bar background (all backgrounds like this) should be same as chat and
+    -- damage meter. 50% opacity" - Core\Panel.lua's HOVER_ALPHA).
+    Style.BACKGROUND_COLOR = { 0.05, 0.05, 0.05, 0.5 }
+
+    -- The addon's windows - the options, the placing dialog - in the same
+    -- tone, a touch more solid; and every piece being placed with them, so
+    -- placing the UI reads as one thing.
+    Style.WINDOW_BACKGROUND = { 0.05, 0.05, 0.05, 0.96 }
 
     -- Every label on every bar - unit frames, castbars, swing bars, the
     -- countdown, combo points, XP - is white, as the player asked. GOLD, the
@@ -63,9 +71,9 @@ do -- private scope
     Style.SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
 
     -- While a bar is being placed it says what it is - its name on the left -
-    -- and wears diagonal stripes over its black background (SetBackground).
-    -- It used to say "unlocked" on the right too; the player: "it's obvious
-    -- they're unlocked" (2026-09-29). The stripes say it instead.
+    -- on the options window's background (SetBackground). It used to say
+    -- "unlocked" on the right too; the player: "it's obvious they're
+    -- unlocked" (2026-09-29).
 
     ---------------------------------------------------------------------------
     -- THE PALETTE
@@ -172,13 +180,20 @@ do -- private scope
     -- failed or was interrupted.
     --
     -- Except the cast: the game's classic yellow (1, 0.7, 0) reads orange, and
-    -- the player asked for it to be the heading gold, #ffbb20.
+    -- the player asked for it to be the heading gold, #ffbb20. And the
+    -- channel: the game's pure green was too loud beside that gold, so it is
+    -- the player's softer green, #04b237.
     Style.CAST_COLOR = {
         casting         = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3] },
-        channel         = GameColour(CASTBAR_CLASSIC_GREEN, 0.0, 1.0, 0.0),
+        channel         = { 0x04 / 255, 0xb2 / 255, 0x37 / 255 },
         uninterruptible = GameColour(CASTBAR_CLASSIC_GRAY, 0.7, 0.7, 0.7),
         failed          = GameColour(CASTBAR_CLASSIC_RED, 1.0, 0.0, 0.0),
     }
+
+    -- The cooldown manager: a cooldown bar is gold, a buff's duration bar
+    -- green - the cast's and the channel's colours, so the two read apart.
+    Style.COOLDOWN_COLOR = Style.CAST_COLOR.casting
+    Style.DURATION_COLOR = Style.CAST_COLOR.channel
 
     -- The swing bars: grey, as the game's own swing timer is. Its grey used to
     -- come from the swing timer art, left untinted; on the flat fill the grey
@@ -208,6 +223,10 @@ do -- private scope
     -- The rested XP still ahead of it, in the classic bar's own rested blue,
     -- exactly, drawn solid so it reads as its own stretch of the bar.
     Style.RESTED_COLOR = { 0.0, 0.39, 0.88 }
+
+    -- The honor bar over it: the orange-red of the game's own honor fill
+    -- (UI-HUD-ExperienceBar-Fill-Honor).
+    Style.HONOR_COLOR = { 0.94, 0.33, 0.0 }
 
     -- Whether this client has a piece of the game's art, asked before it is
     -- used: a missing atlas draws nothing at all.
@@ -246,8 +265,10 @@ do -- private scope
     -- sticker: a light sheen fading down over the top half, a slight shade
     -- deepening over the bottom half. Both are pinned to the fill itself, so
     -- they cover only what is filled and follow it as it grows - the value
-    -- is never read, so a secret one is fine. Shaded only from top to bottom,
-    -- it stretches any way without breaking up.
+    -- is never read, so a secret one is fine. Shaded only across the bar, it
+    -- stretches any way without breaking up. A vertical bar (a party pet's
+    -- box, Frames\PartyPets.lua) has it turned with it: the sheen down its
+    -- left half, the shade its right.
     --
     -- MakeSheen hands the two textures back and writes nothing on the bar, for
     -- a bar that is not the addon's own (the game's nameplates); AddSheen is
@@ -260,83 +281,51 @@ do -- private scope
     end
 
     function Style.MakeSheen(bar)
-        local fill = bar:GetStatusBarTexture()
+        return Style.SheenOver(bar, bar:GetStatusBarTexture(), 1, bar:GetOrientation() == "VERTICAL")
+    end
 
-        local sheen = bar:CreateTexture(nil, "ARTWORK", nil, 1)
+    -- The same sheen and shade on `owner`, pinned to `region` (a fill, or a
+    -- flat texture standing in for one - a party frame's dispel wash,
+    -- Frames\UnitAuras.lua), at ARTWORK `sublevel`; turned for a `vertical` bar.
+    function Style.SheenOver(owner, region, sublevel, vertical)
+        local sheen = owner:CreateTexture(nil, "ARTWORK", nil, sublevel)
         sheen:SetTexture(Style.FLAT_TEXTURE)
-        sheen:SetPoint("TOPLEFT", fill, "TOPLEFT")
-        sheen:SetPoint("BOTTOMRIGHT", fill, "RIGHT")
+        sheen:SetPoint("TOPLEFT", region, "TOPLEFT")
+        sheen:SetPoint("BOTTOMRIGHT", region, vertical and "BOTTOM" or "RIGHT")
 
-        local shade = bar:CreateTexture(nil, "ARTWORK", nil, 1)
+        local shade = owner:CreateTexture(nil, "ARTWORK", nil, sublevel)
         shade:SetTexture(Style.FLAT_TEXTURE)
-        shade:SetPoint("TOPLEFT", fill, "LEFT")
-        shade:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT")
+        shade:SetPoint("TOPLEFT", region, vertical and "TOP" or "LEFT")
+        shade:SetPoint("BOTTOMRIGHT", region, "BOTTOMRIGHT")
 
-        -- Bottom colour first, then top.
-        sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
-        shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
+        if vertical then
+            -- Left colour first, then right.
+            sheen:SetGradient("HORIZONTAL", CreateColor(1, 1, 1, SHEEN), CreateColor(1, 1, 1, 0))
+            shade:SetGradient("HORIZONTAL", CreateColor(0, 0, 0, 0), CreateColor(0, 0, 0, SHADE))
+        else
+            -- Bottom colour first, then top.
+            sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
+            shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
+        end
         return sheen, shade
     end
 
-    -- The part of a bar that is not filled. While the bar is being placed it is
-    -- plain black instead, with diagonal stripes over it in the border's gold,
-    -- so a piece being placed reads as one at a glance - the outline, the
-    -- stripes and its name are all there is to it.
-    --
-    -- The stripes are the game's own: the tiling texture it draws over an
-    -- absorb shield on a health bar (Blizzard_UnitFrame's
-    -- TotalAbsorbBarOverlayTemplate), repeated across the background at its
-    -- own size, so they are the same on any bar. Made the first time a bar is
-    -- unlocked, right over its background and under everything else on it. A
-    -- client without the file gets no stripes rather than the solid green the
-    -- game draws for a missing texture.
-    local PLACING_BACKGROUND = { 0, 0, 0, 1 }
-    Style.STRIPES = "Interface\\RaidFrame\\Shield-Overlay"
-    Style.STRIPE_COLOR = { Style.BORDER_COLOR[1], Style.BORDER_COLOR[2], Style.BORDER_COLOR[3], 0.55 }
-
-    local stripesKnown
-    local function HaveStripes()
-        if stripesKnown == nil then
-            stripesKnown = true
-            -- Trusted only if it knows a file every client has.
-            if type(GetFileIDFromPath) == "function" then
-                local okKnown, known = pcall(GetFileIDFromPath, "Interface\\Icons\\INV_Misc_QuestionMark")
-                if okKnown and known then
-                    local ok, id = pcall(GetFileIDFromPath, Style.STRIPES)
-                    stripesKnown = ok and id ~= nil
-                end
-            end
-        end
-        return stripesKnown
+    -- IN EDIT MODE - the game's, or the addon's own in combat - every piece is
+    -- shown as it really looks, as the game's own frames are there, with the
+    -- game's blue box over it saying what it is (Core\Snap.lua). There is no
+    -- other "placing look" any more (the copper boxes with names went,
+    -- 2026-10-02).
+    function Style.Previewing()
+        local core = DogsForeverUI
+        return core and core.IsUnlocked and core.IsUnlocked() or false
     end
 
-    local stripes = setmetatable({}, { __mode = "k" })   -- background -> its stripes
-
-    local function Stripes(texture)
-        local stripe = stripes[texture]
-        if stripe or not HaveStripes() then return stripe end
-        stripe = texture:GetParent():CreateTexture(nil, "BACKGROUND")
-        local layer, sublevel = "BACKGROUND", 0
-        if texture.GetDrawLayer then layer, sublevel = texture:GetDrawLayer() end
-        stripe:SetDrawLayer(layer or "BACKGROUND", math.min(7, (sublevel or 0) + 1))
-        stripe:SetTexture(Style.STRIPES, "REPEAT", "REPEAT")
-        stripe:SetHorizTile(true)
-        stripe:SetVertTile(true)
-        stripe:SetAllPoints(texture)
-        local c = Style.STRIPE_COLOR
-        stripe:SetVertexColor(c[1], c[2], c[3], c[4])
-        stripes[texture] = stripe
-        return stripe
-    end
-    Style.StripesOf = function(texture) return stripes[texture] end
-
-    function Style.SetBackground(texture, unlocked)
-        local colour = unlocked and PLACING_BACKGROUND or Style.BACKGROUND_COLOR
+    -- The part of a bar that is not filled.
+    function Style.SetBackground(texture)
+        local colour = Style.BACKGROUND_COLOR
         texture:SetColorTexture(colour[1], colour[2], colour[3], colour[4])
         texture:SetVertexColor(1, 1, 1)
         texture:SetAlpha(1)
-        local stripe = unlocked and Stripes(texture) or stripes[texture]
-        if stripe then stripe:SetShown(unlocked and true or false) end
         return texture
     end
 
@@ -629,6 +618,16 @@ do -- private scope
     -- own scale, and may run before the addon has caught up with it.
     function Style.Refit(border) pcall(Fit, border) end
 
+    -- One real pixel in `frame`'s units: a hairline drawn inside a bar (a
+    -- cooldown's icon edge, a won roll's row).
+    function Style.OnePixel(frame)
+        if PixelUtil and PixelUtil.GetNearestPixelSize then
+            local ok, px = pcall(PixelUtil.GetNearestPixelSize, 1, frame:GetEffectiveScale(), 1)
+            if ok and type(px) == "number" and px > 0 then return px end
+        end
+        return 1
+    end
+
     -- A border's outer edges put on whole screen pixels, where its bar is
     -- now. Every line is a whole number of pixels in from those edges, so
     -- each lands exactly on the pixel grid. Without it, a thin border round a
@@ -784,41 +783,19 @@ do -- private scope
     end
 
     function Style.HealthSparkAlpha(unit)
-        return Evaluated(UnitHealthPercent, unit, false, sparkCurve)
+        return Evaluated(UnitHealthPercent, unit, true, sparkCurve)
     end
 
     function Style.PowerSparkAlpha(unit)
         return Evaluated(UnitPowerPercent, unit, nil, false, sparkCurve)
     end
 
-    -- The placement label, for a bar with no text of its own to wear it in
-    -- (combo points, the XP bar): its name on the left. On a frame of its own
-    -- above the bar, so a fill or a segment drawn over the bar cannot cover it.
-    local PLACEMENT_TEXT_MIN = 8   -- a thin bar still says what it is
-
-    function Style.AddPlacementLabels(bar)
-        local holder = CreateFrame("Frame", nil, bar)
-        holder:SetAllPoints(bar)
-        holder:SetFrameLevel(bar:GetFrameLevel() + 5)
-
-        local labels = { holder = holder, name = holder:CreateFontString(nil, "OVERLAY") }
-        Style.SingleLine(labels.name)
-        labels.name:SetJustifyH("LEFT")
-        labels.name:SetPoint("LEFT", bar, "LEFT", 4, 0)
-        labels.name:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
-        return labels
-    end
-
-    -- Shown while the bar is being placed, empty the rest of the time.
-    function Style.ShowPlacementLabels(labels, bar, name, unlocked, padding)
-        Style.SetFont(bar, labels.name, padding, PLACEMENT_TEXT_MIN)
-        labels.name:SetText(unlocked and name or "")
-    end
-
     -- One line, always: a long label in a narrow bar is cut short with an
-    -- ellipsis rather than wrapped out of the bar.
+    -- ellipsis rather than wrapped out of the bar. No drop shadow: the label's
+    -- OUTLINE already rings it in black, and a 1,-1 shadow on top drew a
+    -- second black edge that stair-stepped at bar text sizes.
     function Style.SingleLine(label)
-        label:SetShadowOffset(1, -1)
+        label:SetShadowOffset(0, 0)
         label:SetWordWrap(false)
         label:SetNonSpaceWrap(false)
         label:SetMaxLines(1)

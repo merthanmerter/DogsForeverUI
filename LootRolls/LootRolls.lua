@@ -27,15 +27,17 @@ do -- private scope
     -- (GroupLootFrameBaseTemplate; GroupLootContainer_OnLoad's reservedSize).
     local WIDTH, HEIGHT, STEP = 277, 67, 100
 
-    -- One roll window's place: what is dragged while unlocked, hidden otherwise.
+    -- One roll window's place: what is dragged while unlocked, hidden
+    -- otherwise. While unlocked it stands in for a roll window, in the look
+    -- (Edit Mode's box over it names it).
     local holder = CreateFrame("Frame", "DogsForeverUILootRolls", UIParent)
     holder:SetFrameStrata("DIALOG")
     holder:SetMovable(true)
     holder:SetClampedToScreen(true)
     holder.bg = holder:CreateTexture(nil, "BACKGROUND")
     holder.bg:SetAllPoints(holder)
+    Style.SetBackground(holder.bg)
     holder.border = Style.AddBorder(holder)
-    holder.labels = Style.AddPlacementLabels(holder)
     holder:Hide()
     NS.holder = holder
 
@@ -90,26 +92,32 @@ do -- private scope
         holder:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
         holder:SetUserPlaced(false)
         holder:EnableMouse(db.unlocked)
-        Style.SetBackground(holder.bg, true)
-        Style.ShowPlacementLabels(holder.labels, holder, "Loot rolls", db.unlocked)
         holder:SetShown(db.unlocked)
         Anchor()
     end
 
     holder:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and NS.db.unlocked then self:StartMoving() end
+        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(self) end
     end)
-    holder:SetScript("OnMouseUp", function(self, button)
-        if DogsForeverUI.RightClickLock(NS, button) then return end
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        self:StopMovingOrSizing()
+    -- Where it is now, kept: a drag's end, a nudge, or - locked or not -
+    -- following what it is anchored to (Core\Snap.lua).
+    local function SavePlace()
         local db = NS.db
         db.autoPlaced = false
-        db.barLeft = self:GetLeft()
-        db.barTop = -(GetScreenHeight() - self:GetTop())
+        db.barLeft = holder:GetLeft()
+        db.barTop = -(GetScreenHeight() - holder:GetTop())
         Refresh()
         DogsForeverUI.RefreshOptions()
+    end
+    holder:SetScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not NS.db.unlocked then return end
+        DogsForeverUI.Snap.Stop(self)
+        SavePlace()
     end)
+    DogsForeverUI.Snap.Register(holder, {
+        save = SavePlace,
+        name = "Loot Rolls", id = "loot",
+    })
 
     NS:RegisterEvent("PLAYER_ENTERING_WORLD")
     NS:SetScript("OnEvent", function()

@@ -25,7 +25,8 @@
 -- game sets the alpha of some of it itself (the icon on hover, the highlight
 -- when a window is open, the alert flash) and shows and hides the rest, but
 -- never its vertex colour's alpha - except the guild emblem, coloured with the
--- tabard, which is why it is checked again every frame. The game's button
+-- tabard, which is why it is checked again every frame the menu can be seen
+-- (faded right out, it waits until it shows again). The game's button
 -- stays: its clicks, its keybinding, its tooltip, its enabled state (a
 -- disabled one is at half alpha, as the game has it, and its icon greyed) and
 -- the notification badge and latency bar it draws over itself. Its hit box is
@@ -244,8 +245,11 @@ do -- private scope
     local STATE_TEXTURES = {
         "GetNormalTexture", "GetPushedTexture", "GetDisabledTexture", "GetHighlightTexture",
     }
+    local PLATE = { "BorderArt", "BackgroundArt" }      -- the menu's own frame and plate
 
     Micro.parts = setmetatable({}, { __mode = "k" }) -- button -> what was made for it
+
+    local Wake              -- the menu looked at again (THE FADE, below)
 
     ---------------------------------------------------------------------------
     -- The holder: the row's place.
@@ -256,10 +260,6 @@ do -- private scope
     holder:SetClampedToScreen(true)
     holder:EnableMouse(false)
     holder:SetSize(Micro.PITCH, Micro.SQUARE)
-    holder.bg = holder:CreateTexture(nil, "BACKGROUND")
-    holder.bg:SetAllPoints(holder)
-    holder.border = Style.AddBorder(holder)
-    holder.labels = Style.AddPlacementLabels(holder)
     Micro.holder = holder
 
     ---------------------------------------------------------------------------
@@ -286,12 +286,16 @@ do -- private scope
     end
 
     -- Whether this client has the file. The check is only trusted if it knows
-    -- the question mark, which every client has.
+    -- the question mark, which every client has (asked until it does).
+    local trusted = false
     local function HasFile(path)
         if type(path) == "number" then return true end   -- a file ID the game gave
         if type(GetFileIDFromPath) ~= "function" then return true end
-        local okFallback, fallbackID = pcall(GetFileIDFromPath, Micro.FALLBACK_ICON)
-        if not (okFallback and fallbackID) then return true end
+        if not trusted then
+            local okFallback, fallbackID = pcall(GetFileIDFromPath, Micro.FALLBACK_ICON)
+            if not (okFallback and fallbackID) then return true end
+            trusted = true
+        end
         local ok, id = pcall(GetFileIDFromPath, path)
         return ok and id ~= nil
     end
@@ -421,7 +425,6 @@ do -- private scope
             end
         end
     end
-    Micro.UpdateIcons = UpdateIcons
 
     -- When a live picture may have changed: talents spent, refunded or
     -- swapped; the spells known; a window of the game's loaded; a guild
@@ -476,6 +479,9 @@ do -- private scope
             hover = hover, open = open, alert = alert, isOpen = isOpen,
         }
         Micro.parts[button] = parts
+        -- The mouse coming onto it wakes the menu: after the game's own
+        -- OnEnter, never instead of it (EllesmereUI's way).
+        button:HookScript("OnEnter", Wake)
         if kind == Micro.PORTRAIT then
             UpdatePortrait(parts)
         else
@@ -486,10 +492,10 @@ do -- private scope
         return parts
     end
 
-    -- Every frame: the game's art kept invisible (the bag button has none),
-    -- and the states.
-    local function UpdateButton(button, parts)
-        HideGameArt(button)
+    -- Every frame: the game's art kept invisible (the bag button has none) -
+    -- but while the whole menu is out of sight, `art` false - and the states.
+    local function UpdateButton(button, parts, art)
+        if art then HideGameArt(button) end
 
         local over = parts.inner:IsMouseOver() and button:IsShown() and true or false
         if parts.hover:IsShown() ~= over then parts.hover:SetShown(over) end
@@ -588,6 +594,8 @@ do -- private scope
             math.max(1, math.min(rows, #row) * pitch - Micro.GAP))
         laying = false
         Micro.Place()
+        -- (Lent to a vehicle's bar, or a button shown or hidden: looked at.)
+        Wake()
     end
     Micro.Layout = Layout
 
@@ -636,40 +644,53 @@ do -- private scope
         end
         holder:SetUserPlaced(false)
 
-        local unlocked = db.unlocked and true or false
-        holder:EnableMouse(unlocked)
-        holder.bg:SetShown(unlocked)
-        holder.border:SetShown(unlocked)
-        -- Striped only while it is being placed (its stripes are a texture
-        -- of their own, which the background's hiding does not take along).
-        Style.SetBackground(holder.bg, unlocked)
-        Style.ShowPlacementLabels(holder.labels, holder, "Micro menu", unlocked)
+        -- Taking the mouse while unlocked, to be dragged; the buttons
+        -- themselves show, as they really look.
+        holder:EnableMouse(db.unlocked and true or false)
     end
 
     holder:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and NS.db.unlocked then self:StartMoving() end
+        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(self) end
     end)
-    holder:SetScript("OnMouseUp", function(self, button)
-        if DogsForeverUI.RightClickLock(NS, button) then return end
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        self:StopMovingOrSizing()
-        local db, scale = NS.db, self:GetScale()
+    -- Where it is now, kept: a drag's end, a nudge, or - locked or not -
+    -- following what it is anchored to (Core\Snap.lua).
+    local function SavePlace()
+        local db, scale = NS.db, holder:GetScale()
         db.microPlaced = true
-        db.microLeft = self:GetLeft() * scale
-        db.microTop = self:GetTop() * scale - UIParent:GetHeight()
+        db.microLeft = holder:GetLeft() * scale
+        db.microTop = holder:GetTop() * scale - UIParent:GetHeight()
         Micro.Place()
         DogsForeverUI.RefreshOptions()
+    end
+    holder:SetScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not NS.db.unlocked then return end
+        DogsForeverUI.Snap.Stop(self)
+        SavePlace()
     end)
+    DogsForeverUI.Snap.Register(holder, {
+        save = SavePlace,
+        name = "Micro Menu", id = "micro",
+    })
 
     ---------------------------------------------------------------------------
     -- The fade, and the frame.
 
-    local watcher
+    -- AWAKE ONLY WHILE SOMETHING OF IT CAN BE SEEN. Faded right out - the
+    -- auto-hide on, the mouse away, nothing to place - the watcher sleeps
+    -- (nothing at all each frame) until the mouse comes onto one of its
+    -- buttons, a setting or Unlock Mode changes (Refresh), or the game lends
+    -- it to a bar or takes it back (Layout). Awake, everything is kept every
+    -- frame, as before; with the auto-hide off, ten times a second while the
+    -- mouse is elsewhere.
     local fade = nil       -- { alpha, away } while the menu is being faded
     local heldEditMode = {}
     local lastParent
+    local hooked = false
+    local IDLE_STEP = 0.1
+    local sinceStep = 0
 
-    function Micro:Refresh(delta)
+    -- Answers whether to stay awake.
+    local function Step(delta)
         local menu = _G.MicroMenu
         if not menu then return end
 
@@ -679,23 +700,49 @@ do -- private scope
             Layout()
         end
 
-        -- The frame and plate, always: they are no part of the look.
-        for _, key in ipairs({ "BorderArt", "BackgroundArt" }) do Invisible(menu[key]) end
-        for button, parts in pairs(Micro.parts) do UpdateButton(button, parts) end
+        local quiet = NS.db.quietMicroMenu
+        local shown = quiet and (NS.db.unlocked or NS.MouseOver(holder))
+        -- The game's art kept invisible only while something of the menu can
+        -- be seen: faded right out, it waits (some 170 calls a frame) until
+        -- the menu starts to show again - that same frame, before its alpha
+        -- rises.
+        local art = not (quiet and fade and fade.alpha == 0 and not shown)
 
-        if not NS.db.quietMicroMenu then
+        -- The frame and plate, always: they are no part of the look.
+        if art then
+            for _, key in ipairs(PLATE) do Invisible(menu[key]) end
+        end
+        for button, parts in pairs(Micro.parts) do UpdateButton(button, parts, art) end
+
+        if not quiet then
             -- Switched off: the whole menu, at once.
             if fade then
                 fade = nil
                 menu:SetAlpha(1)
             end
-            return
+            return true
         end
 
         -- Starts where it is, as if the mouse had just left it.
         if not fade then fade = { alpha = menu:GetAlpha(), away = 0 } end
-        local shown = NS.db.unlocked or NS.MouseOver(holder)
         NS.Fade(menu, fade, shown, delta, NS.ActionBars.Delay())
+        return shown or fade.alpha > 0
+    end
+
+    local watcher
+    Wake, watcher = DogsForeverUI.Waker(function(elapsed)
+        if not NS.db.quietMicroMenu then
+            sinceStep = sinceStep + elapsed
+            if sinceStep < IDLE_STEP and not NS.MouseOver(holder) then return true end
+            elapsed, sinceStep = sinceStep, 0
+        end
+        return Step(elapsed)
+    end)
+
+    -- A setting, Unlock Mode, the menus applied: looked at now, and awake.
+    function Micro:Refresh()
+        Wake()
+        Step()
     end
 
     function Micro:Apply()
@@ -707,10 +754,13 @@ do -- private scope
             DogsForeverUI.HoldEditMode(heldEditMode, _G.MicroMenuContainer, true)
         end
 
-        if not watcher then
+        if not hooked then
+            hooked = true
             hooksecurefunc(menu, "Layout", Layout)
-            watcher = CreateFrame("Frame")
-            watcher:SetScript("OnUpdate", function(_, delta) Micro:Refresh(delta) end)
+            -- (Taken back from a bar may not lay it out again.)
+            if type(menu.ResetMicroMenuPosition) == "function" then
+                hooksecurefunc(menu, "ResetMicroMenuPosition", Wake)
+            end
             -- The player's portrait, whenever the game redraws portraits; the
             -- live pictures (ICON_EVENTS); and the game's menu placed by Edit
             -- Mode on entering the world.

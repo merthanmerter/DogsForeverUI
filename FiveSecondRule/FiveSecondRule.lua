@@ -77,6 +77,21 @@ do -- private scope
         return class ~= "WARRIOR" and class ~= "ROGUE"
     end
 
+    -- Whether the player's resource right now is mana. A druid in cat form
+    -- runs on energy - the combo points' turn (ComboPoints\ComboPoints.lua,
+    -- shown only then) - and in bear form on rage: the countdown is not shown
+    -- in either, though it keeps counting, and comes back with the caster
+    -- form if any of the five seconds are left (the player, 2026-10-03:
+    -- "when we start hitting the combo points bar and 5sr are visible at the
+    -- same time ... if energy is active AND combo bar active then we hide
+    -- 5sr"). A form the client keeps secret counts as mana.
+    function NS.ManaActive()
+        local powerType, token = UnitPowerType("player")
+        if IsSecret(powerType) or IsSecret(token) then return true end
+        if token ~= nil then return token == "MANA" end
+        return powerType == nil or powerType == POWER_MANA
+    end
+
     -- First start, and after a reset: a reset leaves it back in its row.
     function NS.Init()
         -- Nothing to track for a class with no mana.
@@ -107,8 +122,8 @@ do -- private scope
             -- that cast's cost, which a free (Clearcasting-style) cast never
             -- produces.
             local _, powerToken = ...
-            if (IsSecret(powerToken) or powerToken == "MANA")
-               and GetTime() <= castPendingUntil then
+            if GetTime() <= castPendingUntil
+               and (IsSecret(powerToken) or powerToken == "MANA") then
                 TriggerFSR()
             end
 
@@ -121,13 +136,20 @@ do -- private scope
     end
 
     -- Switched off, the countdown bar puts itself away (StatusBar's OnUpdate).
+    -- Runs only while there is something to draw - a countdown, or the group
+    -- being placed: otherwise the frame is hidden, which stops its OnUpdate
+    -- but not its events, and a countdown or a Refresh shows it again.
     function onUpdate()
         if UnitIsDead("player") then
             NS.StatusBar.statusbar:Hide()
-            return
+        else
+            NS.StatusBar:OnUpdate()
         end
 
-        NS.StatusBar:OnUpdate()
+        if not DogsForeverUI.Castbar.db.unlocked
+           and (NS.mp5StartTime <= 0 or GetTime() > NS.mp5StartTime) then
+            NS:Hide()
+        end
     end
 
     -- The bar is brought out by the next OnUpdate, fading in like every bar of
@@ -135,6 +157,7 @@ do -- private scope
     function TriggerFSR()
         NS.mp5StartTime = GetTime() + 5
         castPendingUntil = 0
+        NS:Show()
     end
 
     function SpellHasManaCost(spellID)
@@ -157,6 +180,7 @@ do -- private scope
 
     function Refresh()
         NS.StatusBar:Refresh()
+        NS:Show()
     end
 
     -- Switching it on or off can take the row away from, or give it back to,

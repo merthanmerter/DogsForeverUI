@@ -1,10 +1,11 @@
 -- The options window's controls, drawn in the frames' look rather than taken
 -- from the game's templates: the same flat fills with their sheen, the same
--- dark background, the same gold border colour (Core\Style.lua) - as one
--- plain line inside each control's edges (W.Border), since a control is
--- small - and the addon's font.
+-- dark background (Core\Style.lua), a plain neutral line inside each
+-- control's edges (W.Border) and the addon's font. The gold is the accent:
+-- what is on, picked, focused or the main action.
 --
---   Button      a flat button; states: normal, active (gold), armed (red)
+--   Button      a flat button; states: normal, primary (gold outline),
+--               active (gold), armed (red), flat, nav (the sidebar's)
 --   TwoStep     a button that asks first: one click arms it, the next acts
 --   Toggle      an on/off switch: a small bar that fills gold, knob at its end
 --   Slider      a bar that fills gold to the value, with a thumb
@@ -26,7 +27,6 @@ DogsForeverUI.Widgets = W
 do -- private scope
     local Style = DogsForeverUI.Style
     local FLAT = Style.FLAT_TEXTURE
-    local B = Style.BORDER_COLOR
 
     W.GOLD = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3], 1 }
     W.TEXT = { 0.94, 0.94, 0.94, 1 }
@@ -37,20 +37,19 @@ do -- private scope
     W.BAD = { 1.00, 0.42, 0.36, 1 }
     W.DANGER = { 0.70, 0.16, 0.10, 1 }
     W.FIELD = { 0, 0, 0, 0.45 }
-    W.RAISED = { 1, 1, 1, 0.07 }
-    W.HOVER = { 1, 1, 1, 0.12 }
+    W.RAISED = { 1, 1, 1, 0.05 }
+    W.HOVER = { 1, 1, 1, 0.10 }
     W.PRESSED = { 1, 1, 1, 0.03 }
-    W.TRACK = { 0.13, 0.13, 0.13, 1 }
-    -- Outline colours, OPAQUE: the border's gold mixed with the window's dark
-    -- by hand (at 55% and 30%), so nothing under a line can show through and
-    -- make one side of an outline look different from another.
-    local function Mix(share)
-        local dark = 0.06
-        return { B[1] * share + dark * (1 - share), B[2] * share + dark * (1 - share),
-                 B[3] * share + dark * (1 - share), 1 }
-    end
-    W.LINE = Mix(0.55)                          -- a control's outline
-    W.FAINT = Mix(0.30)                         -- a card's, and the rules
+    W.TRACK = { 0.16, 0.16, 0.17, 1 }
+    -- The gold, faint: a row under the mouse, a picked entry's glow.
+    W.WASH = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3], 0.06 }
+    -- Outline colours, neutral, so the gold is the one accent (EllesmereUI's
+    -- way: white lines, its accent only where something is on or picked) -
+    -- and OPAQUE, so nothing under a line can show through and make one side
+    -- of an outline look different from another.
+    W.LINE = { 0.25, 0.25, 0.26, 1 }            -- a control's outline
+    W.LINE_HOVER = { 0.42, 0.42, 0.43, 1 }      -- under the mouse
+    W.FAINT = { 0.14, 0.14, 0.15, 1 }           -- a card's, and the rules
     W.FOCUS = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3], 1 }
     W.KNOB_LINE = { 0.02, 0.02, 0.02, 1 }
 
@@ -186,13 +185,12 @@ do -- private scope
     end
 
     -- A new UI scale: every line a whole number of pixels again.
-    function W.RelayOutlines()
-        for outline in pairs(outlines) do LayOut(outline) end
-    end
     local rescale = CreateFrame("Frame")
     rescale:RegisterEvent("UI_SCALE_CHANGED")
     rescale:RegisterEvent("DISPLAY_SIZE_CHANGED")
-    rescale:SetScript("OnEvent", W.RelayOutlines)
+    rescale:SetScript("OnEvent", function()
+        for outline in pairs(outlines) do LayOut(outline) end
+    end)
 
     -- The window's own border is the frames' (Style.AddBorder); its edges are
     -- put on whole pixels (Style.SnapBorder) whenever the window is shown or
@@ -269,31 +267,43 @@ do -- private scope
     -- Buttons.
     ---------------------------------------------------------------------------
 
+    local CLEAR = { 0, 0, 0, 0 }
+
     local function PaintButton(button)
         local style = button.style or "normal"
         local enabled = button:IsEnabled()
-        local bg, text = W.RAISED, W.TEXT
+        local bg, text, line = W.RAISED, W.TEXT, W.LINE
         if style == "active" then
             bg, text = W.GOLD, W.DARK_TEXT
         elseif style == "armed" then
             bg, text = W.DANGER, W.TEXT
-        elseif style == "flat" then
-            bg = { 0, 0, 0, 0 }
+        elseif style == "primary" then
+            text, line = W.GOLD, W.GOLD
+        elseif style == "flat" or style == "nav" then
+            bg = CLEAR
         end
+        -- The sidebar's entries: grey until picked or pointed at.
+        if style == "nav" and not button.selected then text = W.MUTED end
         if not enabled then
             text = W.DIM
         elseif button.pressed then
-            bg = style == "normal" and W.PRESSED or bg
+            bg = (style == "normal" or style == "primary") and W.PRESSED or bg
         elseif button.hovered then
-            if style == "normal" or style == "flat" then
-                bg = W.HOVER
-            else
+            if style == "active" or style == "armed" then
                 bg = { math.min(1, bg[1] * 1.15), math.min(1, bg[2] * 1.15), math.min(1, bg[3] * 1.15), 1 }
+            elseif style == "nav" then
+                bg, text = W.RAISED, W.TEXT
+            elseif style == "primary" then
+                bg = W.WASH
+            else
+                bg = W.HOVER
+                if style == "normal" then line = W.LINE_HOVER end
             end
         end
-        -- The picked item of a list, or of the sidebar, in gold.
+        -- The picked item of a list in gold.
         if button.selected and enabled and style == "flat" then text = W.GOLD end
         W.Colour(button.bg, bg)
+        if button.border then W.TintBorder(button.border, line) end
         if button.label then W.SetTextColour(button.label, text) end
         if button.glyph then
             for _, stroke in ipairs(button.glyph) do W.Colour(stroke, text) end
@@ -316,7 +326,7 @@ do -- private scope
             button.label:SetJustifyH("CENTER")
             button.label:SetText(label)
         end
-        if style ~= "flat" then button.border = W.Border(button) end
+        if style ~= "flat" and style ~= "nav" then button.border = W.Border(button) end
 
         button:SetScript("OnEnter", function(self) self.hovered = true; PaintButton(self) end)
         button:SetScript("OnLeave", function(self) self.hovered, self.pressed = false, false; PaintButton(self) end)
@@ -335,11 +345,6 @@ do -- private scope
 
     function W.SetStyle(button, style)
         button.style = style
-        PaintButton(button)
-    end
-
-    function W.SetEnabled(button, enabled)
-        if enabled then button:Enable() else button:Disable() end
         PaintButton(button)
     end
 
@@ -394,8 +399,8 @@ do -- private scope
     -- knob riding the end of the fill. It slides between the two.
     ---------------------------------------------------------------------------
 
-    W.TOGGLE_WIDTH, W.TOGGLE_HEIGHT = 36, 18
-    local KNOB = 12
+    W.TOGGLE_WIDTH, W.TOGGLE_HEIGHT = 40, 20
+    local KNOB = 14
     local SLIDE_TIME = 0.12
 
     local function PlaceKnob(toggle, v)
@@ -468,7 +473,11 @@ do -- private scope
     -- those, which cut a dark band through the middle of it.
     ---------------------------------------------------------------------------
 
-    local KNOB_WIDTH, KNOB_HEIGHT = 10, 16
+    local KNOB_WIDTH, KNOB_HEIGHT = 12, 12
+    local KNOB_HOVER = { 1, 0.86, 0.55, 1 }
+    -- (The boxes' own, below - a slider's typed value is one of them.)
+    local NewBox, FocusNext
+    local boxes = {}
 
     -- spec = { min, max, step, text(value) -> string }
     function W.Slider(parent, width, spec, get, set)
@@ -483,12 +492,12 @@ do -- private scope
         local track = CreateFrame("StatusBar", nil, slider)
         track:SetPoint("LEFT", slider, "LEFT", 0, 0)
         track:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
-        track:SetHeight(6)
+        track:SetHeight(4)
         track:SetMinMaxValues(spec.min, spec.max)
         local bg = W.Flat(track, "BACKGROUND", W.TRACK)
         bg:SetAllPoints(track)
         Style.Paint(track, W.GOLD)
-        track.border = W.Border(track)
+        track.border = W.Border(track, W.FAINT)
         slider.track = track
 
         local thumb = slider:CreateTexture(nil, "OVERLAY")
@@ -500,15 +509,32 @@ do -- private scope
         local knob = CreateFrame("Frame", nil, slider)
         knob:SetSize(KNOB_WIDTH, KNOB_HEIGHT)
         knob:SetFrameLevel(track:GetFrameLevel() + 10)
-        knob.fill = W.Flat(knob, "ARTWORK", W.TEXT)
+        knob.fill = W.Flat(knob, "ARTWORK", W.GOLD)
         knob.fill:SetAllPoints(knob)
         knob.border = W.Border(knob, W.KNOB_LINE)
         slider.knob = knob
-        slider:SetScript("OnEnter", function() W.Colour(knob.fill, W.GOLD) end)
-        slider:SetScript("OnLeave", function() W.Colour(knob.fill, W.TEXT) end)
+        slider:SetScript("OnEnter", function() W.Colour(knob.fill, KNOB_HOVER) end)
+        slider:SetScript("OnLeave", function() W.Colour(knob.fill, W.GOLD) end)
 
-        slider.valueText = W.Text(parent, 12, W.TEXT)
-        slider.valueText:SetPoint("LEFT", slider, "RIGHT", 10, 0)
+        -- The value beside it: written, or (spec.input) a box it can be typed
+        -- into (Unlock Mode's menus - the player, 2026-10-03: "the sizes also
+        -- should have inputs for precise editing"). The box shows what the
+        -- text would; typed, its number is taken (a "%" or unit dropped,
+        -- divided by spec.scale - 100 for a share shown as a percentage),
+        -- kept inside min..max and on the step. Enter, Tab or leaving it
+        -- keeps it; Esc puts the old one back.
+        local box
+        if spec.input then
+            box = NewBox(parent, nil, spec.inputWidth or 44, 8)
+            box:SetHeight(spec.inputHeight or 20)
+            box:SetTextInsets(3, 3, 0, 0)
+            box:SetPoint("LEFT", slider, "RIGHT", spec.inputGap or 6, 0)
+            slider.input = box
+            slider.valueText = box
+        else
+            slider.valueText = W.Text(parent, 12, W.MUTED)
+            slider.valueText:SetPoint("LEFT", slider, "RIGHT", 10, 0)
+        end
 
         local function Show(value)
             track:SetValue(value)
@@ -517,7 +543,16 @@ do -- private scope
                 share = math.max(0, math.min(1, (value - spec.min) / (spec.max - spec.min)))
             end
             knob:ClearAllPoints()
-            knob:SetPoint("LEFT", slider, "LEFT", share * (width - KNOB_WIDTH), 0)            slider.valueText:SetText(spec.text and spec.text(value) or tostring(value))
+            knob:SetPoint("LEFT", slider, "LEFT", share * (width - KNOB_WIDTH), 0)
+            local text = spec.text and spec.text(value) or tostring(value)
+            if box then
+                if not box:HasFocus() then
+                    box:SetText(text)
+                    box.shownText = text
+                end
+            else
+                slider.valueText:SetText(text)
+            end
         end
 
         local refreshing = false
@@ -534,6 +569,38 @@ do -- private scope
             refreshing = false
             Show(value)
         end
+
+        if box then
+            local function Commit()
+                local typed = box:GetText()
+                if typed == box.shownText then return end
+                local number = tonumber((tostring(typed):gsub("[^%d%.%-]", "")))
+                if number then
+                    if spec.scale then number = number / spec.scale end
+                    number = math.max(spec.min, math.min(spec.max, number))
+                    number = math.floor(number / spec.step + 0.5) * spec.step
+                    -- (The slider's own change sets it - unless it is the
+                    -- value it has already.)
+                    slider:SetValue(number)
+                end
+                box:ClearFocus()
+                slider.Refresh()
+            end
+            box:SetScript("OnEnterPressed", Commit)
+            box:SetScript("OnEscapePressed", function(self)
+                self:SetText(self.shownText or "")
+                self:ClearFocus()
+            end)
+            box:SetScript("OnTabPressed", function(self)
+                Commit()
+                FocusNext(self)
+            end)
+            box:HookScript("OnEditFocusLost", function(self)
+                if self:GetText() ~= self.shownText then Commit() end
+            end)
+            box.Refresh = slider.Refresh
+            boxes[#boxes + 1] = box
+        end
         return slider
     end
 
@@ -541,10 +608,10 @@ do -- private scope
     -- Boxes.
     ---------------------------------------------------------------------------
 
-    -- The boxes in the order they were made, for Tab to walk.
-    local boxes = {}
+    -- The boxes in the order they were made, for Tab to walk (`boxes`,
+    -- declared over the slider).
 
-    local function FocusNext(box)
+    function FocusNext(box)
         for index, other in ipairs(boxes) do
             if other == box then
                 for step = 1, #boxes - 1 do
@@ -559,7 +626,7 @@ do -- private scope
         end
     end
 
-    local function NewBox(parent, name, width, maxLetters, justify)
+    function NewBox(parent, name, width, maxLetters, justify)
         local box = CreateFrame("EditBox", name, parent)
         box:SetSize(width, W.CONTROL_HEIGHT)
         box:SetAutoFocus(false)
@@ -689,6 +756,8 @@ do -- private scope
     -- The one list a dropdown opens, shared: only one is ever open.
     local popup
     local ITEM_HEIGHT = 22
+    local ITEM_PAD = 8              -- a choice's words from its item's ends
+    local POPUP_MAX_WIDTH = 320
 
     local function ClosePopup()
         if popup and popup:IsShown() then
@@ -697,6 +766,7 @@ do -- private scope
         end
     end
     W.ClosePopup = ClosePopup
+    function W.PopupOpen() return popup ~= nil and popup:IsShown() end
 
     local function Popup()
         if popup then return popup end
@@ -728,23 +798,39 @@ do -- private scope
         end
         list.owner = owner
         list:SetScale(owner:GetEffectiveScale() / UIParent:GetEffectiveScale())
-        list:SetSize(owner:GetWidth(), #choices * ITEM_HEIGHT + 4)
         list:ClearAllPoints()
         list:SetPoint("TOPLEFT", owner, "BOTTOMLEFT", 0, -4)
         local current = get()
+        -- As wide as its widest choice needs (the player, 2026-10-03: "those
+        -- texts shouldnt overflow out of comboboxes"), never narrower than
+        -- its button, never past POPUP_MAX_WIDTH - and each choice's words
+        -- held inside its item, cut short with "..." past that.
+        local widest = 0
         for index, choice in ipairs(choices) do
             local item = list.items[index]
             if not item then
                 item = W.Button(list, "", owner:GetWidth() - 4, nil, "flat")
                 item:SetHeight(ITEM_HEIGHT)
                 item.label:ClearAllPoints()
-                item.label:SetPoint("LEFT", item, "LEFT", 8, 0)
+                item.label:SetPoint("LEFT", item, "LEFT", ITEM_PAD, 0)
+                item.label:SetPoint("RIGHT", item, "RIGHT", -ITEM_PAD, 0)
+                item.label:SetJustifyH("LEFT")
+                item.label:SetWordWrap(false)
                 list.items[index] = item
             end
-            item:SetWidth(owner:GetWidth() - 4)
+            W.SetLabel(item, choice.label)
+            -- (Its width unbounded by the item: the words' own.)
+            local label = item.label
+            local measure = label.GetUnboundedStringWidth or label.GetStringWidth
+            widest = math.max(widest, tonumber(measure(label)) or 0)
+        end
+        local width = math.min(math.max(owner:GetWidth() or 0, widest + 2 * ITEM_PAD + 4), POPUP_MAX_WIDTH)
+        list:SetSize(width, #choices * ITEM_HEIGHT + 4)
+        for index, choice in ipairs(choices) do
+            local item = list.items[index]
+            item:SetWidth(width - 4)
             item:ClearAllPoints()
             item:SetPoint("TOPLEFT", list, "TOPLEFT", 2, -2 - (index - 1) * ITEM_HEIGHT)
-            W.SetLabel(item, choice.label)
             item:SetScript("OnClick", function()
                 set(choice.value)
                 ClosePopup()
@@ -755,8 +841,12 @@ do -- private scope
         end
         for index = #choices + 1, #list.items do list.items[index]:Hide() end
         list:Show()
-        list:Raise()    end
-    W.OpenPopup = OpenPopup
+        list:Raise()
+    end
+
+    -- The list itself, for a window a click in which must not count as a
+    -- click elsewhere (Edit Mode's piece window).
+    W.Popup = Popup
 
     -- A button showing the picked choice, opening the list under it.
     function W.Dropdown(parent, width, choices, get, set)
@@ -765,6 +855,7 @@ do -- private scope
         button.label:SetPoint("LEFT", button, "LEFT", 8, 0)
         button.label:SetPoint("RIGHT", button, "RIGHT", -22, 0)
         button.label:SetJustifyH("LEFT")
+        button.label:SetWordWrap(false)
         local mark = CreateFrame("Frame", nil, button)
         mark:SetSize(12, 12)
         mark:SetPoint("RIGHT", button, "RIGHT", -6, -1)

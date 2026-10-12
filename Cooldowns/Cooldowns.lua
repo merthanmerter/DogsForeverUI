@@ -16,8 +16,9 @@
 --
 -- By default the first bar sits in line with the castbar - its top level with
 -- the castbar's top - and over the player frame's health bar: its left edge,
--- its width. More bars stack up from there. Both follow the castbar and the
--- player frame when those move; dragged, the bars stay where they are put.
+-- its width. More bars stack up from there. That spot is worked out once (a
+-- first start, a reset); the bars never move with the castbar or the player
+-- frame after it - only when anchored to one on purpose, in Edit Mode.
 --
 -- NO "READY" / MISSING-BUFF REMINDERS. A mode that showed an icon while a
 -- spell was ready and its buff was not on you existed for a few hours on
@@ -62,9 +63,9 @@ DogsForeverUI.Cooldowns = CreateFrame("Frame")
 do -- private scope
     local NS = DogsForeverUI.Cooldowns
     local Style = DogsForeverUI.Style
-    local IsSecret = issecretvalue or function() return false end
+    local IsSecret = issecretvalue
 
-    local Place, Refresh, Update, Lock, Unlock
+    local Place, Refresh, Update, Lock, Unlock, Polling
 
     NS.key = "cooldowns"
     NS.title = "Cooldowns"
@@ -103,18 +104,9 @@ do -- private scope
     -- An item's cooldown this short is the global cooldown, not the item's.
     local MIN_ITEM_COOLDOWN = 1.5
     local QUESTION_MARK = "Interface\\Icons\\INV_Misc_QuestionMark"
-    local COLOR = Style.GOLD
+    local COLOR = Style.COOLDOWN_COLOR
 
-    local function Call(fn, ...)
-        if type(fn) ~= "function" then return nil end
-        local ok, a, b, c, d, e = pcall(fn, ...)
-        if ok then return a, b, c, d, e end
-    end
-
-    local function Api(namespace, name)
-        local t = _G[namespace]
-        return type(t) == "table" and t[name] or nil
-    end
+    local Call, Api = DogsForeverUI.Try, DogsForeverUI.Api
 
     local function Plain(value)
         return not IsSecret(value)
@@ -209,9 +201,13 @@ do -- private scope
     --     write it, or just "s"/"i" before the number) adds that kind;
     --   * a bare number is whichever of the two has that ID. Spell and item
     --     IDs overlap, so when both do, it is the one you have - the spell in
-    --     your spellbook or the item in your bags or worn. When that does not
-    --     settle it either, nothing is added and the line names both, so the
-    --     kind can be typed.
+    --     your spellbook or the item in your bags or worn. When you have
+    --     neither, it is the spell: an item you do not carry has no cooldown
+    --     to show, while a spell that is never in a spellbook can still put a
+    --     buff on you - a proc like Clearcasting, the player's own example
+    --     (16870, also an item) - and its duration is tracked. The line says
+    --     how to get the item instead. Only when you have both is nothing
+    --     added, and the line names both, so the kind can be typed.
     local PREFIXES = { s = "spell", spell = "spell", i = "item", item = "item" }
 
     function NS.AddID(text)
@@ -234,6 +230,13 @@ do -- private scope
             if mySpell ~= myItem then return NS.Add(mySpell and "spell" or "item", id) end
             local spellName = NS.Describe({ kind = "spell", id = id })
             local itemName = NS.Describe({ kind = "item", id = id })
+            if not mySpell then
+                local ok, message = NS.Add("spell", id)
+                if ok then
+                    message = message .. " For the item " .. itemName .. ", type item " .. id .. "."
+                end
+                return ok, message
+            end
             return false, id .. " is the spell " .. spellName .. " and the item " .. itemName
                 .. ": type spell " .. id .. " or item " .. id .. "."
         end
@@ -416,10 +419,7 @@ do -- private scope
     -- The bars: one per tracked entry, made as needed and kept.
     ---------------------------------------------------------------------------
 
-    local function EnumValue(group, key, fallback)
-        local enum = type(Enum) == "table" and Enum[group]
-        return type(enum) == "table" and enum[key] or fallback
-    end
+    local EnumValue = DogsForeverUI.EnumValue
     local IMMEDIATE = EnumValue("StatusBarInterpolation", "Immediate", 0)
     local REMAINING = EnumValue("StatusBarTimerDirection", "RemainingTime", 1)
 
@@ -434,22 +434,13 @@ do -- private scope
     local rows = {}
     NS.rows = rows
 
-    local function OnePixel(frame)
-        if PixelUtil and PixelUtil.GetNearestPixelSize then
-            local ok, px = pcall(PixelUtil.GetNearestPixelSize, 1, frame:GetEffectiveScale(), 1)
-            if ok and type(px) == "number" and px > 0 then return px end
-        end
-        return 1
-    end
-
     local function StartDrag(_, button)
-        if button == "LeftButton" and NS.db.unlocked then holder:StartMoving() end
+        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(holder) end
     end
 
-    local function EndDrag(_, button)
-        if DogsForeverUI.RightClickLock(NS, button) then return end
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        holder:StopMovingOrSizing()
+    -- Where it is now, kept: a drag's end, a nudge, or - locked or not -
+    -- following what it is anchored to (Core\Snap.lua).
+    local function SavePlace()
         local db = NS.db
         db.autoPlaced = false
         db.barLeft = holder:GetLeft()
@@ -457,6 +448,23 @@ do -- private scope
         Refresh()
         DogsForeverUI.RefreshOptions()
     end
+
+    local function EndDrag(_, button)
+        if button ~= "LeftButton" or not NS.db.unlocked then return end
+        DogsForeverUI.Snap.Stop(holder)
+        SavePlace()
+    end
+
+    -- Snapped by the whole stack of bars on screen, not just the first.
+    DogsForeverUI.Snap.Register(holder, {
+        save = SavePlace,
+        name = "Cooldowns", id = "cooldowns",
+        parts = function()
+            local list = {}
+            for _, row in pairs(rows) do list[#list + 1] = row end
+            return list
+        end,
+    })
 
     local function NewRow()
         local row = CreateFrame("Frame", nil, holder)
@@ -511,7 +519,7 @@ do -- private scope
     function NS.LayOutParts(frame, parts)
         local db = NS.db
         local width, height = db.barWidth, db.barHeight
-        local px = OnePixel(frame)
+        local px = Style.OnePixel(frame)
         frame:SetSize(width, height)
         -- The pieces; anchors to the bar's own frame go to `frame`, never to
         -- this table (on a buff bar the two are different things).
@@ -536,7 +544,7 @@ do -- private scope
         bar:SetSize(math.max(1, width - height - px), height)
 
         if row.paint then row.paint(bar) else Style.Paint(bar, COLOR) end
-        Style.SetBackground(row.bg, db.unlocked)
+        Style.SetBackground(row.bg)
 
         for _, label in ipairs({ row.nameText, row.timeText }) do
             label:ClearAllPoints()
@@ -641,22 +649,36 @@ do -- private scope
     -- The addon's own spot: x from the player frame (its left edge, the
     -- health bar's), y from the castbar (its top edge) - both as their
     -- modules save them, TOPLEFT offsets from the top left of the screen.
+    -- (The castbar not placed yet - Reset everything puts the cooldowns
+    -- back before it - its own default top, never a guess near the top of
+    -- the screen: that guess, kept, took the castbar up there with it in the
+    -- default layout, 2026-10-03.)
     local function DefaultSpot()
         local fdb = DogsForeverUI.Frames and DogsForeverUI.Frames.db
-        local cdb = DogsForeverUI.Castbar and DogsForeverUI.Castbar.db
+        local castbar = DogsForeverUI.Castbar
+        local cdb = castbar and castbar.db
         local left, top = fdb and fdb.playerLeft, cdb and cdb.barTop
+        if type(top) ~= "number" and castbar and castbar.DefaultTop then top = castbar.DefaultTop() end
         if type(left) == "number" and type(top) == "number" then return left, top end
     end
 
-    -- First run, a reset, or never dragged: at DefaultSpot, or centred near
-    -- the top of the screen if the frames have no place yet.
+    -- First run, or a reset: at DefaultSpot, worked out ONCE from where the
+    -- player frame and the castbar are then - and from then on the bars stay
+    -- where they are: they never move with either (the player, 2026-10-02:
+    -- nothing moves with anything unless anchored to it on purpose, in Edit
+    -- Mode). Centred near the top of the screen if the frames have no place
+    -- yet - and worked out again once they have (PLAYER_ENTERING_WORLD).
+    local fromGuess = false
+
     function Place()
         local db = NS.db
         local left, top = DefaultSpot()
+        fromGuess = not left
         if not left then
             local screenWidth = GetScreenWidth() or 0
             left = screenWidth > 0 and (screenWidth - db.barWidth) / 2 or 0
-            top = -200
+            local castbar = DogsForeverUI.Castbar
+            top = castbar and castbar.DefaultTop and castbar.DefaultTop() or -200
         end
         db.barLeft, db.barTop = left, top
         db.autoPlaced = true
@@ -666,19 +688,6 @@ do -- private scope
         local db = NS.db
         holder:ClearAllPoints()
         holder:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
-    end
-
-    -- The castbar or the player frame moved while the bars still go with
-    -- them: follow. Asked on every update, the poll that watches the
-    -- cooldowns and every event.
-    local function Follow()
-        local db = NS.db
-        if not db.autoPlaced then return end
-        local left, top = DefaultSpot()
-        if left and (left ~= db.barLeft or top ~= db.barTop) then
-            db.barLeft, db.barTop = left, top
-            Anchor()
-        end
     end
 
     function NS.Normalise(db)
@@ -717,9 +726,9 @@ do -- private scope
         if instant then Style.ShowNow(frame) else Style.FadeIn(frame) end
     end
 
-    -- While unlocked: every bar, empty and striped like every bar being
-    -- placed, so there is something to drag and the space they take shows. The first says what it is; with nothing tracked,
-    -- one bar stands in.
+    -- In Edit Mode: every bar, as it really looks - full, each with the name
+    -- of what it tracks - so there is something to drag and the space they
+    -- take shows. With nothing tracked, one bar stands in.
     local function ShowPlacing()
         local tracked = NS.db.tracked
         local count = math.max(1, #tracked)
@@ -729,12 +738,11 @@ do -- private scope
             local name, texture = "Cooldowns", QUESTION_MARK
             if entry then name, texture = NS.Describe(entry) end
             row.icon:SetTexture(texture)
-            -- Empty, as every bar being placed is, so its stripes show.
             row.bar:SetMinMaxValues(0, 1)
-            row.bar:SetValue(0)
+            row.bar:SetValue(1)
             row.spark:SetAlpha(0)
             row.countText:SetText("")
-            row.nameText:SetText(index == 1 and "Cooldowns" or name)
+            row.nameText:SetText(name)
             row.timeText:SetText("")
             BarSlot(row, index, true)
             Style.ShowNow(row)
@@ -795,15 +803,19 @@ do -- private scope
     -- `instant`: a setting changed, so bars appear at once rather than fade.
     function Update(cooldownEvent, instant)
         local db = NS.db
-        Follow()
         local tracked = db.tracked
         if #tracked == 0 and not db.unlocked then
             for _, row in pairs(rows) do Style.HideNow(row) end
             holder:Hide()
+            Polling(false)
             return
         end
         holder:Show()
-        if db.unlocked then ShowPlacing(); return end
+        if db.unlocked then
+            ShowPlacing()
+            Polling(true)
+            return
+        end
 
         local slot = 0
         for index, entry in ipairs(tracked) do
@@ -817,12 +829,19 @@ do -- private scope
         HideBeyond(#tracked)
         -- The buff bars ride on top of however many cooldown bars there are.
         NS.Durations.Follow(slot)
+
+        -- Polled on only while a bar is up, cooling down or fading out: one
+        -- that ends fires no event, but every one that starts does.
+        local any = false
+        for _, row in pairs(rows) do
+            if row:IsShown() then any = true; break end
+        end
+        Polling(any)
     end
     NS.Update = Update
 
     function Refresh()
         local db = NS.db
-        if db.autoPlaced then Place() end
         holder:SetFrameStrata(db.frameStrata or "MEDIUM")
         holder:SetSize(db.barWidth, db.barHeight)
         Anchor()
@@ -841,14 +860,21 @@ do -- private scope
         Update(true, true)
     end
 
-    -- Polled, because a cooldown that ends fires no event.
+    -- Polled, because a cooldown that ends fires no event - and only while
+    -- there is a bar on screen for one to end on (Update says when).
     local elapsedSince = 0
-    holder:SetScript("OnUpdate", function(_, elapsed)
+    local function Poll(_, elapsed)
         elapsedSince = elapsedSince + elapsed
         if elapsedSince < POLL then return end
         elapsedSince = 0
         Update(false)
-    end)
+    end
+    local polling = false
+    function Polling(on)
+        if on == polling then return end
+        polling = on
+        holder:SetScript("OnUpdate", on and Poll or nil)
+    end
 
     for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "SPELL_UPDATE_COOLDOWN",
                              "SPELL_UPDATE_CHARGES", "BAG_UPDATE_COOLDOWN",
@@ -857,9 +883,10 @@ do -- private scope
     end
     NS:SetScript("OnEvent", function(_, event)
         if event == "PLAYER_ENTERING_WORLD" then
-            -- UIParent is unscaled at ADDON_LOADED; only the addon's own
-            -- placement is worked out again, never one the player chose.
-            if NS.db.autoPlaced then Place() end
+            -- A default place worked out before the frames had theirs: worked
+            -- out again now that they have (the frames place themselves on
+            -- this event first). Never one the player chose.
+            if NS.db.autoPlaced and fromGuess then Place() end
             Refresh()
             DogsForeverUI.RefreshOptions()
             return

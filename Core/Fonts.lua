@@ -140,23 +140,53 @@ do -- private scope
         end
     end
 
-    function Fonts.ApplyChat()
-        -- A list of our own: the game's CHAT_FRAMES is read, never added to.
-        local names = {}
-        if type(CHAT_FRAMES) == "table" then
-            for _, name in ipairs(CHAT_FRAMES) do names[#names + 1] = name end
-        end
-        if #names == 0 then
+    -- The chat windows' names: the game's CHAT_FRAMES, read and never added
+    -- to - or, while it has none, the numbered windows. (No list made each
+    -- time: Fonts.KeepChat asks five times a second.)
+    local numbered
+    local function ChatNames()
+        if type(CHAT_FRAMES) == "table" and CHAT_FRAMES[1] ~= nil then return CHAT_FRAMES end
+        if not numbered then
             -- NUM_CHAT_WINDOWS is deprecated; this is what it now points at.
             local max = Constants and Constants.ChatFrameConstants
                 and Constants.ChatFrameConstants.MaxChatWindows or 10
-            for i = 1, max do names[#names + 1] = "ChatFrame" .. i end
+            numbered = {}
+            for i = 1, max do numbered[i] = "ChatFrame" .. i end
         end
-        for _, name in ipairs(names) do
+        return numbered
+    end
+
+    function Fonts.ApplyChat()
+        for _, name in ipairs(ChatNames()) do
             local frame = _G[name]
             if type(frame) == "table" then
                 Fonts.Chat(frame)
                 ChatFont(frame.editBox or _G[name .. "EditBox"])
+            end
+        end
+    end
+
+    -- Whether `frame` is in one of the game's Latin faces again (the game set
+    -- its font: its Font Size menu), not the player's.
+    local function GameFace(frame)
+        if type(frame) ~= "table" or type(frame.GetFont) ~= "function" then return false end
+        local ok, file = pcall(frame.GetFont, frame)
+        return ok and type(file) == "string" and file ~= REGULAR and LATIN_FACES[Face(file)] ~= nil
+    end
+
+    -- THE GAME'S FONT SIZE MENU, SEEN, NOT HOOKED: Chat\ChatLook.lua's
+    -- watcher asks five times a second, and a window the game set its own
+    -- face on again gets the player's (at the game's new size). Never a hook
+    -- on FCF_SetChatWindowFontSize: the game runs it inside the making of a
+    -- whisper window (FCF_OpenTemporaryWindow -> FCF_CopyChatSettings), and
+    -- a hook of the addon's there broke the window - and the whisper with it.
+    function Fonts.KeepChat()
+        for _, name in ipairs(ChatNames()) do
+            local frame = _G[name]
+            if type(frame) == "table" then
+                if GameFace(frame) then Fonts.Chat(frame) end
+                local box = frame.editBox or _G[name .. "EditBox"]
+                if GameFace(box) then ChatFont(box) end
             end
         end
     end
@@ -173,10 +203,4 @@ do -- private scope
         if event == "ADDON_LOADED" then Fonts.Apply() end
         Fonts.ApplyChat()
     end)
-    if type(FCF_SetChatWindowFontSize) == "function" then
-        hooksecurefunc("FCF_SetChatWindowFontSize", Fonts.ApplyChat)
-    end
-    if type(FCF_OpenTemporaryWindow) == "function" then
-        hooksecurefunc("FCF_OpenTemporaryWindow", Fonts.ApplyChat)
-    end
 end

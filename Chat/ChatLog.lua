@@ -23,10 +23,12 @@
 --   +------------------------------------------------------------------+
 --
 -- What it is filled with is never looked at. `GetMessageInfo` hands back a
--- message and its colour and they go straight into AddMessage; on this client
--- that message may be a secret value, which addon code is allowed to hold and
--- pass on but not read, so nothing here indexes, concatenates or compares one.
--- The same goes for the tab's name, which is secret for a whisper tab.
+-- message and its colour and they go straight into AddMessage. On this client
+-- a message may be a secret value; such a line is left out: this frame is the
+-- addon's, so the client's selecting code (Lua, ScrollingMessageFrame.lua)
+-- runs as the addon's here and would have to measure and cut the line's text,
+-- which it may not do with a secret - a drag across it would throw. The tab's
+-- name, secret for a whisper tab, is only handed to SetText.
 --
 -- The window is a snapshot, deliberately. It does not follow the chat while it
 -- is open: a line arriving mid-drag would move the text out from under the
@@ -162,10 +164,7 @@ do -- private scope
     -- the frame's refresh, which is the path the client's copy runs on.
     ---------------------------------------------------------------------------
 
-    local function CursorY(frame)
-        local _, y = GetCursorPosition()
-        return y / frame:GetEffectiveScale()
-    end
+    local CursorY = DogsForeverUI.CursorY
 
     local function BuildScroller(card)
         local s = {}
@@ -346,6 +345,9 @@ do -- private scope
         end)
         window:SetScript("OnHide", function(self)
             self.closing = false
+            -- (Closed mid-drag by Esc: no drag carries on into the next open.)
+            self:StopMovingOrSizing()
+            scroller.thumb:SetScript("OnUpdate", nil)
         end)
 
         -- Named the way the game names the parts of its own frames, so anything
@@ -353,7 +355,6 @@ do -- private scope
         window.MessageFrame = messages
         window.TabLabel = tabLabel
         window.CopiedLine = copied
-        window.Hint = hint
         window.Card = card
         window.ScrollBar = scroller
 
@@ -391,10 +392,10 @@ do -- private scope
 
         messages:Clear()
         -- Index 1 is the oldest line the tab still holds, so this puts them back
-        -- in the order they were said. Nothing in between looks at them: what
-        -- GetMessageInfo returns goes straight into AddMessage.
+        -- in the order they were said; a secret line is left out (see above).
         for index = 1, source:GetNumMessages() do
-            messages:AddMessage(source:GetMessageInfo(index))
+            local text, r, g, b = source:GetMessageInfo(index)
+            if not IsSecret(text) then messages:AddMessage(text, r, g, b) end
         end
         messages:ScrollToBottom()
         scroller.Reset()

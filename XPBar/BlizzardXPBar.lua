@@ -1,5 +1,6 @@
 -- Taking the game's XP bar - and its reputation bar, which the addon's bar
--- shows instead while a faction is watched - off screen, and giving them back.
+-- shows instead while a faction is watched, and its honor bar, which the
+-- addon's honor bar stands in for - off screen, and giving them back.
 --
 -- FADED, AND NOTHING ELSE. The game's XP bar lives in a status-tracking
 -- container that is part of the stack the protected action bars are laid out
@@ -29,9 +30,8 @@ DogsForeverUI.XPBar.BlizzardXPBar = BlizzardXPBar
 
 do -- private scope
 
-    local NS = DogsForeverUI.XPBar
-
     local CONTAINERS = { "MainStatusTrackingBarContainer", "SecondaryStatusTrackingBarContainer" }
+    local OUR_BARS = { "Experience", "Reputation", "Honor" }   -- StatusTrackingBarInfo.BarsEnum keys
 
     local hooked = {}
     local faded = {}       -- region -> the alpha it had, for everything faded here
@@ -42,11 +42,16 @@ do -- private scope
             and info.BarsEnum[key] or nil
     end
 
-    -- The game's bars this one stands in for: its XP bar, and its reputation
+    -- The game's bars the addon stands in for: its XP bar, its reputation
     -- bar - shown only while a faction is watched ("Show as experience bar"),
-    -- which is exactly when this bar shows that reputation instead.
+    -- which is exactly when this bar shows that reputation instead - and its
+    -- honor bar, shown by the addon's honor bar over this one.
     local function Ours(index)
-        return index ~= nil and (index == BarIndex("Experience") or index == BarIndex("Reputation"))
+        if index == nil then return false end
+        for _, key in ipairs(OUR_BARS) do
+            if index == BarIndex(key) then return true end
+        end
+        return false
     end
 
     local function Fade(region)
@@ -77,7 +82,7 @@ do -- private scope
     end
 
     local function ShouldHide(container)
-        return NS.db ~= nil and Ours(container.shownBarIndex)
+        return Ours(container.shownBarIndex)
     end
 
     local editMode = {}
@@ -88,11 +93,11 @@ do -- private scope
             if hide then Fade(part) else Restore(part) end
         end
         -- Gone from Edit Mode too while what it shows is ours; a container
-        -- showing another bar (honor) is the game's to place as ever.
+        -- showing another bar is the game's to place as ever.
         DogsForeverUI.HoldEditMode(editMode, container, hide and true or false)
-        -- The XP or reputation bar the container no longer shows - the game
+        -- The XP, reputation or honor bar the container no longer shows - the game
         -- has hidden it - is given its alpha back, ready for its next turn.
-        for _, key in ipairs({ "Experience", "Reputation" }) do
+        for _, key in ipairs(OUR_BARS) do
             local index = BarIndex(key)
             local bar = index and type(container.bars) == "table" and container.bars[index]
             if bar and not (hide and index == container.shownBarIndex) then Restore(bar) end
@@ -124,13 +129,11 @@ do -- private scope
         -- the fade no longer waits on the container's bookkeeping. A bar that
         -- is being shown and is the XP bar is faded there and then; the rest
         -- of the container follows in the hooks above.
-        for _, key in ipairs({ "Experience", "Reputation" }) do
+        for _, key in ipairs(OUR_BARS) do
             local index = BarIndex(key)
             local bar = index and type(container.bars) == "table" and container.bars[index]
             if bar and type(bar.HookScript) == "function" then
-                bar:HookScript("OnShow", function(self)
-                    if NS.db then Fade(self) end
-                end)
+                bar:HookScript("OnShow", Fade)
             end
         end
         if type(container.HookScript) == "function" then
@@ -149,13 +152,17 @@ do -- private scope
             end
         end
         -- The game sorting out which container shows which bar - on every
-        -- zone change, loading screen and reputation change - is followed as
-        -- a whole too.
+        -- zone change, loading screen, reputation change and honor being
+        -- watched as XP or not - is followed as a whole too, the addon's bars
+        -- with it.
         local manager = _G.StatusTrackingBarManager
         if not managerFollowed and type(manager) == "table"
            and type(manager.UpdateBarsShown) == "function" then
             managerFollowed = true
-            pcall(hooksecurefunc, manager, "UpdateBarsShown", BlizzardXPBar.Refresh)
+            pcall(hooksecurefunc, manager, "UpdateBarsShown", function()
+                BlizzardXPBar.Refresh()
+                DogsForeverUI.XPBar.Update()
+            end)
         end
     end
 end

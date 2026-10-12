@@ -1,4 +1,5 @@
--- Taking the game's swing timer bars off screen, and giving them back.
+-- Taking the game's swing timer bars off screen: the addon's own are always
+-- what shows.
 --
 -- NOT HIDDEN. FADED.
 -- The castbar next door is simply hidden, and these cannot be. The game's swing
@@ -25,16 +26,14 @@
 -- Chasing each of those would be four hooks that miss the fifth. Every one of
 -- them ends in the frame's own SetAlpha, so that is what is followed, with
 -- hooksecurefunc: it runs after the game's call has finished and cannot taint
--- it, and while the addon wants the bars gone it puts the alpha straight back
--- to zero. The guard stops the hook answering its own call.
+-- it, and puts the alpha straight back to zero. The guard stops the hook
+-- answering its own call.
 --
 -- EDIT MODE
--- The bars are Edit Mode systems. Faded, their selection box is invisible too,
--- but they could still be clicked and dragged unseen, so the two opt-outs the
--- game keeps for this are set: `isLocked`, which EditModeSystemMixin:CanBeMoved
--- reads and nothing else does, and `defaultHideSelection`, which stops Edit
--- Mode highlighting them. Both are put back as they were when the addon is
--- turned off, and no Edit Mode setting is ever read or written.
+-- The bars are Edit Mode systems. Faded, they could still be clicked and
+-- dragged unseen, so their selection boxes are put away too
+-- (DogsForeverUI.HoldEditMode: calls only, no field written onto the game's
+-- frames). No Edit Mode setting is ever read or written.
 
 local BlizzardSwingTimer = {}
 DogsForeverUI.Castbar.BlizzardSwingTimer = BlizzardSwingTimer
@@ -46,12 +45,6 @@ do -- private scope
     local hooked = {}
     local savedEditMode = {}
     local holding = false        -- true while this file is the one calling SetAlpha
-
-    -- The game's swing bars are replaced by the addon's, always, once its
-    -- settings exist.
-    local function ShouldHide()
-        return DogsForeverUI.Castbar.db ~= nil
-    end
 
     local function Resolve(name)
         local frame = _G[name]
@@ -71,30 +64,17 @@ do -- private scope
         hooked[name] = true
 
         pcall(hooksecurefunc, frame, "SetAlpha", function(self)
-            if not holding and ShouldHide() then Hold(self) end
+            if not holding then Hold(self) end
         end)
     end
 
-    -- Given back at the opacity Edit Mode says, by the frame's own method. A
-    -- frame that cannot answer - not initialised yet, or from a client without
-    -- the method - gets full opacity rather than staying invisible.
-    local function Restore(frame)
-        if type(frame.UpdateSystemSettingOpacity) == "function"
-           and pcall(frame.UpdateSystemSettingOpacity, frame) then
-            return
-        end
-        pcall(frame.SetAlpha, frame, 1)
-    end
-
     function BlizzardSwingTimer.Refresh()
-        local hide = ShouldHide()
-
         for _, name in ipairs(FRAMES) do
             local frame = Resolve(name)
             if frame then
                 Follow(name, frame)
-                DogsForeverUI.HoldEditMode(savedEditMode, frame, hide)
-                if hide then Hold(frame) else Restore(frame) end
+                DogsForeverUI.HoldEditMode(savedEditMode, frame, true)
+                Hold(frame)
             end
         end
     end

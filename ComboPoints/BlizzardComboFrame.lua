@@ -1,4 +1,5 @@
--- Taking the game's combo points off the target frame, and giving them back.
+-- Taking the game's combo points off the target frame: the addon's own bar is
+-- always what shows.
 --
 -- The game draws them in ComboFrame, a plain frame on UIParent pinned to the
 -- target frame's top-right corner (Blizzard_UnitFrame/Camelot/
@@ -9,16 +10,14 @@
 --
 -- The game shows it again every time the points change, so one Hide would
 -- last until the next point. Its OnShow is followed instead, once: whenever
--- the game shows it while this module is on, it goes straight back down. With
--- the module off the hook does nothing, and the game shows its gems again at
--- the next change. No Blizzard function is replaced and no setting is written.
+-- the game shows it, it goes straight back down. No Blizzard function is
+-- replaced and no setting is written.
 
 local BlizzardComboFrame = {}
 DogsForeverUI.ComboPoints.BlizzardComboFrame = BlizzardComboFrame
 
 do -- private scope
 
-    local NS = DogsForeverUI.ComboPoints
     local hooked = false
 
     local function Resolve()
@@ -29,23 +28,15 @@ do -- private scope
         end
     end
 
-    local function ShouldHide()
-        return NS.db ~= nil
-    end
-
     function BlizzardComboFrame.Refresh()
         local frame = Resolve()
         if not frame then return end
 
         if not hooked then
             hooked = true
-            pcall(frame.HookScript, frame, "OnShow", function(self)
-                if ShouldHide() then pcall(self.Hide, self) end
-            end)
+            pcall(frame.HookScript, frame, "OnShow", function(self) pcall(self.Hide, self) end)
         end
 
-        -- Nothing in the `else` branch: showing it is the game's decision, and
-        -- it makes it at the next change in points.
-        if ShouldHide() then pcall(frame.Hide, frame) end
+        pcall(frame.Hide, frame)
     end
 end

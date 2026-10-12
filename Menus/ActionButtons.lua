@@ -33,20 +33,9 @@
 -- equipped-item border, the attack flash, auto-cast - are left as they are:
 -- they say something.
 --
--- THE SIZE, of the eight action bars (not stance, pet or possess, which stay
--- the game's size). The game's 80% is this addon's 100%. Edit Mode's Icon Size setting
--- scales each button's container (EditModeActionBarSystemMixin:
--- UpdateSystemSettingIconSize: container:SetScale(iconScale), then the bar's
--- own Layout). A secure post-hook on each container's SetScale sets it to 0.8
--- of that at once, before the game's Layout runs - so the game lays the bar
--- out at the smaller size itself, in its own secure code, and the Icon Size
--- slider still works, from 80% of whatever it says. The addon never calls a
--- layout, never writes an Edit Mode setting and never replaces a function; a
--- hooksecurefunc hook cannot taint the code that called it.
---
--- The hooks go on as the addon loads, before Edit Mode applies its layout
--- after login, so the first layout is already at the addon's size. There is
--- no setting: this is the look.
+-- THE BARS are the addon's own since 2026-10-03 (ActionBars\ActionBars.lua,
+-- EllesmereUI's way), sized in Unlock Mode; this file is only their look - and
+-- the game's possess bar's, which the game still shows.
 --
 -- Styling makes frames on the buttons, so it waits for the end of combat if
 -- the UI loads mid-fight.
@@ -58,20 +47,10 @@ do -- private scope
 
     local Style = DogsForeverUI.Style
 
-    Buttons.BARS = {
-        "MainActionBar", "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight",
-        "MultiBarLeft", "MultiBar5", "MultiBar6", "MultiBar7",
-        "StanceBar", "PetActionBar", "PossessActionBar",
-    }
+    -- The game's bars still the game's: only its possess bar now (the rest
+    -- are the addon's own - ActionBars\ActionBars.lua - their size set there).
+    Buttons.BARS = { "PossessActionBar" }
 
-    Buttons.SCALE = 0.8            -- the game's 80% is the addon's 100%
-    -- Only the eight action bars are made smaller. The stance, pet and possess
-    -- bars keep the look but stay exactly the game's size (the player asked).
-    Buttons.SCALED = {
-        MainActionBar = true, MultiBarBottomLeft = true, MultiBarBottomRight = true,
-        MultiBarRight = true, MultiBarLeft = true, MultiBar5 = true, MultiBar6 = true,
-        MultiBar7 = true,
-    }
     -- The look, shared with the micro menu's buttons (MicroMenu.lua).
     local ICON_CROP = 0.08         -- the edge baked into every icon
     local BUTTON_INSET = 3         -- the border's room inside the button, and the gap
@@ -104,19 +83,7 @@ do -- private scope
     local styled = setmetatable({}, { __mode = "k" })
     Buttons.parts = setmetatable({}, { __mode = "k" })   -- button -> what was made for it
 
-    local function Fade(region)
-        if type(region) == "table" and type(region.SetAlpha) == "function" then
-            pcall(region.SetAlpha, region, 0)
-        end
-    end
-
-    local function Get(button, method, key)
-        if type(button[method]) == "function" then
-            local ok, region = pcall(button[method], button)
-            if ok and region then return region end
-        end
-        return button[key]
-    end
+    local Fade, Get = DogsForeverUI.Fade, DogsForeverUI.Region
 
     -- One of the button's state textures made a flat colour over the icon's
     -- square: the same texture object the game shows and hides for the state,
@@ -181,12 +148,24 @@ do -- private scope
         -- Kept on the addon's side: nothing is written onto the game's button.
         Buttons.parts[button] = { inner = inner, bg = bg, border = border }
     end
+    -- The same look for a game button off the action bars (the quest
+    -- tracker's item buttons, Objectives.lua).
+    Buttons.Skin = StyleButton
 
+    -- Every button of the addon's own bars (ActionBars\ActionBars.lua: its
+    -- action buttons, and the game's stance and pet buttons taken into its
+    -- bars), and the game's possess bar's, which the game still shows.
     local function EachButton(fn)
+        local bars = DogsForeverUI.ActionBars
+        if type(bars) == "table" and type(bars.buttons) == "table" then
+            for _, info in ipairs(bars.BARS) do
+                for _, button in ipairs(bars.buttons[info.key] or {}) do fn(button) end
+            end
+        end
         for _, name in ipairs(Buttons.BARS) do
             local bar = _G[name]
             if type(bar) == "table" and type(bar.actionButtons) == "table" then
-                for _, button in pairs(bar.actionButtons) do fn(button, bar, name) end
+                for _, button in pairs(bar.actionButtons) do fn(button) end
             end
         end
     end
@@ -221,40 +200,6 @@ do -- private scope
                 end
             end
         end
-    end
-
-    ---------------------------------------------------------------------------
-    -- The size: 0.8 of whatever Edit Mode's Icon Size says.
-    ---------------------------------------------------------------------------
-
-    local scaling = false
-    local hookedContainers = setmetatable({}, { __mode = "k" })
-
-    local function ScaleContainer(container, scale)
-        if scaling or type(scale) ~= "number" or InCombatLockdown() then return end
-        scaling = true
-        pcall(container.SetScale, container, scale * Buttons.SCALE)
-        scaling = false
-    end
-
-    local function HookScale(button, _, barName)
-        if not Buttons.SCALED[barName] then return end
-        local container = button.container
-        if type(container) ~= "table" or hookedContainers[container]
-           or type(container.SetScale) ~= "function" then
-            return
-        end
-        hookedContainers[container] = true
-        hooksecurefunc(container, "SetScale", ScaleContainer)
-    end
-
-    -- Now, at load: the containers exist (Blizzard_ActionBar loads before any
-    -- addon) and Edit Mode has not laid anything out yet.
-    EachButton(HookScale)
-
-    local mainBar = _G.MainActionBar
-    if type(mainBar) == "table" and type(mainBar.UpdateDividers) == "function" then
-        hooksecurefunc(mainBar, "UpdateDividers", FadeDividers)
     end
 
     ---------------------------------------------------------------------------

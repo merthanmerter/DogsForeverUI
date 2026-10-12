@@ -48,11 +48,16 @@ do -- private scope
     local HEALTH_COLOR = Style.HEALTH_COLOR
     local MANA_COLOR = Style.MANA_COLOR
     local HEALTH_TONE = Style.HEALTH_TONE
-    local POWER_TONE = Style.POWER_TONE
 
     -- The heal shading over the missing health. Fixed, like the rest of the
     -- palette: there are no colour settings.
     local HEAL_COLOR = { 0.5, 0.9, 0.6, 0.45 }
+    -- And the dark shading over the health a heal absorb will eat.
+    local HEAL_ABSORB_COLOR = { 0.15, 0, 0, 0.6 }
+    -- A shield in the game's own look: its fill, with its stripes tiled over
+    -- it (TotalAbsorbBarTemplate, the nameplates' totalAbsorb).
+    local SHIELD_FILL = "Interface\\RaidFrame\\Shield-Fill"
+    local SHIELD_LINES = "Interface\\RaidFrame\\Shield-Overlay"
 
     local BORDER_COLOR = Style.BORDER_COLOR
     -- The hairline between the two bars, which belongs to the same piece of
@@ -116,23 +121,246 @@ do -- private scope
         return NAME_Y + NAME_SIZE + 2 + NAME_BAND_EXTRA
     end
 
+    -- The band's look and height, for the titles that wear it too (the
+    -- minimap's, the quest tracker's).
+    function UnitPlate.NameBand()
+        return UnitPlate.NAME_BAND, UnitPlate.TopRoom()
+    end
+
     -- How much smaller the target's target and the pet are drawn than the rest.
     UnitPlate.SMALL_SCALE = 0.6
 
-    -- THE PARTY: the target frame's design, a little smaller, four of them in
-    -- a column - party1 on top - that is placed and dragged as one. Daylight
-    -- between two, as between the castbars' bars.
+    -- THE PARTY: four frames in a column - party1 on top - placed and
+    -- dragged as one, in the compact shape of the game's raid-style frames
+    -- (the player, 2026-10-03: "The Raid-style Frame style should be the
+    -- default of our PARTY FRAME ... One global standard is enough" - for a
+    -- day it was a switch beside the target frame's design): the name inside
+    -- the health bar - over its value on a tall bar, beside it on a short
+    -- one, alone and centred without it - no level and no name row above,
+    -- the role in the bar's corner, the crown on the frame's top right
+    -- corner, the frames close together. Their text at PARTY_SCALE of the
+    -- unit frames'.
     UnitPlate.PARTY_SCALE = 0.8
-    UnitPlate.PARTY_GAP = 8
+    UnitPlate.PARTY_GAP = 2         -- between two frames' borders
+    UnitPlate.PARTY_TALL = 28       -- a health bar this tall: the name over its value, else beside it
+    UnitPlate.PARTY_INSET = 4       -- the text from the bar's ends
+    UnitPlate.PARTY_SIZE = 5        -- the column's frames: four members and the player
+
+    -- The party's frames, the player's own (SHOW SELF) last.
+    function UnitPlate.PartyPlates()
+        local list = {}
+        local plates = NS.plates
+        if not plates then return list end
+        for index = 1, 4 do
+            if plates["party" .. index] then list[#list + 1] = plates["party" .. index] end
+        end
+        if plates.partyplayer then list[#list + 1] = plates.partyplayer end
+        return list
+    end
+
+    ---------------------------------------------------------------------------
+    -- SORTING THE COLUMN (the player, 2026-10-03: "party frames sort by role
+    -- etc should be in our settings too. and 'Default' is sort by role (so
+    -- tank on top healer bottom stuff)"): the game's own three orders, as its
+    -- raid-style party frames sort (Edit Mode's Sort By - CRFSort_Role,
+    -- CRFSort_Group, CRFSort_Alphabetical, Blizzard_CompactRaidFrameContainer):
+    --
+    --   role          tank, healer, damage, none; each by name (the default)
+    --   group         the player first, then party1 to party4
+    --   alphabetical  by name
+    --
+    -- The members there come first in that order, then the empty places. A
+    -- frame keeps its unit; what changes is which place in the column it
+    -- takes (its slot). Moving a frame is refused in combat, as the game's
+    -- own are not re-sorted then either: a change in combat (someone joins, a
+    -- role is given) is sorted the moment combat ends. A role or a name the
+    -- client keeps secret is never compared: that member sorts as having
+    -- none.
+    ---------------------------------------------------------------------------
+
+    UnitPlate.SORTS = {
+        { value = "role", label = "Role" },
+        { value = "group", label = "Group" },
+        { value = "alphabetical", label = "Alphabetical" },
+    }
+    local ROLE_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3 }    -- none: 4
+
+    local function Plain(fn, unit)
+        if type(fn) ~= "function" then return nil end
+        local ok, value = pcall(fn, unit)
+        if not ok or IsSecret(value) then return nil end
+        return value
+    end
+
+    local function RoleRank(unit)
+        local role = Plain(UnitGroupRolesAssigned, unit)
+        return type(role) == "string" and ROLE_ORDER[role] or 4
+    end
+
+    local function NameOf(unit)
+        local name = Plain(UnitName, unit)
+        return type(name) == "string" and name ~= "" and name or nil
+    end
+
+    -- Group order: the player first, then party1 to party4.
+    local function GroupRank(plate) return plate.isSelf and 0 or plate.partyIndex end
+
+    local function ByName(a, b)
+        local nameA, nameB = NameOf(a.unit), NameOf(b.unit)
+        if nameA and nameB and nameA ~= nameB then return nameA < nameB end
+        if (nameA == nil) ~= (nameB == nil) then return nameA ~= nil end
+        return GroupRank(a) < GroupRank(b)
+    end
+
+    local ORDERS = {
+        group = function(a, b) return GroupRank(a) < GroupRank(b) end,
+        alphabetical = ByName,
+        role = function(a, b)
+            local rankA, rankB = RoleRank(a.unit), RoleRank(b.unit)
+            if rankA ~= rankB then return rankA < rankB end
+            return ByName(a, b)
+        end,
+    }
+
+    -- The empty places in the party's order, the player's own last.
+    local function ByPlace(a, b)
+        return (a.isSelf and UnitPlate.PARTY_SIZE or a.partyIndex) < (b.isSelf and UnitPlate.PARTY_SIZE or b.partyIndex)
+    end
+
+    -- Whether a plate has someone to show in the column now.
+    local function Present(plate, db)
+        if plate.isSelf then
+            return db.partyShowSelf and (db.unlocked or Plain(UnitExists, "party1")) and true or false
+        end
+        return Plain(UnitExists, plate.unit) and true or false
+    end
+
+    -- Each party frame's slot for `db.partySort`. Answers true when one
+    -- moved (and was moved: out of combat), false when nothing changed,
+    -- nil when combat stopped it - asked again as combat ends.
+    function UnitPlate.SortParty(db)
+        local plates = UnitPlate.PartyPlates()
+        if #plates == 0 then return false end
+        local order = ORDERS[db.partySort] or ORDERS.role
+        local here, away = {}, {}
+        for _, plate in ipairs(plates) do
+            if Present(plate, db) then here[#here + 1] = plate else away[#away + 1] = plate end
+        end
+        table.sort(here, order)
+        table.sort(away, ByPlace)
+        local changed = false
+        local slot = 0
+        for _, list in ipairs({ here, away }) do
+            for _, plate in ipairs(list) do
+                slot = slot + 1
+                if plate.partySlot ~= slot then
+                    if InCombatLockdown() then return nil end
+                    changed = true
+                end
+            end
+        end
+        if changed then
+            slot = 0
+            for _, list in ipairs({ here, away }) do
+                for _, plate in ipairs(list) do
+                    slot = slot + 1
+                    plate.partySlot = slot
+                end
+            end
+        end
+        UnitPlate.SyncColumn(db)
+        return changed
+    end
+
+    ---------------------------------------------------------------------------
+    -- THE COLUMN IN COMBAT (the player, 2026-10-05: a member who joined in a
+    -- fight left a hole in the column and their own frame hanging under it).
+    -- The plates are protected, so addon code may not move them in combat -
+    -- but a secure handler may. This one watches how many members there are
+    -- ("[@partyN,exists]": party1 to partyN are always filled in order) and,
+    -- whenever that changes, lays the column out again in secure code: the
+    -- frames whose member is there first, in the order last sorted (SortParty,
+    -- out of combat - a member new since then after the others, in party
+    -- order), then the empty ones. Out of combat it lays out exactly what
+    -- SortParty did; in combat the order is the last one sorted, with no
+    -- holes, and it is sorted properly as combat ends.
+    ---------------------------------------------------------------------------
+    local COLUMN_STATE = "[group:raid] 0; [@party4,exists] 4; [@party3,exists] 3; "
+        .. "[@party2,exists] 2; [@party1,exists] 1; 0"
+    -- (Run with the member count. The plates are "plate1" to "plate4" and the
+    -- player's own "plate5"; "order1" to "order5" name them in column order.)
+    UnitPlate.COLUMN_LAYOUT = [[
+        local count = tonumber(...) or 0
+        local left, top, step = self:GetAttribute("left"), self:GetAttribute("top"), self:GetAttribute("step")
+        if not (left and top and step) then return end
+        local showSelf, unlocked = self:GetAttribute("showself"), self:GetAttribute("unlocked")
+        local slot = 0
+        for pass = 1, 2 do
+            for index = 1, 5 do
+                local id = self:GetAttribute("order" .. index)
+                local plate = id and self:GetFrameRef("plate" .. id)
+                if plate then
+                    local here
+                    if id == 5 then
+                        here = showSelf and (unlocked or count > 0)
+                    else
+                        here = id <= count
+                    end
+                    if (pass == 1) == (here and true or false) then
+                        slot = slot + 1
+                        plate:ClearAllPoints()
+                        plate:SetPoint("TOPLEFT", "$parent", "TOPLEFT", left, top - (slot - 1) * step)
+                    end
+                end
+            end
+        end
+    ]]
+
+    function UnitPlate.BuildColumn()
+        if UnitPlate.column or InCombatLockdown() or not NS.plates then return end
+        local ok, column = pcall(CreateFrame, "Frame", nil, UIParent, "SecureHandlerStateTemplate")
+        if not ok or not column then return end
+        for _, plate in ipairs(UnitPlate.PartyPlates()) do
+            column:SetFrameRef("plate" .. (plate.isSelf and UnitPlate.PARTY_SIZE or plate.partyIndex), plate)
+        end
+        column:SetAttribute("_layout", UnitPlate.COLUMN_LAYOUT)
+        column:SetAttribute("_onstate-roster", [[ self:RunAttribute("_layout", newstate) ]])
+        UnitPlate.column = column
+        RegisterStateDriver(column, "roster", COLUMN_STATE)
+        UnitPlate.SyncColumn(NS.db)
+    end
+
+    -- What the secure layout needs: the column's place and step, the order
+    -- last sorted, and whether the player's own frame is in it. Out of combat
+    -- only (a protected frame's attributes), and laid out at once, so the
+    -- secure layout and SortParty's never disagree.
+    function UnitPlate.SyncColumn(db)
+        local column = UnitPlate.column
+        if not column or InCombatLockdown() then return end
+        local order = UnitPlate.PartyPlates()
+        table.sort(order, function(a, b) return a.partySlot < b.partySlot end)
+        for index, plate in ipairs(order) do
+            column:SetAttribute("order" .. index, plate.isSelf and UnitPlate.PARTY_SIZE or plate.partyIndex)
+        end
+        column:SetAttribute("left", db.partyLeft or 0)
+        column:SetAttribute("top", db.partyTop or 0)
+        column:SetAttribute("step", UnitPlate.PartyStep(db))
+        column:SetAttribute("showself", db.partyShowSelf and true or false)
+        column:SetAttribute("unlocked", db.unlocked and true or false)
+        if column.Execute then
+            column:Execute([[ self:RunAttribute("_layout", self:GetAttribute("state-roster")) ]])
+        end
+    end
 
     -- A plate's bars: its width, health height and power height. The party's
-    -- have sizes of their own (Sizes, "Party frames"); every other plate
-    -- takes the unit frames' size, the small ones a fraction of it. Rounded,
-    -- and never too thin to draw.
+    -- have sizes of their own (partyWidth, partyRaidHealth - 40 to start, its
+    -- name kept from when this was the raid style's - partyPower); every
+    -- other plate takes the unit frames' size, the small ones a fraction of
+    -- it. Rounded, and never too thin to draw.
     function UnitPlate.Size(db, plate)
         local width, health, power, scale
         if plate.partyIndex then
-            width, health, power, scale = db.partyWidth, db.partyHealth, db.partyPower, 1
+            width, health, power, scale = db.partyWidth, db.partyRaidHealth, db.partyPower, 1
         else
             width, health, power, scale = db.barWidth, db.barHeight, db.powerHeight, plate.scale or 1
         end
@@ -141,24 +369,14 @@ do -- private scope
             math.max(3, math.floor(power * scale + 0.5))
     end
 
+    -- What a party frame shows above its bars: nothing (its name is inside).
+    function UnitPlate.PartyTopRoom() return 0 end
+
     -- How far one party frame's top is from the next one's, at this size:
-    -- its bars, its name row above them, its border and the gap.
+    -- its bars, its border and the gap.
     function UnitPlate.PartyStep(db)
         local _, health, power = UnitPlate.Size(db, { partyIndex = 1 })
-        return health + 1 + power + UnitPlate.TopRoom() * UnitPlate.PARTY_SCALE
-            + 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP
-    end
-
-    -- The game's "Use Raid-Style Party Frames" (Edit Mode, Party Frames), or a
-    -- gamepad UI, which forces it: then the game's raid-style frames are the
-    -- party's, and these step aside. Read only - never written.
-    function UnitPlate.RaidStyleParty()
-        local manager = _G.EditModeManagerFrame
-        if type(manager) ~= "table" or type(manager.UseRaidStylePartyFrames) ~= "function" then
-            return false
-        end
-        local ok, raidStyle = pcall(manager.UseRaidStylePartyFrames, manager)
-        return ok and raidStyle and true or false
+        return health + 1 + power + UnitPlate.PartyTopRoom() + 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP
     end
 
     -- The game's own setting for whether a target's target is shown at all,
@@ -173,10 +391,20 @@ do -- private scope
         return value and true or false
     end
 
-    -- The target's target changes with no event worth the name behind it -
-    -- Blizzard's own compact frames poll it and say so in a comment - so who it
-    -- is gets re-read on this slower beat of the same timer that draws the bars.
-    local IDENTITY_INTERVAL = 0.25
+    -- A party member's range moves on its own events (the game's party
+    -- frames'), each registered for the plate's unit only.
+    local RANGE_EVENTS = { "UNIT_IN_RANGE_UPDATE", "UNIT_DISTANCE_CHECK_UPDATE" }
+
+    local function OnRangeEvent(listener)
+        listener.plate:UpdateRange(NS.db.unlocked)
+    end
+
+    local function ListenForRange(plate, unit)
+        local listener = CreateFrame("Frame")
+        listener.plate = plate
+        for _, event in ipairs(RANGE_EVENTS) do pcall(listener.RegisterUnitEvent, listener, event, unit) end
+        listener:SetScript("OnEvent", OnRangeEvent)
+    end
 
     -- The badge's size for a plate of this total height, and the room it takes
     -- up beside the bars. The default placement asks for the second one so the
@@ -214,15 +442,21 @@ do -- private scope
     }
 
     -- THE ELITE BADGE, with the game's own nameplate art and rule
-    -- (NamePlateClassificationFrameMixin:GetClassificationAtlasElement).
+    -- (NamePlateClassificationFrameMixin:GetClassificationAtlasElement) - save
+    -- for bosses, which the nameplates give the elite's gold dragon: here they
+    -- wear the target frame's skull, picked by the target frame's own boss test
+    -- (GetBossPortraitFrameData, Camelot/TargetFrameUtils.lua).
+    local BOSS_ATLAS = "UI-HUD-UnitFrame-Target-HighLevelTarget_Icon"
     local ELITE_ATLAS = {
         elite = "nameplates-icon-elite-gold",
-        worldboss = "nameplates-icon-elite-gold",
+        worldboss = BOSS_ATLAS,
         rareelite = "nameplates-icon-elite-silver",
         rare = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Rare-Star",
     }
 
     local function EliteBadge(unit)
+        local boss = UnitIsBossMob(unit)
+        if not IsSecret(boss) and boss then return BOSS_ATLAS end
         local classification = UnitClassification(unit)
         if classification == nil or IsSecret(classification) then return nil end
         return ELITE_ATLAS[classification]
@@ -299,12 +533,32 @@ do -- private scope
             -- will not say what that class is - never a reaction colour, which
             -- would read as "this player is an enemy".
             local _, class = UnitClass(unit)
-            if class ~= nil and not IsSecret(class) then
+            if IsSecret(class) then
+                -- A class the client keeps secret (the focus, the target's
+                -- target, a restricted unit): handed whole to the game's own
+                -- class colour (C_ClassColor.GetClassColor takes a secret),
+                -- whose colour - secret too - only ever goes to the bar
+                -- (SetStatusBarColor takes one); never looked at
+                -- (EllesmereUIUnitFrames.lua's way).
+                local colours = _G.C_ClassColor
+                if type(colours) == "table" and type(colours.GetClassColor) == "function" then
+                    local ok, colour = pcall(colours.GetClassColor, class)
+                    if ok and type(colour) == "table" then return colour.r, colour.g, colour.b, true end
+                end
+                return nil
+            end
+            if class ~= nil then
                 local colour = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
                 if colour then return colour.r, colour.g, colour.b, true end
             end
             return nil
         end
+
+        -- A friendly pet - yours, a party member's - the plain colour, as its
+        -- owner's side: the game's selection colour for it is a player's blue,
+        -- which toned read as neither (the player, 2026-10-07: "pet ... colors
+        -- feels off ... they should be again healthbar green").
+        if UnitPlayerControlled(unit) and UnitIsFriend("player", unit) then return nil end
 
         -- Everything else wears the colour the game would give it:
         -- UnitSelectionColor is the call its own frames use - green for a
@@ -326,27 +580,47 @@ do -- private scope
         return nil
     end
 
+    -- AN OFFLINE UNIT is drawn as the game's own raid frames draw one
+    -- (CompactUnitFrame_UpdateHealthColor/UpdatePowerColor/UpdateStatusText):
+    -- both bars grey and full, "Offline" in place of the health value. A
+    -- dead one (or a ghost) keeps its colours, both bars empty, "Dead" in
+    -- that place.
+    -- UnitIsConnected and UnitIsDeadOrGhost are never secret.
+    local OFFLINE_COLOR = { 0.5, 0.5, 0.5 }
+
+    local function Offline(unit) return not UnitIsConnected(unit) end
+
+    -- The word in place of the health value, or nil.
+    local function Status(unit)
+        if Offline(unit) then return PLAYER_OFFLINE end
+        if UnitIsDeadOrGhost(unit) then return DEAD end
+    end
+
     local function HealthColour(unit)
+        if Offline(unit) then return OFFLINE_COLOR[1], OFFLINE_COLOR[2], OFFLINE_COLOR[3] end
         if Options().classColors then
             -- A class wears the game's own class colour, exactly as
             -- RAID_CLASS_COLORS gives it - not toned: every class should look
             -- the way the game has always shown it. Reactions are toned to the
             -- palette.
             local r, g, b, isClass = GameHealthColour(unit)
-            if r and isClass then return r, g, b end
+            -- (A class's colour may be secret: the flag is asked, never it.)
+            if isClass then return r, g, b end
             if r then return Tone(r, g, b, HEALTH_TONE) end
         end
         return HEALTH_COLOR[1], HEALTH_COLOR[2], HEALTH_COLOR[3]
     end
 
     -- A resource bar's colour: mana is MANA_COLOR, and every other resource is
-    -- the colour the game lists for it in PowerBarColor - rage red, energy
-    -- yellow, focus orange - toned to mana's depth. A resource the client will
-    -- not name wears mana's.
+    -- exactly the colour the game lists for it in PowerBarColor - rage red,
+    -- energy yellow, focus orange - as a class colour is. Toned, a pet's focus
+    -- was pushed into rage's red (the player, 2026-10-07: "correct power
+    -- color"). A resource the client will not name wears mana's.
     --
     -- There is no option for any of this: a resource bar that is not the
     -- resource's colour is a puzzle rather than a setting.
     local function PowerColour(unit)
+        if Offline(unit) then return OFFLINE_COLOR[1], OFFLINE_COLOR[2], OFFLINE_COLOR[3] end
         local _, token = UnitPowerType(unit)
         if token == nil or IsSecret(token) or token == "MANA" then
             return MANA_COLOR[1], MANA_COLOR[2], MANA_COLOR[3]
@@ -356,7 +630,7 @@ do -- private scope
         if type(info) ~= "table" or type(info.r) ~= "number" then
             return MANA_COLOR[1], MANA_COLOR[2], MANA_COLOR[3]
         end
-        return Tone(info.r, info.g, info.b, POWER_TONE)
+        return info.r, info.g, info.b
     end
 
     -- The level before the name, and what colour to write it in. A target the
@@ -390,7 +664,7 @@ do -- private scope
     local function HealthPercent(unit)
         local curve = ScaleTo100()
         if curve and type(UnitHealthPercent) == "function" then
-            return UnitHealthPercent(unit, false, curve)
+            return UnitHealthPercent(unit, true, curve)
         end
     end
 
@@ -475,6 +749,14 @@ do -- private scope
     }
     UnitPlate.ROLE_ICONS = ROLE_ICONS
 
+    -- A party frame's role icon size: its own at PARTY_SCALE, or its health
+    -- bar's height less a margin where that is less (and the party members'
+    -- pets' icon with it, PartyPets.lua).
+    function UnitPlate.PartyRoleSize(healthHeight)
+        local role = math.floor(ROLE_SIZE * UnitPlate.PARTY_SCALE + 0.5)
+        return math.max(SMALLEST_TEXT, math.min(role, healthHeight - 4))
+    end
+
     local function ShowRole(texture, unit)
         local role = type(UnitGroupRolesAssigned) == "function" and UnitGroupRolesAssigned(unit) or nil
         if IsSecret(role) or type(role) ~= "string" or not ROLE_ICONS[role] then
@@ -500,7 +782,21 @@ do -- private scope
     -- with the guide mark instead of the crown, and so does this. Whether a
     -- unit leads can be a secret for a unit the client restricts, which is
     -- drawn from with SetAlphaFromBoolean and never tested.
+    -- On this client UnitLeadsAnyGroup says yes for the player while solo, so
+    -- the player's crown first asks whether there is a group at all, as the
+    -- game's own player frame never shows its crown outside one.
+    local function IsMe(unit)
+        if unit == "player" then return true end
+        if type(UnitIsUnit) ~= "function" then return false end
+        local same = UnitIsUnit(unit, "player")
+        return not IsSecret(same) and same == true
+    end
+
     local function ShowLeader(texture, unit)
+        if IsMe(unit) and type(IsInGroup) == "function" and not IsInGroup() then
+            texture:SetAlpha(0)
+            return
+        end
         local guide = type(HasLFGRestrictions) == "function" and HasLFGRestrictions() == true
             and Style:HasAtlas(GUIDE_ATLAS)
         if guide then
@@ -545,6 +841,7 @@ do -- private scope
 
         return texture
     end
+    UnitPlate.NewCircle = NewCircle
 
     -- One badge in the row: a frame of its own, so the whole thing - ring, dark
     -- middle, emblem - can be shown or faded as one, drawn exactly like the
@@ -567,7 +864,7 @@ do -- private scope
     -- The rest icon: a texture on the plate, looping while the player rests.
     -- Shown and hidden by its alpha, as the crown is: the plate is protected.
     local function NewRest(plate)
-        local rest = plate.health:CreateTexture(nil, "OVERLAY")
+        local rest = plate.words:CreateTexture(nil, "OVERLAY")
         rest:SetAlpha(0)
         if Style:HasAtlas(REST_ATLAS) then
             rest:SetAtlas(REST_ATLAS)
@@ -589,13 +886,11 @@ do -- private scope
         return rest
     end
 
-    local IsSecretValue = issecretvalue or function() return false end
-
     -- Resting shows it and starts its loop; anything else stops both.
     local function ShowRest(rest, on)
         if on then
             local resting = type(IsResting) == "function" and IsResting()
-            on = not IsSecretValue(resting) and resting and true or false
+            on = not IsSecret(resting) and resting and true or false
         end
         rest:SetAlpha(on and 1 or 0)
         if rest.loop then
@@ -607,10 +902,12 @@ do -- private scope
         end
     end
 
-    -- unit   the unit token this plate draws
-    -- label  "Player", "Target", "Focus", "TargetOfTarget", "Pet": the frame's name
-    -- scale  a fraction of the configured size, for the small frames
-    function UnitPlate.New(unit, label, scale)
+    -- unit        the unit token this plate draws
+    -- label       "Player", "Target", "Focus", "TargetOfTarget", "Pet": the frame's name
+    -- scale       a fraction of the configured size, for the small frames
+    -- partyIndex  0 for the player's own frame in the party's column (SHOW
+    --             SELF, below); party1-4 find their number themselves
+    function UnitPlate.New(unit, label, scale, partyIndex)
         local plate = CreateFrame("Frame", "DogsForeverUI.Frames" .. label, UIParent)
         local base = plate:GetFrameLevel()
 
@@ -619,12 +916,16 @@ do -- private scope
         plate.scale = scale or 1
         -- A party member's frame is one of a column placed as a whole: its
         -- place is the column's (partyLeft, partyTop), counted down by its
-        -- number.
-        plate.partyIndex = tonumber(unit:match("^party(%d)$"))
-        if plate.partyIndex then plate.key = "party" end
+        -- slot - its number until the party is sorted (SortParty).
+        plate.partyIndex = partyIndex or tonumber(unit:match("^party(%d)$"))
+        plate.isSelf = plate.partyIndex == 0
+        if plate.partyIndex then
+            plate.key = "party"
+            plate.partySlot = plate.isSelf and UnitPlate.PARTY_SIZE or plate.partyIndex
+        end
         -- Whose badge sits on which side: the two frames left of the middle of
         -- the screen wear theirs on the left, the two right of it on the right.
-        plate.badgeOnLeft = (unit == "player" or unit == "focus")
+        plate.badgeOnLeft = not plate.partyIndex and (unit == "player" or unit == "focus")
         plate.pollsIdentity = (unit == "targettarget")
         -- The game hides its target-of-target frame when this is off, so this
         -- one goes with it: the setting is the player's answer to the question,
@@ -650,8 +951,13 @@ do -- private scope
         -- and hides it when it does not, in combat or out, reading the unit
         -- from this attribute. See ApplyVisibility.
         plate:SetAttribute("unit", unit)
-        -- The driver shows it when a unit arrives; that is when it is repainted.
-        plate:SetScript("OnShow", function(self) self:Update() end)
+        -- The driver shows it when a unit arrives; that is when it is
+        -- repainted, and Frames.lua's timer woken to keep it painted.
+        plate:SetScript("OnShow", function(self)
+            self:Update()
+            NS:Show()
+        end)
+        if plate.partyIndex then ListenForRange(plate, unit) end
 
         -- BACKGROUND, one for each bar so they can be tinted apart.
         plate.healthBG = plate:CreateTexture(nil, "BACKGROUND")
@@ -659,11 +965,15 @@ do -- private scope
 
         -- BARS. The prediction bar covers the *missing* health - it starts where
         -- the health bar's fill ends - and is filled with the incoming heal out
-        -- of what is missing. See OnUpdate: that is what lets a heal be drawn
-        -- without ever adding it to anything.
+        -- of what is missing. See PaintBars: that is what lets a heal be drawn
+        -- without ever adding it to anything. The heal absorb bar is the same
+        -- the other way round, over the health (ShowHeals).
         plate.prediction = NewBar(plate, base + 1)
         plate.health = NewBar(plate, base + 2, true)
         plate.power = NewBar(plate, base + 2, true)
+        plate.healAbsorb = NewBar(plate, base + 3)
+        plate.healAbsorb:SetReverseFill(true)
+        UnitPlate.AddShields(plate)
 
         -- SPARKS at the end of each bar's fill, as on the castbar.
         plate.healthSpark = Style.AddSpark(plate.health)
@@ -675,24 +985,33 @@ do -- private scope
         -- BORDER, as on every bar.
         plate.border = Style.AddBorder(plate)
 
+        -- THE WORDS' LAYER: the text and the little icons on a frame of their
+        -- own over the bars - and over a party frame's dispel wash, laid over
+        -- the health bar one level up (UnitAuras.lua): nothing drawn on a
+        -- bar may cover them (the player, 2026-10-03: "when there is a
+        -- dispelable debuff I cant see the healthbars at all"). Takes no mouse.
+        plate.words = CreateFrame("Frame", nil, plate)
+        plate.words:SetAllPoints(plate)
+        plate.words:SetFrameLevel(base + 6)
+
         -- TEXT. The level is its own string, so it can wear the difficulty
         -- colour while the name stays white; both sit above the frame.
-        plate.levelText = plate.health:CreateFontString(nil, "OVERLAY")
-        plate.nameText = plate.health:CreateFontString(nil, "OVERLAY")
-        plate.healthText = plate.health:CreateFontString(nil, "OVERLAY")
-        plate.powerText = plate.power:CreateFontString(nil, "OVERLAY")
+        plate.levelText = plate.words:CreateFontString(nil, "OVERLAY")
+        plate.nameText = plate.words:CreateFontString(nil, "OVERLAY")
+        plate.healthText = plate.words:CreateFontString(nil, "OVERLAY")
+        plate.powerText = plate.words:CreateFontString(nil, "OVERLAY")
 
         -- THE CROWN, above the frame's right end, while the unit leads.
-        plate.leader = plate.health:CreateTexture(nil, "OVERLAY")
+        plate.leader = plate.words:CreateTexture(nil, "OVERLAY")
         plate.leader:SetTexture(LEADER_ICON)
         plate.leader:SetAlpha(0)
 
         -- RESTING, over the player's level.
-        if unit == "player" then plate.rest = NewRest(plate) end
+        if unit == "player" and not plate.partyIndex then plate.rest = NewRest(plate) end
 
         -- A PARTY MEMBER'S ROLE, just after the level (ShowRole).
         if plate.partyIndex then
-            plate.roleIcon = plate.health:CreateTexture(nil, "OVERLAY")
+            plate.roleIcon = plate.words:CreateTexture(nil, "OVERLAY")
             plate.roleIcon:Hide()
         end
 
@@ -757,26 +1076,50 @@ do -- private scope
         click:SetAttribute("*type2", "togglemenu")
         plate.click = click
 
+        -- The tooltip in the game's default place, as its own unit frames
+        -- put it (UnitFrame_UpdateTooltip).
         click:SetScript("OnEnter", function()
             if Options().unlocked then return end
-            GameTooltip:SetOwner(click, "ANCHOR_RIGHT")
+            GameTooltip_SetDefaultAnchor(GameTooltip, click)
             GameTooltip:SetUnit(unit)
             GameTooltip:Show()
         end)
         click:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Dragging, while unlocked, and a right-click to lock the frames again
-        -- when they are placed. The plate is the frame that moves, and it is an
-        -- ordinary one, so this is allowed whenever the button is.
+        -- Dragging, while unlocked. The plate is the frame that moves, and it
+        -- is an ordinary one, so this is allowed whenever the button is.
         click:SetScript("OnMouseDown", function(_, button)
-            if button == "LeftButton" and Options().unlocked then plate:StartMoving() end
+            if button == "LeftButton" and Options().unlocked then DogsForeverUI.Snap.Start(plate) end
         end)
         click:SetScript("OnMouseUp", function(_, button)
-            if DogsForeverUI.RightClickLock(NS, button) then return end
             if button ~= "LeftButton" or not Options().unlocked then return end
-            plate:StopMovingOrSizing()
+            DogsForeverUI.Snap.Stop(plate)
             plate:SavePosition()
         end)
+        -- Snapped by what shows: the bars and the name row over them. The
+        -- party's four are one column: any one dragged (or nudged) takes the
+        -- other three along live, the column is what snaps, and they never
+        -- snap to one another.
+        local function PartyOthers()
+            local list = {}
+            if not plate.partyIndex then return list end
+            for _, other in ipairs(UnitPlate.PartyPlates()) do
+                if other ~= plate then list[#list + 1] = other end
+            end
+            return list
+        end
+        DogsForeverUI.Snap.Register(plate, {
+            group = plate.partyIndex and "party" or nil,
+            extra = function()
+                if plate.partyIndex then return 0, 0, UnitPlate.PartyTopRoom(), 0 end
+                return 0, 0, UnitPlate.TopRoom() * (plate.scale or 1), 0
+            end,
+            parts = plate.partyIndex and PartyOthers or nil,
+            moveWith = plate.partyIndex and PartyOthers or nil,
+            save = function() plate:SavePosition() end,
+            name = function() return PLACEMENT_NAMES[plate.unit] or plate.unit end,
+            id = plate.partyIndex and "party" or unit,
+        })
 
         for name, method in pairs(UnitPlate.methods) do plate[name] = method end
 
@@ -800,7 +1143,7 @@ do -- private scope
     -- party's column - the column's, a step down for each member above it.
     function methods:TopOf(db)
         local top = db[self.key .. "Top"] or 0
-        if self.partyIndex then top = top - (self.partyIndex - 1) * UnitPlate.PartyStep(db) end
+        if self.partyIndex then top = top - (self.partySlot - 1) * UnitPlate.PartyStep(db) end
         return top
     end
 
@@ -825,6 +1168,11 @@ do -- private scope
             self:SetWidth(width)
             self:SetHeight(healthHeight + DIVIDER + powerHeight)
             self:SetPoint("TOPLEFT", db[self.key .. "Left"] or 0, self:TopOf(db))
+            -- The column's room for the members' pets on its left (PartyPets.lua):
+            -- every frame of it kept that far from the screen's edge, alike.
+            if self.partyIndex then
+                self:SetClampRectInsets(db.partyShowPets and -NS.PartyPets.Room(db) or 0, 0, 0, 0)
+            end
         end
 
         -- CLICKING. While a frame is being placed its click actions come off, so
@@ -859,12 +1207,17 @@ do -- private scope
         -- the unit says which resource it is.
         Style.SetBarFill(self.health)
         Style.SetBarFill(self.prediction)
+        Style.SetBarFill(self.healAbsorb)
 
         -- The gap the health bar has not filled, anchored to the fill itself so
         -- it follows the bar without anything being measured or worked out.
         self.prediction:ClearAllPoints()
         self.prediction:SetPoint("TOPLEFT", self.health:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
         self.prediction:SetPoint("BOTTOMRIGHT", self.health, "BOTTOMRIGHT", 0, 0)
+        -- And the part it has: the fill itself.
+        self.healAbsorb:ClearAllPoints()
+        self.healAbsorb:SetPoint("TOPLEFT", self.health, "TOPLEFT", 0, 0)
+        self.healAbsorb:SetPoint("BOTTOMRIGHT", self.health:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
 
         self.divider:ClearAllPoints()
         self.divider:SetPoint("TOPLEFT", 0, -healthHeight)
@@ -886,9 +1239,9 @@ do -- private scope
         self.powerBG:ClearAllPoints()
         self.powerBG:SetAllPoints(self.power)
 
-        -- BACKGROUNDS: plain black while the frames are being placed.
-        Style.SetBackground(self.healthBG, db.unlocked)
-        Style.SetBackground(self.powerBG, db.unlocked)
+        -- BACKGROUNDS
+        Style.SetBackground(self.healthBG)
+        Style.SetBackground(self.powerBG)
 
         -- TEXT
         for _, label in ipairs({ self.levelText, self.nameText, self.healthText,
@@ -977,6 +1330,56 @@ do -- private scope
         -- resource" option looked like it did nothing at all.
         Style.SetFont(self.power, self.powerText, db.textPadding, POWER_TEXT_MIN)
 
+        -- A PARTY FRAME (THE PARTY, above): the row above gone, the name
+        -- inside the health bar - over the health value on a tall bar, beside
+        -- it on a short one, alone and centred without it.
+        local raid = self.partyIndex ~= nil
+        for _, piece in ipairs(self.nameBand) do piece:SetShown(not raid) end
+        for _, piece in ipairs(self.nameLineTop) do piece:SetShown(not raid) end
+        self.levelText:SetAlpha(raid and 0 or 1)
+        if raid then
+            local inset = UnitPlate.PARTY_INSET
+            -- "Offline" or "Dead" takes the value's place even with the value off.
+            local valued = (db.showHealthText or self.status) and true or false
+            local tall = healthHeight >= UnitPlate.PARTY_TALL
+            local role = UnitPlate.PartyRoleSize(healthHeight)
+            self.nameText:ClearAllPoints()
+            self.healthText:ClearAllPoints()
+            Style.SetBoldFont(self.nameText,
+                math.max(SMALLEST_TEXT, math.min(Sized(NAME_SIZE), math.floor(healthHeight * (valued and tall and 0.4 or 0.6)))))
+            -- The role in the bar's top left corner (its left end on a short
+            -- bar), the crown its mirror on the right (the player, 2026-10-04).
+            local side, y = tall and "TOP" or "", tall and -2 or 0
+            if self.roleIcon then
+                self.roleIcon:ClearAllPoints()
+                self.roleIcon:SetSize(role, role)
+                self.roleIcon:SetPoint(side .. "LEFT", self.health, side .. "LEFT", 2, y)
+            end
+            self.leader:ClearAllPoints()
+            self.leader:SetPoint(side .. "RIGHT", self.health, side .. "RIGHT", -2, y)
+            if valued and tall then
+                -- The name in the upper half, the value in the lower.
+                local off = math.floor(healthHeight * 0.12 + 0.5)
+                self.nameText:SetJustifyH("CENTER")
+                self.nameText:SetPoint("TOPLEFT", self.health, "TOPLEFT", inset + role, -off)
+                self.nameText:SetPoint("TOPRIGHT", self.health, "TOPRIGHT", -(inset + role), -off)
+                self.healthText:SetJustifyH("CENTER")
+                self.healthText:SetPoint("BOTTOM", self.health, "BOTTOM", 0, off)
+            elseif valued then
+                -- The name from the left (after the role), the value at the
+                -- right end (before the crown).
+                self.healthText:SetJustifyH("RIGHT")
+                self.healthText:SetPoint("RIGHT", self.health, "RIGHT", -(inset + role), 0)
+                self.nameText:SetJustifyH("LEFT")
+                self.nameText:SetPoint("LEFT", self.health, "LEFT", inset + (self.roleIcon and role or 0), 0)
+                self.nameText:SetPoint("RIGHT", self.healthText, "LEFT", -inset, 0)
+            else
+                self.nameText:SetJustifyH("CENTER")
+                self.nameText:SetPoint("LEFT", self.health, "LEFT", inset + role, 0)
+                self.nameText:SetPoint("RIGHT", self.health, "RIGHT", -(inset + role), 0)
+            end
+        end
+
         -- THE BADGES are laid out in UpdateBadges, because which of them show
         -- depends on the unit. A little shorter than the bars they sit beside
         -- rather than as tall as them: a badge that matches the frame's full
@@ -1001,17 +1404,28 @@ do -- private scope
     -- own ("driver"): shown while that member exists and the group is not a
     -- raid - party1 to party4 still exist in a raid, where the game shows its
     -- raid frames instead and no party frames - which is exactly when the
-    -- game's own party frames show (ShouldShowPartyFrames). With the game's
-    -- raid-style party frames on, those are the party's, and these are hidden.
+    -- game's own party frames show (ShouldShowPartyFrames). The column is the
+    -- party's in its raid style too (the addon's own since 2026-10-03; the
+    -- game's raid-style frames, if its switch is on, are kept out of sight -
+    -- BlizzardFrames.lua).
     local PARTY_CONDITION = "[group:raid] hide; [@%s,exists] show; hide"
+    -- SHOW SELF (the player, 2026-10-03: "Party frames, 'Show self' should
+    -- be an option"): the player's own frame in the column, as the game's
+    -- raid-style party frames have one - while in a party, not in a raid,
+    -- and only with the setting on (partyShowSelf).
+    -- (Shown only while there is a party to be in: someone else in it, party1
+    -- there - the same test as each member's frame. "[group:party]" alone
+    -- showed it with nobody else there - the player, 2026-10-03: "Show self
+    -- shouldnt show self if out of group".)
+    local SELF_CONDITION = "[group:raid] hide; [@party1,exists] show; hide"
 
     local function WantedVisibility(plate)
         local db = Options()
+        if plate.isSelf and not db.partyShowSelf then return "hidden" end
+        -- Placed while unlocked.
         if db.unlocked then return "shown" end
         if plate.cvar and not CVarOn(plate.cvar) then return "hidden" end
-        if plate.partyIndex then
-            return UnitPlate.RaidStyleParty() and "hidden" or "driver"
-        end
+        if plate.partyIndex then return "driver" end
         return "watch"
     end
 
@@ -1019,8 +1433,8 @@ do -- private scope
     -- protected frame's, so in combat nothing happens and the plate keeps the
     -- state it had - which, in the usual case, is the game showing and hiding
     -- it for its unit, and that goes on working in combat. Anything that
-    -- changed is caught up here the moment combat ends, since OnUpdate asks
-    -- again every frame.
+    -- changed is caught up here the moment combat ends, when every plate is
+    -- refreshed (Frames.lua).
     function methods:ApplyVisibility()
         local wanted = WantedVisibility(self)
         if wanted == self.visibility or InCombatLockdown() then return end
@@ -1039,7 +1453,8 @@ do -- private scope
         elseif wanted == "driver" then
             if UnregisterUnitWatch then UnregisterUnitWatch(self) end
             if RegisterStateDriver then
-                RegisterStateDriver(self, "visibility", PARTY_CONDITION:format(self.unit))
+                RegisterStateDriver(self, "visibility",
+                    self.isSelf and SELF_CONDITION or PARTY_CONDITION:format(self.unit))
                 self.driven = true
             end
         else
@@ -1054,9 +1469,23 @@ do -- private scope
         if wanted == "watch" then return UnitExists(self.unit) and true or false end
         if wanted == "driver" then
             local inRaid = type(IsInRaid) == "function" and IsInRaid()
+            if self.isSelf then
+                return UnitExists("party1") and not inRaid and true or false
+            end
             return UnitExists(self.unit) and not inRaid and true or false
         end
         return wanted == "shown"
+    end
+
+    -- IN EDIT MODE the frames are drawn as they really are, as the game's are
+    -- there. A frame whose unit is not there (no target, no party) shows the
+    -- player instead, as the game's own target and party frames do.
+    local function Previewing() return Style.Previewing() end
+
+    -- The unit the bars and text are painted from.
+    function methods:PaintUnit()
+        if Previewing() and not UnitExists(self.unit) then return "player" end
+        return self.unit
     end
 
     -- Everything that follows the unit rather than the settings: who it is, what
@@ -1073,55 +1502,37 @@ do -- private scope
         -- Never Show or Hide here: that is ApplyVisibility's, out of combat,
         -- and the game's in it. This only paints.
         self:ApplyVisibility()
-
-        if db.unlocked then
-            -- Placement mode: empty striped bars and the frame's name, exactly
-            -- as every other bar shows while it is being placed.
-            self.health:SetMinMaxValues(0, 1)
-            self.health:SetValue(0)
-            self.power:SetMinMaxValues(0, 1)
-            self.power:SetValue(0)
-            self.prediction:SetValue(0)
-            self.nameText:SetText(PLACEMENT_NAMES[self.unit] or self.unit)
-            self.healthText:SetText("")
-            self.powerText:SetText("")
-            self.levelText:SetText("")
-            self.leader:SetAlpha(0)
-            if self.rest then ShowRest(self.rest, false) end
-            if self.roleIcon then self.roleIcon:Hide() end
-            self.healthSpark:SetAlpha(0)
-            self.powerSpark:SetAlpha(0)
-            if self.eliteBadge then self.eliteBadge:Hide() end
-            if self.pvpBadge then self.pvpBadge:Hide() end
-            return
-        end
+        self:UpdateRange(db.unlocked)
 
         -- No unit: the game has hidden it, and there is nothing to paint.
         if not self:ShouldShow() then return end
 
-        local r, g, b = HealthColour(self.unit)
+        local unit = self:PaintUnit()
+        local r, g, b = HealthColour(unit)
         self.health:SetStatusBarColor(r, g, b, 1)
 
-        local heal = HEAL_COLOR
-        self.prediction:SetStatusBarColor(heal[1], heal[2], heal[3], heal[4])
+        self.prediction:SetStatusBarColor(unpack(HEAL_COLOR))
+        self.healAbsorb:SetStatusBarColor(unpack(HEAL_ABSORB_COLOR))
 
-        self.power:SetStatusBarColor(PowerColour(self.unit))
+        self.power:SetStatusBarColor(PowerColour(unit))
 
         -- The name, always (its switch went on 2026-09-29).
-        ShowName(self.nameText, self.unit)
+        ShowName(self.nameText, unit)
 
-        ShowLevel(self.levelText, self.unit)
-        self.levelText:SetTextColor(LevelColour(self.unit))
+        ShowLevel(self.levelText, unit)
+        self.levelText:SetTextColor(LevelColour(unit))
 
-        ShowLeader(self.leader, self.unit)
+        ShowLeader(self.leader, unit)
         if self.rest then ShowRest(self.rest, true) end
-        if self.roleIcon then ShowRole(self.roleIcon, self.unit) end
+        if self.roleIcon then ShowRole(self.roleIcon, unit) end
         self:UpdateBadges()
         -- Its own events keep it right from here on; this is for a pet that
         -- arrived before it was made, or while the plate was hidden.
         if self.happiness and type(self.happiness.UpdateHappiness) == "function" then
             pcall(self.happiness.UpdateHappiness, self.happiness)
         end
+        -- A new unit, a setting, the plate shown again: its bars too.
+        self:PaintBars()
     end
 
     -- The emblem inside a badge: the game's art, fitted inside `size` in its
@@ -1147,12 +1558,13 @@ do -- private scope
         local outside = self.badgeOnLeft and "LEFT" or "RIGHT"
         local inside = self.badgeOnLeft and "RIGHT" or "LEFT"
 
-        -- ELITE - elite, rare, rare elite, boss: the bare emblem, no ring and
-        -- no disc, in the name row at the frame's top right corner, in the
+        -- ELITE - elite, rare, rare elite, boss, each its own: the bare emblem,
+        -- no ring and no disc, in the name row at the frame's top right corner, in the
         -- crown's place and a little larger than it (the player asked: the
         -- circle beside the bars did not fit the look). A unit that is elite never
         -- leads a group, so the two never meet.
-        local elite = EliteBadge(self.unit)
+        local unit = self:PaintUnit()
+        local elite = EliteBadge(unit)
         if elite and Style:HasAtlas(elite) then
             local badge = self.eliteBadge
             local size = self.eliteSize or ELITE_SIZE
@@ -1172,7 +1584,7 @@ do -- private scope
         -- is on may be a secret - UnitIsPVP is SecretWhenUnitIdentityRestricted
         -- - which is drawn from with SetAlphaFromBoolean and never looked at.
         local badge = self.pvpBadge
-        local atlas, flagged = FactionBadge(self.unit)
+        local atlas, flagged = FactionBadge(unit)
         if not atlas or not Style:HasAtlas(atlas) then
             badge:Hide()
             return
@@ -1194,6 +1606,95 @@ do -- private scope
         badge:Show()
     end
 
+    -- The heals on `frame` (a plate, or a party pet's box, PartyPets.lua),
+    -- drawn without ever being worked out, `health` already read.
+    --
+    -- INCOMING HEALS (frame.prediction) cover the *missing* health - the bar's
+    -- near end is anchored to the end of the health bar's own fill, so it
+    -- starts exactly where health stops - scaled to the missing health and
+    -- filled with the heals on their way. Its length is then the heal's share
+    -- of the missing health, of the missing health's share of the bar: the
+    -- right answer, arrived at without this addon adding, dividing or reading
+    -- anything.
+    --
+    -- HEAL ABSORBS (frame.healAbsorb) - the health a debuff will eat out of
+    -- the next heals, shaded as the game's frames shade it - the other way
+    -- round: the bar covers the health, its far end the fill's, scaled to the
+    -- health and filled back from that end with the absorb. A bar never fills
+    -- past its top, so an absorb bigger than the health covers all of it, as
+    -- the game's does.
+    --
+    -- SHIELDS - damage absorbs - EllesmereUI's way (its unit frames'
+    -- CreateAbsorbBar, "overlay"): two bars as big as the health bar, both
+    -- filled with the whole shield out of the maximum health. One runs on
+    -- from the fill's end inside the heal shading's box, which cuts it off at
+    -- the bar's end; the other runs back from the bar's far end inside the
+    -- heal absorb's box, which cuts it off at the fill's end - so it shows
+    -- only what the missing health could not hold, over the health. A shield
+    -- on a unit at full health is all over its health.
+    --
+    -- Every number is secret and only ever passed on.
+    UnitPlate.HEAL_COLOR = HEAL_COLOR
+    UnitPlate.HEAL_ABSORB_COLOR = HEAL_ABSORB_COLOR
+
+    -- The two shield bars on `frame`, once its heal bars are made; `vertical`
+    -- for a box whose health grows upwards.
+    function UnitPlate.AddShields(frame, vertical)
+        local function Shield(box, from, corner, reverse)
+            box:SetClipsChildren(true)
+            local bar = NewBar(box, box:GetFrameLevel() + 1)
+            bar:SetStatusBarTexture(SHIELD_FILL)
+            bar:SetOrientation(vertical and "VERTICAL" or "HORIZONTAL")
+            bar:SetReverseFill(reverse)
+            bar:SetPoint(corner, from, corner)
+            -- The stripes at their own size, however much is filled.
+            local lines = bar:CreateTexture(nil, "OVERLAY")
+            lines:SetTexture(SHIELD_LINES, "REPEAT", "REPEAT")
+            lines:SetHorizTile(true)
+            lines:SetVertTile(true)
+            lines:SetAllPoints(bar:GetStatusBarTexture())
+            return bar
+        end
+        frame.shield = Shield(frame.prediction, frame.prediction,
+            vertical and "BOTTOMLEFT" or "TOPLEFT", false)
+        frame.overShield = Shield(frame.healAbsorb, frame.health,
+            vertical and "TOPLEFT" or "TOPRIGHT", true)
+        -- As big as the health bar, whatever it is laid out to.
+        frame.health:SetScript("OnSizeChanged", function(_, width, height)
+            frame.shield:SetSize(width, height)
+            frame.overShield:SetSize(width, height)
+        end)
+    end
+
+    local function Shade(bar, whole, part)
+        -- Secret first: nothing may be compared to a secret, not even nil.
+        if not IsSecret(part) and part == nil then part = 0 end
+        bar:SetMinMaxValues(0, whole)
+        bar:SetValue(part)
+        bar:Show()
+    end
+
+    function UnitPlate.ShowHeals(frame, unit, health, most)
+        if UnitHealthMissing and UnitGetIncomingHeals then
+            Shade(frame.prediction, UnitHealthMissing(unit, true), UnitGetIncomingHeals(unit))
+        else
+            frame.prediction:Hide()
+        end
+        if UnitGetTotalHealAbsorbs then
+            Shade(frame.healAbsorb, health, UnitGetTotalHealAbsorbs(unit))
+        else
+            frame.healAbsorb:Hide()
+        end
+        if UnitGetTotalAbsorbs then
+            local shield = UnitGetTotalAbsorbs(unit)
+            Shade(frame.shield, most, shield)
+            Shade(frame.overShield, most, shield)
+        else
+            frame.shield:Hide()
+            frame.overShield:Hide()
+        end
+    end
+
     -- A PARTY MEMBER OUT OF RANGE is drawn see-through, as the game's own
     -- party frames draw one (CompactUnitFrame_UpdateInRange: UnitInRange,
     -- out of range when the range could be checked and it is not in it).
@@ -1203,86 +1704,98 @@ do -- private scope
     -- this goes on in combat. Placing the frames, or no member: fully drawn.
     UnitPlate.OUT_OF_RANGE_ALPHA = 0.55
 
-    function methods:UpdateRange(placing)
-        if not self.partyIndex then return end
-        if placing or type(UnitInRange) ~= "function" then
-            self:SetAlpha(1)
+    -- `frame` drawn for `unit`'s range: the party's frames, and their pets'
+    -- boxes (PartyPets.lua), as the game's raid-style frames do theirs.
+    function UnitPlate.ShowRange(frame, unit)
+        if type(UnitInRange) ~= "function" then
+            frame:SetAlpha(1)
             return
         end
-        local inRange, checked = UnitInRange(self.unit)
+        local inRange, checked = UnitInRange(unit)
         if IsSecret(inRange) or IsSecret(checked) then
             -- The range itself decides, untested; a check the client could
             -- not make is then taken as out of range, the safer reading.
-            if IsSecret(inRange) and type(self.SetAlphaFromBoolean) == "function" then
-                self:SetAlphaFromBoolean(inRange, 1, UnitPlate.OUT_OF_RANGE_ALPHA)
+            if IsSecret(inRange) and type(frame.SetAlphaFromBoolean) == "function" then
+                frame:SetAlphaFromBoolean(inRange, 1, UnitPlate.OUT_OF_RANGE_ALPHA)
             else
-                self:SetAlpha(1)
+                frame:SetAlpha(1)
             end
             return
         end
         local out = checked and not inRange
-        self:SetAlpha(out and UnitPlate.OUT_OF_RANGE_ALPHA or 1)
+        frame:SetAlpha(out and UnitPlate.OUT_OF_RANGE_ALPHA or 1)
     end
 
-    -- The bars themselves, repainted on a timer. Every value here is secret and
-    -- none of them is read: they go straight to the widget, which draws what
-    -- this addon may never see.
-    function methods:OnUpdate(elapsed)
-        -- A setting, or the target-of-target option, can change with no event
-        -- and in combat; the plate is put right here as soon as it may be.
-        self:ApplyVisibility()
+    function methods:UpdateRange(placing)
+        if not self.partyIndex then return end
+        if placing then
+            self:SetAlpha(1)
+            return
+        end
+        UnitPlate.ShowRange(self, self.unit)
+    end
 
-        local db = Options()
-        self:UpdateRange(db.unlocked)
-        if db.unlocked then return end
+    -- WHAT MOVES THE BARS: Frames.lua's timer, every frame a plate is on
+    -- screen - the way the game's own unit frames read health and power
+    -- (UnitFrameHealthBar_Initialize with frequentUpdates: UNIT_HEALTH
+    -- unregistered, UnitFrameHealthBar_OnUpdate reading UnitHealth each
+    -- frame; the mana bar the same for player, pet, target, focus and target
+    -- of target). On this client UNIT_HEALTH comes later than the health
+    -- itself: plates painted on it lagged every heal that the game's frames
+    -- showed at once (the player, 2026-10-04, with the addon off and on).
+    -- The target's target can also become somebody else with no event, so
+    -- all of it - who, name, colour - is read every frame too, as the game's
+    -- own frame does (TargetOfTargetMixin: Update as its OnUpdate).
+    function methods:OnUpdate()
+        if self.pollsIdentity then self:Update() else self:PaintBars() end
+    end
 
-        -- Whether the unit is there is the game's to answer now, and it shows
-        -- or hides the plate itself - see New. Hidden, there is nothing to
-        -- paint; OnShow repaints it when it comes back. This used to call
-        -- Update to show or hide the plate from here, which in combat was
-        -- blocked, and retried, twenty times a second.
+    -- THE BARS. Every value here is secret and none of them is read: they go
+    -- straight to the widget, which draws what this addon may never see -
+    -- which is also why nothing is compared to skip a paint.
+    function methods:PaintBars()
         if not self:IsShown() or not self:ShouldShow() then return end
 
-        -- The target's target can become somebody else with no event of its
-        -- own, so who it is gets re-read on a slower beat.
-        if self.pollsIdentity then
-            self.sinceIdentity = (self.sinceIdentity or 0) + (elapsed or 0)
-            if self.sinceIdentity >= IDENTITY_INTERVAL then
-                self.sinceIdentity = 0
-                self:Update()
-            end
+        local db = Options()
+        local unit = self:PaintUnit()
+        -- Logged off, died, or back: laid out and coloured again (Refresh
+        -- paints it after). Asked here, every frame: a death has no event
+        -- this file listens to.
+        local status = Status(unit)
+        if status ~= self.status then
+            self.status = status
+            self:Refresh()
+            return
         end
-
-        local unit = self.unit
+        -- Offline: both bars full (grey). Dead or a ghost: both empty - a
+        -- ghost, or a body out of range, can still report health and power,
+        -- which filled a dead member's bars (the player, 2026-10-09).
+        if status then
+            local fill = Offline(unit) and 1 or 0
+            self.health:SetMinMaxValues(0, 1)
+            self.health:SetValue(fill)
+            self.power:SetMinMaxValues(0, 1)
+            self.power:SetValue(fill)
+            self.prediction:Hide()
+            self.healAbsorb:Hide()
+            self.healthSpark:SetAlpha(0)
+            self.powerSpark:SetAlpha(0)
+            self.healthText:SetText(status)
+            self.powerText:SetText("")
+            return
+        end
         -- Read once a tick and only passed on: to the bar and to the label.
-        local health, power = UnitHealth(unit, false), UnitPower(unit)
+        -- The client's PREDICTED health, as the game's own frames read it
+        -- (UnitHealth(unit): usePredicted defaults to true) - the server's
+        -- confirmed value trailed every heal by about half a second (the
+        -- player, 2026-10-04). The percentages and the missing health below
+        -- are read the same way, so all of it moves together.
+        local health, most, power = UnitHealth(unit, true), UnitHealthMax(unit), UnitPower(unit)
 
-        self.health:SetMinMaxValues(0, UnitHealthMax(unit))
+        self.health:SetMinMaxValues(0, most)
         self.health:SetValue(health)
 
-        -- The incoming heal, drawn without ever being worked out.
-        --
-        -- The bar covers the *missing* health - its left edge is anchored to the
-        -- end of the health bar's own fill, so it starts exactly where health
-        -- stops - and it is scaled to the missing health and filled with the
-        -- heals on their way. Its width is then the heal's share of the missing
-        -- health, of the missing health's share of the bar: the right answer,
-        -- arrived at without this addon adding, dividing or reading anything.
-        -- All three numbers are secret and all three are only ever passed on.
-        --
-        -- An earlier version drew UnitHealth(unit, true) - "predicted" health -
-        -- on a bar behind the health bar and showed nothing at all in game.
-        if UnitHealthMissing and UnitGetIncomingHeals then
-            local incoming = UnitGetIncomingHeals(unit)
-            -- Secret first: nothing may be compared to a secret, not even nil.
-            if not IsSecret(incoming) and incoming == nil then incoming = 0 end
-
-            self.prediction:SetMinMaxValues(0, UnitHealthMissing(unit, false))
-            self.prediction:SetValue(incoming)
-            self.prediction:Show()
-        else
-            self.prediction:Hide()
-        end
+        UnitPlate.ShowHeals(self, unit, health, most)
 
         self.power:SetMinMaxValues(0, UnitPowerMax(unit))
         self.power:SetValue(power)
@@ -1316,7 +1829,7 @@ do -- private scope
         db[self.key .. "Placed"] = true
         db[self.key .. "Left"] = self:GetLeft()
         local top = -1 * (GetScreenHeight() - self:GetTop())
-        if self.partyIndex then top = top + (self.partyIndex - 1) * UnitPlate.PartyStep(db) end
+        if self.partyIndex then top = top + (self.partySlot - 1) * UnitPlate.PartyStep(db) end
         db[self.key .. "Top"] = top
 
         NS.Refresh()

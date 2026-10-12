@@ -28,14 +28,12 @@
 -- The buttons come from a pool, each made the first time it is needed. A
 -- post-hook on the pool's Acquire gives a new one the look before the game
 -- first fills it, so nothing is ever changed on a button that may already be
--- holding a secret icon, swipe or time. Switching the look on and off for
--- buttons already made waits for the end of combat, for the same reason.
+-- holding a secret icon, swipe or time. Buttons already made get the look
+-- out of combat only, for the same reason.
 --
 -- Hooks only (hooksecurefunc): no function of the game's is replaced or
 -- called, and nothing is written onto its frames but their look and their
--- anchors, none of which its code reads. With the unit frames off, all of it
--- is handed back: every button to the anchors the game gave it, and the look
--- the template made.
+-- anchors, none of which its code reads.
 
 local Totems = {}
 DogsForeverUI.Frames.Totems = Totems
@@ -51,19 +49,12 @@ do -- private scope
     local TIME_GAP = 3                -- an icon's border down to its time
     local BORDER_PIXELS = 1           -- the action buttons' thin border
     local SWIPE = { 0, 0, 0, 0.65 }   -- TotemButtonTemplate's own swipe colour
-    -- Where the template puts the time: under the button, 5 up into it.
-    local GAME_TIME_Y = 5
 
     local looks = setmetatable({}, { __mode = "k" })        -- button -> what was made for it
-    local gamePoints = setmetatable({}, { __mode = "k" })   -- button -> the game's anchors
     Totems.looks = looks
-    Totems.on = false                 -- whether the addon has the totems now
-    local gameScale                   -- the totem frame's scale before the addon's
+    Totems.on = false                 -- whether the addon has the totems yet
 
-    local function Call(object, method, ...)
-        if type(object) ~= "table" or type(object[method]) ~= "function" then return end
-        pcall(object[method], object, ...)
-    end
+    local Call = DogsForeverUI.Call
 
     local function TotemFrame()
         local frame = _G.TotemFrame
@@ -79,15 +70,13 @@ do -- private scope
     local function EachActive(fn)
         local pool = Pool()
         if not pool then return end
-        local list = {}
-        for button in pool:EnumerateActive() do list[#list + 1] = button end
-        for _, button in ipairs(list) do fn(button) end
+        for button in pool:EnumerateActive() do fn(button) end
     end
 
     -- The addon has the totems once the player's frame is there to hang them
     -- from.
     local function Wanted()
-        return NS.db ~= nil and NS.plates ~= nil and NS.plates.player ~= nil
+        return NS.plates ~= nil and NS.plates.player ~= nil
     end
 
     ---------------------------------------------------------------------------
@@ -100,61 +89,32 @@ do -- private scope
         return buttons and buttons.BORDER or Style.DEFAULT_BORDER
     end
 
-    -- The round swipe, exactly as TotemButtonMixin:OnLoad sets it up.
-    local function RoundSwipe(cooldown)
-        local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("CircleMask")
-        if type(info) ~= "table" then return end
-        Call(cooldown, "SetSwipeTexture", info.file or info.filename)
-        Call(cooldown, "SetTexCoordRange", { x = info.leftTexCoord, y = info.topTexCoord },
-            { x = info.rightTexCoord, y = info.bottomTexCoord })
-    end
-
-    local function SetLook(button, on)
+    local function SetLook(button)
         local icon = type(button) == "table" and button.Icon
         if type(icon) ~= "table" or type(icon.CreateTexture) ~= "function" then return end
+        if looks[button] then return end
 
-        local look = looks[button]
-        if not look then
-            if not on then return end
-            look = { on = false }
-            look.bg = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
-            look.bg:SetAllPoints(icon)
-            Style.SetBackground(look.bg)
-            look.border = Style.AddBorder(icon, BorderSpec(), false, BORDER_PIXELS)
-            looks[button] = look
-        end
-        if look.on == on then return end
-        look.on = on
+        local look = {}
+        look.bg = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
+        look.bg:SetAllPoints(icon)
+        Style.SetBackground(look.bg)
+        look.border = Style.AddBorder(icon, BorderSpec(), false, BORDER_PIXELS)
+        looks[button] = look
 
-        look.bg:SetShown(on)
-        look.border:SetShown(on)
-        Call(button.Border, "SetAlpha", on and 0 or 1)
+        Call(button.Border, "SetAlpha", 0)
 
         local texture, mask = icon.Texture, icon.TextureMask
-        if on then
-            if mask then Call(texture, "RemoveMaskTexture", mask) end
-            Call(texture, "SetTexCoord", ICON_CROP, 1 - ICON_CROP, ICON_CROP, 1 - ICON_CROP)
-        else
-            if mask then Call(texture, "AddMaskTexture", mask) end
-            Call(texture, "SetTexCoord", 0, 1, 0, 1)
-        end
+        if mask then Call(texture, "RemoveMaskTexture", mask) end
+        Call(texture, "SetTexCoord", ICON_CROP, 1 - ICON_CROP, ICON_CROP, 1 - ICON_CROP)
 
         local cooldown = icon.Cooldown
-        if on then
-            Call(cooldown, "SetSwipeTexture", Style.FLAT_TEXTURE)
-            Call(cooldown, "SetTexCoordRange", { x = 0, y = 0 }, { x = 1, y = 1 })
-        else
-            RoundSwipe(cooldown)
-        end
+        Call(cooldown, "SetSwipeTexture", Style.FLAT_TEXTURE)
+        Call(cooldown, "SetTexCoordRange", { x = 0, y = 0 }, { x = 1, y = 1 })
         Call(cooldown, "SetSwipeColor", SWIPE[1], SWIPE[2], SWIPE[3], SWIPE[4])
 
         local time = button.Duration
         Call(time, "ClearAllPoints")
-        if on then
-            Call(time, "SetPoint", "TOP", icon, "BOTTOM", 0, -TIME_GAP)
-        else
-            Call(time, "SetPoint", "TOP", button, "BOTTOM", 0, GAME_TIME_Y)
-        end
+        Call(time, "SetPoint", "TOP", icon, "BOTTOM", 0, -TIME_GAP)
     end
 
     ---------------------------------------------------------------------------
@@ -178,13 +138,18 @@ do -- private scope
         return ICON_SIZE
     end
 
+    -- The game numbers them in its own order (TotemFrameMixin:Update).
+    local function ByLayoutIndex(a, b) return (a.layoutIndex or 0) < (b.layoutIndex or 0) end
+
     local function ShownButtons()
         local list = {}
-        EachActive(function(button)
-            if button:IsShown() then list[#list + 1] = button end
-        end)
-        -- The game numbers them in its own order (TotemFrameMixin:Update).
-        table.sort(list, function(a, b) return (a.layoutIndex or 0) < (b.layoutIndex or 0) end)
+        local pool = Pool()
+        if pool then
+            for button in pool:EnumerateActive() do
+                if button:IsShown() then list[#list + 1] = button end
+            end
+        end
+        table.sort(list, ByLayoutIndex)
         return list
     end
 
@@ -200,31 +165,10 @@ do -- private scope
         end
     end
 
-    local function SaveGamePoints(button)
-        local points = {}
-        local count = type(button.GetNumPoints) == "function" and button:GetNumPoints() or 0
-        for index = 1, count do points[index] = { button:GetPoint(index) } end
-        gamePoints[button] = points
-    end
-
-    local function RestoreGamePoints(button)
-        local points = gamePoints[button]
-        if not points then return end
-        button:ClearAllPoints()
-        for _, point in ipairs(points) do button:SetPoint(unpack(point)) end
-    end
-
-    -- Out of the player frame's scale, into the UI's; and back.
-    local function Rescale(frame, on)
-        if on then
-            if gameScale == nil then gameScale = frame:GetScale() end
-            Call(frame, "SetIgnoreParentScale", true)
-            Call(frame, "SetScale", UIParent:GetScale())
-        elseif gameScale ~= nil then
-            Call(frame, "SetIgnoreParentScale", false)
-            Call(frame, "SetScale", gameScale)
-            gameScale = nil
-        end
+    -- Out of the player frame's scale, into the UI's.
+    local function Rescale(frame)
+        Call(frame, "SetIgnoreParentScale", true)
+        Call(frame, "SetScale", UIParent:GetScale())
     end
 
     -- The borders are laid on the real pixels, which the scale just moved.
@@ -239,17 +183,12 @@ do -- private scope
     -- A new button, before the game fills it.
     local function AfterAcquire()
         if not Totems.on then return end
-        EachActive(function(button) SetLook(button, true) end)
+        EachActive(SetLook)
     end
 
-    -- The game has just laid its buttons out: note where it put them, for
-    -- handing them back, and move them into the row.
+    -- The game has just laid its buttons out: move them into the row.
     local function AfterLayout()
-        if not Totems.on then return end
-        EachActive(function(button)
-            if button:IsShown() then SaveGamePoints(button) end
-        end)
-        PlaceButtons()
+        if Totems.on then PlaceButtons() end
     end
 
     local hooked = false
@@ -271,40 +210,23 @@ do -- private scope
 
     ---------------------------------------------------------------------------
 
-    -- Take the totems, or hand them back. Out of combat only (see the top);
-    -- the frames refresh again as combat ends.
+    -- Take the totems. Out of combat only (see the top); the frames refresh
+    -- again as combat ends.
     function Totems.Refresh()
         local frame = TotemFrame()
         if not frame or InCombatLockdown() then return end
         Hook()
+        if not Wanted() then return end
 
-        local on = Wanted()
-        local was = Totems.on
+        local h = Holder()
+        h:ClearAllPoints()
+        h:SetPoint("TOPRIGHT", NS.plates.player, "BOTTOMRIGHT", 0, -(Style.BORDER_INSET + GAP))
 
-        if on then
-            local h = Holder()
-            h:ClearAllPoints()
-            h:SetPoint("TOPRIGHT", NS.plates.player, "BOTTOMRIGHT",
-                0, -(Style.BORDER_INSET + GAP))
-            -- Buttons on screen right now still sit where the game put them.
-            if not was then
-                EachActive(function(button)
-                    if button:IsShown() then SaveGamePoints(button) end
-                end)
-            end
-        end
-
-        Rescale(frame, on)
-        for button in pairs(looks) do SetLook(button, on) end
-        if on then EachActive(function(button) SetLook(button, true) end) end
+        Rescale(frame)
+        EachActive(SetLook)
         RefitBorders()
-
-        if on then
-            PlaceButtons()
-        elseif was then
-            for _, button in ipairs(ShownButtons()) do RestoreGamePoints(button) end
-        end
-        Totems.on = on
+        PlaceButtons()
+        Totems.on = true
     end
 
     local watcher = CreateFrame("Frame")
@@ -313,7 +235,7 @@ do -- private scope
     watcher:SetScript("OnEvent", function()
         local frame = TotemFrame()
         if not frame or not Totems.on then return end
-        Rescale(frame, true)
+        Rescale(frame)
         RefitBorders()
     end)
 end

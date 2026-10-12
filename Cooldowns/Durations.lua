@@ -54,12 +54,14 @@
 -- A BUFF THAT DOES NOT RUN OUT (a stance, an aura) shows a FULL bar. The game
 -- hands such a buff's bar a zero-length timer, and whether a buff has an end
 -- is not something the addon can ask. So the bar is built the other way
--- round: the gold (with its sheen) is the bar's background, the part the
+-- round: the colour (with its sheen) is the bar's background, the part the
 -- game fills is the dark, filling from the right with the time ELAPSED. A
 -- timed buff drains leftward exactly like a cooldown bar; a zero-length timer
--- has no elapsed time, so the gold stays whole. (Filled with the time
+-- has no elapsed time, so the colour stays whole. (Filled with the time
 -- remaining, as at first, it came out empty.) No spark: its place would be
--- the gold's end, which a buff that does not run out has at the far right.
+-- the colour's end, which a buff that does not run out has at the far right.
+--
+-- THE COLOUR is green, not a cooldown bar's gold, so the two read apart.
 --
 -- THE NAME keeps clear of the time by a fixed space rather than by being
 -- anchored to the time's text: the game marks the time's text secret once it
@@ -71,39 +73,18 @@ DogsForeverUI.Cooldowns.Durations = Durations
 do -- private scope
     local NS = DogsForeverUI.Cooldowns
     local Style = DogsForeverUI.Style
-    local IsSecret = issecretvalue or function() return false end
+    local IsSecret = issecretvalue
 
     local GROUP = "tracked"
     local MAX_BARS = 20
     local GAP = NS.GAP
-    local COLOR = Style.GOLD
-    local DARK = { 0.05, 0.05, 0.05, 1 }   -- the elapsed part: opaque, over the gold
+    local COLOR = Style.DURATION_COLOR
+    local DARK = { 0.05, 0.05, 0.05, 1 }   -- the elapsed part: opaque, over the colour
     local TIME_ROOM = 40                   -- kept clear for "59 m" and the like
     local SHEEN, SHADE = 0.22, 0.25        -- the fill's sheen, as Style.MakeSheen draws it
 
-    local function Call(object, method, ...)
-        if object == nil then return nil end
-        local fn = object[method]
-        if type(fn) ~= "function" then return nil end
-        local ok, a, b = pcall(fn, object, ...)
-        if ok then return a, b end
-    end
-
-    local function Global(fn, ...)
-        if type(fn) ~= "function" then return nil end
-        local ok, a, b = pcall(fn, ...)
-        if ok then return a, b end
-    end
-
-    local function Api(namespace, name)
-        local t = _G[namespace]
-        return type(t) == "table" and t[name] or nil
-    end
-
-    local function EnumValue(group, key, fallback)
-        local enum = type(Enum) == "table" and Enum[group]
-        return type(enum) == "table" and enum[key] or fallback
-    end
+    local Call, Global = DogsForeverUI.Call, DogsForeverUI.Try
+    local Api, EnumValue = DogsForeverUI.Api, DogsForeverUI.EnumValue
     local IMMEDIATE = EnumValue("StatusBarInterpolation", "Immediate", 0)
     local ELAPSED = EnumValue("StatusBarTimerDirection", "ElapsedTime", 0)
 
@@ -272,7 +253,7 @@ do -- private scope
     learner:SetScript("OnEvent", function(_, _, unit, _, spellID)
         if unit ~= "player" or IsSecret(spellID) then return end
         local owners = rankOwners[spellID]
-        if not owners or not (C_Timer and C_Timer.After) then return end
+        if not owners then return end
         local entries = {}
         for i, entry in ipairs(owners) do entries[i] = entry end
         C_Timer.After(LOOK_AFTER, function() Look(entries) end)
@@ -310,12 +291,12 @@ do -- private scope
         bar:SetValue(0)
         p.bar = bar
 
-        -- The gold, under everything on the bar, with the sheen and shade the
-        -- addon's fills have.
-        local gold = bar:CreateTexture(nil, "BACKGROUND", nil, 1)
-        gold:SetAllPoints(bar)
-        gold:SetTexture(Style.FLAT_TEXTURE)
-        gold:SetVertexColor(COLOR[1], COLOR[2], COLOR[3], 1)
+        -- The colour, under everything on the bar, with the sheen and shade
+        -- the addon's fills have.
+        local fill = bar:CreateTexture(nil, "BACKGROUND", nil, 1)
+        fill:SetAllPoints(bar)
+        fill:SetTexture(Style.FLAT_TEXTURE)
+        fill:SetVertexColor(COLOR[1], COLOR[2], COLOR[3], 1)
         local sheen = bar:CreateTexture(nil, "BACKGROUND", nil, 2)
         sheen:SetTexture(Style.FLAT_TEXTURE)
         sheen:SetPoint("TOPLEFT", bar, "TOPLEFT")
@@ -391,7 +372,8 @@ do -- private scope
     local anchor = CreateFrame("Frame", nil, NS.holder)
     anchor:SetSize(1, 1)
     local container          -- nil: not made yet; false: this client has none
-    local placedFor          -- "up:3" - what the anchor was last placed for
+    -- What the anchor was last placed for (nil slots: not since a refresh).
+    local placedSlots, placedDown, placedHeight
     Durations.anchor = anchor
 
     local function GrowsDown() return NS.db.growDirection == "down" end
@@ -439,10 +421,9 @@ do -- private scope
     function Durations.Follow(slots)
         local db = NS.db
         local down = GrowsDown()
-        local instant = placedFor == nil
-        local key = (down and "down:" or "up:") .. slots .. ":" .. db.barHeight
-        if key == placedFor then return end
-        placedFor = key
+        local instant = placedSlots == nil
+        if slots == placedSlots and down == placedDown and db.barHeight == placedHeight then return end
+        placedSlots, placedDown, placedHeight = slots, down, db.barHeight
         local offset = slots * (db.barHeight + GAP)
         if down then
             NS.SlideTo(anchor, "TOPLEFT", -offset, instant)
@@ -453,7 +434,7 @@ do -- private scope
 
     function Durations.Refresh()
         for entry in pairs(hasCooldown) do hasCooldown[entry] = nil end
-        placedFor = nil
+        placedSlots = nil
         MapRanks()
         local ids, any = Durations.SpellIDs()
 

@@ -4,7 +4,7 @@
 -- own window, 2026-09-29).
 --
 --   +------------------------------------------------------------------+
---   | [icon] Dog's Forever UI              [Unlock UI] [Reset all] [x] |  header: drag to move
+--   | [icon] Dog's Forever UI  [Quick Keybinds] [Unlock UI] [Reset all] [x] |  header: drag to move
 --   +------------+-----------------------------------------------------+
 --   | Unit frames|  Unit frames                                        |
 --   | Castbars   |  +-----------------------------------------------+  |
@@ -25,6 +25,14 @@
 -- not plain to see (a profile saved, an ID refused) shows in a toast at the
 -- foot of the window. Esc or the cross closes it; the header drags it.
 --
+-- THE LOOK (the player, 2026-10-10: "more 2026 modern, similar to EllesmereUI
+-- ... reflect the MMORPG concept"): EllesmereUI's layout - a darker sidebar
+-- whose picked entry has a gold bar and a gold light fading off it, rows
+-- told apart by stripes, neutral outlines with the gold as the one accent -
+-- in a game window's dress: the frames' gold border, a gold light from the
+-- top, gold headings each with a rule running off it, and an ornamental gold
+-- line under the header, brightest in the middle.
+--
 -- The window is built the first time it is opened. Pages.lua describes what
 -- is on the page; Widgets.lua draws the controls; this file lays them out.
 
@@ -39,21 +47,27 @@ do -- private scope
     local TITLE = Core.TITLE
     local PANEL_NAME = Core.ADDON_NAME .. "Options"
 
-    local WIDTH, HEIGHT = 880, 620
-    local HEADER = 52
-    local SIDEBAR = 190
-    local PAD = 28                  -- the page's margins, left and right
+    local WIDTH, HEIGHT = 920, 640
+    local HEADER = 60
+    local SIDEBAR = 210
+    local PAD = 32                  -- the page's margins, left and right
     local GUTTER = 14               -- room for the scrollbar
     local INSET = 4                 -- so a card's outline is not cut off
     local CONTENT_WIDTH = WIDTH - SIDEBAR - 2 * PAD - GUTTER - 2 * INSET
-    local CARD_PAD = 16             -- inside a card, left and right
-    local ROW_MIN = 46
+    local CARD_PAD = 20             -- inside a card, left and right
+    local ROW_MIN = 50
     local TOP_PAD = 20
-    local SECTION_GAP = 34
-    local NAV_ROW = 32
+    local HEADING = 30              -- a section's heading, down to its note
+    local SECTION_GAP = 36
+    local NAV_ROW = 36
+    local BUTTON_HEIGHT = 28        -- the header's
     local SEPARATOR = { 1, 1, 1, 0.06 }
-    local BACKGROUND = { Style.BACKGROUND_COLOR[1], Style.BACKGROUND_COLOR[2],
-                         Style.BACKGROUND_COLOR[3], 0.96 }
+    -- Every other row a shade lighter, EllesmereUI's way of telling rows
+    -- apart without a line between each.
+    local STRIPE = { 1, 1, 1, 0.025 }
+    local SIDEBAR_SHADE = { 0, 0, 0, 0.3 }
+    local GLOW = 0.08               -- the gold light at the window's top
+    local BACKGROUND = Style.WINDOW_BACKGROUND
 
     local window, content, scrollFrame, scroller
     local refreshers = {}
@@ -64,6 +78,11 @@ do -- private scope
 
     local function Refresh()
         for index = 1, #refreshers do refreshers[index]() end
+    end
+
+    -- The gold at `alpha`, for the window's fading lights and rules.
+    local function Gold(alpha)
+        return CreateColor(W.GOLD[1], W.GOLD[2], W.GOLD[3], alpha)
     end
 
     local function Register(refresh)
@@ -130,7 +149,7 @@ do -- private scope
             section.top = y
             section.heading:ClearAllPoints()
             section.heading:SetPoint("TOPLEFT", content, "TOPLEFT", INSET, -y)
-            y = y + 22
+            y = y + HEADING
             if section.note then
                 section.note:ClearAllPoints()
                 section.note:SetPoint("TOPLEFT", content, "TOPLEFT", INSET, -y)
@@ -147,7 +166,7 @@ do -- private scope
                 row:ClearAllPoints()
                 row:SetPoint("TOPLEFT", card, "TOPLEFT", 0, -inside)
                 row:SetHeight(height)
-                row.separator:SetShown(index > 1)
+                row.stripe:SetShown(index % 2 == 0)
                 inside = inside + height
             end
             card:SetHeight(math.max(1, inside))
@@ -157,11 +176,11 @@ do -- private scope
         if scroller then scroller.Update() end
         W.SnapBorders()
     end
-    Options.Relayout = Relayout
 
     local function AddRow(section, row)
         row:SetWidth(CONTENT_WIDTH)
-        row.separator = W.Hairline(row, SEPARATOR, 0, CARD_PAD, CARD_PAD)
+        row.stripe = W.Flat(row, "BACKGROUND", STRIPE, -1)
+        row.stripe:SetAllPoints(row)
         section.rows[#section.rows + 1] = row
         return row
     end
@@ -178,8 +197,13 @@ do -- private scope
 
     function Page:Section(title, note)
         local section = { title = title, rows = {} }
-        section.heading = W.Text(content, 16, W.TEXT, true)
+        section.heading = W.Text(content, 17, W.GOLD, true)
         section.heading:SetText(title)
+        -- A rule running off the heading to the page's edge, fading out.
+        local rule = W.Flat(content, "ARTWORK", W.GOLD)
+        rule:SetPoint("LEFT", section.heading, "RIGHT", 12, 0)
+        rule:SetSize(math.max(0, CONTENT_WIDTH - (section.heading:GetStringWidth() or 0) - 12), W.Pixel(content))
+        rule:SetGradient("HORIZONTAL", Gold(0.45), Gold(0))
         if note then
             section.note = W.Text(content, 12, W.MUTED, false, CONTENT_WIDTH)
             section.note:SetText(note)
@@ -200,7 +224,7 @@ do -- private scope
     -- the right. `clickable`: the whole row presses the control.
     local function SettingRow(page, label, description, controlWidth, clickable)
         local row = CreateFrame(clickable and "Button" or "Frame", nil, page.section.card)
-        row.hover = W.Flat(row, "BACKGROUND", { 1, 1, 1, 0.035 })
+        row.hover = W.Flat(row, "BACKGROUND", W.WASH)
         row.hover:SetAllPoints(row)
         row.hover:Hide()
         if clickable then
@@ -210,10 +234,10 @@ do -- private scope
         end
 
         local textWidth = CONTENT_WIDTH - 2 * CARD_PAD - controlWidth - 24
-        row.label = W.Text(row, 13, W.TEXT)
+        row.label = W.Text(row, 14, W.TEXT)
         row.label:SetWidth(textWidth)
         row.label:SetText(label)
-        row.label:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, description and -13 or -16)
+        row.label:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, description and -14 or -18)
         if description then
             row.description = W.Text(row, 12, W.MUTED, false, textWidth)
             row.description:SetText(description)
@@ -221,7 +245,7 @@ do -- private scope
             row.description:SetPoint("TOPRIGHT", row.label, "BOTTOMLEFT", textWidth, -4)
         end
         function row.Measure()
-            local height = 13 + (row.label:GetStringHeight() or 14) + 13
+            local height = 14 + (row.label:GetStringHeight() or 14) + 14
             if row.description then height = height + 4 + W.FitText(row.description) end
             return math.max(ROW_MIN, height)
         end
@@ -250,21 +274,21 @@ do -- private scope
             if not pair or pair.count == 2 then
                 pair = CreateFrame("Frame", nil, self.section.card)
                 pair.count = 0
-                function pair.Measure() return 40 end
+                function pair.Measure() return 44 end
                 AddRow(self.section, pair)
                 self.pair = pair
             end
             local half = (CONTENT_WIDTH - 2 * CARD_PAD) / 2
             local cell = CreateFrame("Button", nil, pair)
-            cell:SetSize(half - 12, 32)
+            cell:SetSize(half - 12, 34)
             cell:SetPoint("LEFT", pair, "LEFT", CARD_PAD + pair.count * (half + 12) - 6, 0)
             cell:RegisterForClicks("LeftButtonUp")
-            cell.hover = W.Flat(cell, "BACKGROUND", { 1, 1, 1, 0.035 })
+            cell.hover = W.Flat(cell, "BACKGROUND", W.WASH)
             cell.hover:SetAllPoints(cell)
             cell.hover:Hide()
             cell:SetScript("OnEnter", function(me) me.hover:Show() end)
             cell:SetScript("OnLeave", function(me) me.hover:Hide() end)
-            cell.label = W.Text(cell, 13, W.TEXT)
+            cell.label = W.Text(cell, 14, W.TEXT)
             cell.label:SetPoint("LEFT", cell, "LEFT", 6, 0)
             cell.label:SetText(entry.label)
             toggle = W.Toggle(cell, Get, Set)
@@ -322,102 +346,14 @@ do -- private scope
         return slider
     end
 
-    -- ROWS OF BOXES: the element's name, then its number boxes, each with a
-    -- small title over it. A typed size or position is the player's: a bar
-    -- the addon was placing itself (autoPlaced) stays where it now is, and
-    -- `placed` names the flag that says a unit frame has been placed.
-    -- box = { key, title, min, max, decimals, onChange(old, new), placed,
-    --         keepsPlacement }: onChange runs before the redraw - a width that
-    -- keeps its bar centred moves the bar with it.
-    --
-    -- The columns, left to right: the name (LABEL_WIDTH, never wrapped), up to
-    -- MAX_BOXES boxes, then - right-aligned, so every row's layer lines up -
-    -- the layer. Worked out so the widest row still leaves LAYER_GAP clear
-    -- before the layer (an earlier layout put the unit frames' fourth box
-    -- under the layer dropdown).
-    local LABEL_WIDTH = 116
-    local BOX_WIDTH, BOX_STEP = 60, 70
-    local BOX_X = CARD_PAD + LABEL_WIDTH + 8
-    local MAX_BOXES = 4
-    local LAYER_WIDTH, LAYER_GAP = 132, 40
-    local BOX_ROW = 62
-    local BOX_TOP = -28
-    assert(BOX_X + (MAX_BOXES - 1) * BOX_STEP + BOX_WIDTH + LAYER_GAP
-        <= CONTENT_WIDTH - CARD_PAD - LAYER_WIDTH, "the size rows do not fit")
-
-    -- `get(db)` / `set(db, value)`, optional: a box whose number is worked out
-    -- from a saved one rather than being it (the swing bars' Y, saved from
-    -- the bottom of the screen since they grow upwards).
-    local function Box(page, module, row, entry, x)
-        local db = module.db
-        local function Get()
-            if entry.get then return entry.get(db) end
-            return db[entry.key]
-        end
-        local box = W.NumberBox(row, PANEL_NAME .. module.key .. entry.key, BOX_WIDTH,
-            Get,
-            function(value)
-                local old = Get()
-                if entry.set then entry.set(db, value) else db[entry.key] = value end
-                if entry.onChange then entry.onChange(old, value) end
-                if entry.placed then db[entry.placed] = true end
-                if db.autoPlaced ~= nil and not entry.keepsPlacement then db.autoPlaced = false end
-                page:Changed(module)
-            end,
-            { min = entry.min, max = entry.max, decimals = entry.decimals })
-        box:SetPoint("TOPLEFT", row, "TOPLEFT", x, BOX_TOP)
-        local title = W.Text(row, 11, W.MUTED)
-        title:SetPoint("BOTTOMLEFT", box, "TOPLEFT", 1, 4)
-        title:SetText(entry.title)
-        Register(box.Refresh)
-        return box
-    end
-
-    -- row = { module, label, boxes = { box, ... } }
-    function Page:Row(spec)
-        self.pair = nil
-        local row = CreateFrame("Frame", nil, self.section.card)
-        function row.Measure() return BOX_ROW end
-        row.label = W.Text(row, 13, W.TEXT)
-        row.label:SetWidth(LABEL_WIDTH)
-        row.label:SetPoint("LEFT", row, "TOPLEFT", CARD_PAD, BOX_TOP - W.CONTROL_HEIGHT / 2)
-        row.label:SetText(spec.label)
-        assert(#spec.boxes <= MAX_BOXES, "more boxes than a row has room for")
-        row.boxes = {}
-        for index, entry in ipairs(spec.boxes) do
-            row.boxes[index] = Box(self, spec.module, row, entry, BOX_X + (index - 1) * BOX_STEP)
-        end
-        AddRow(self.section, row)
-        return row
-    end
-
-    -- A size row: a row of boxes, and the element's layer at its end.
+    -- The layers a piece can be drawn in, for its Layer choice in Unlock
+    -- Mode's menus (Options\Unlock.lua).
     local STRATA = {}
     for _, value in ipairs({ "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG",
                              "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP" }) do
         STRATA[#STRATA + 1] = { value = value, label = value:sub(1, 1) .. value:sub(2):lower():gsub("_d", " d") }
     end
     Options.STRATA = STRATA
-
-    -- spec.layerKey: the setting the layer is kept in (frameStrata unless said).
-    function Page:SizeRow(spec)
-        local row = self:Row(spec)
-        local module, db = spec.module, spec.module.db
-        local layerKey = spec.layerKey or "frameStrata"
-        local layer = W.Dropdown(row, LAYER_WIDTH, STRATA,
-            function() return db[layerKey] end,
-            function(value)
-                db[layerKey] = value
-                self:Changed(module)
-            end)
-        layer:SetPoint("TOPRIGHT", row, "TOPRIGHT", -CARD_PAD, BOX_TOP)
-        local title = W.Text(row, 11, W.MUTED)
-        title:SetPoint("BOTTOMLEFT", layer, "TOPLEFT", 1, 4)
-        title:SetText("Layer")
-        row.layer = layer
-        Register(layer.Refresh)
-        return row
-    end
 
     ---------------------------------------------------------------------------
     -- LISTS the player builds: a box and a button to add, then a line per
@@ -435,7 +371,7 @@ do -- private scope
         local line = CreateFrame("Frame", nil, parent)
         line:SetSize(CONTENT_WIDTH, ENTRY)
         line:EnableMouse(true)
-        line.hover = W.Flat(line, "BACKGROUND", { 1, 1, 1, 0.035 })
+        line.hover = W.Flat(line, "BACKGROUND", W.WASH)
         line.hover:SetAllPoints(line)
         line.hover:Hide()
         line:SetScript("OnEnter", function(self) self.hover:Show() end)
@@ -645,6 +581,7 @@ do -- private scope
             if button then
                 button.selected = entry == section
                 button.accent:SetShown(button.selected)
+                button.glow:SetShown(button.selected)
                 W.PaintButton(button)
             end
         end
@@ -673,30 +610,35 @@ do -- private scope
         SetActive(section)
         scroller.ScrollTo((section.top or 0) - TOP_PAD)
     end
-    Options.GoTo = GoTo
 
     local function BuildSidebar()
         local sidebar = CreateFrame("Frame", nil, window)
         sidebar:SetPoint("TOPLEFT", window, "TOPLEFT", 0, -HEADER)
         sidebar:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", 0, 0)
         sidebar:SetWidth(SIDEBAR)
-        local bg = W.Flat(sidebar, "BACKGROUND", { 1, 1, 1, 0.025 })
+        local bg = W.Flat(sidebar, "BACKGROUND", SIDEBAR_SHADE)
         bg:SetAllPoints(sidebar)
         local rule = W.Flat(sidebar, "ARTWORK", W.FAINT)
         rule:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
         rule:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 0)
         rule:SetWidth(W.Pixel(sidebar))
 
+        -- Each entry the sidebar's full width: the picked one's gold bar on
+        -- its left edge, a gold light fading off it to the right.
         for index, section in ipairs(sections) do
-            local button = W.Button(sidebar, section.title, SIDEBAR - 16, function() GoTo(section) end, "flat")
-            button:SetHeight(NAV_ROW - 2)
-            button:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 8, -14 - (index - 1) * NAV_ROW)
+            local button = W.Button(sidebar, section.title, SIDEBAR, function() GoTo(section) end, "nav")
+            button:SetHeight(NAV_ROW)
+            button:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 0, -16 - (index - 1) * NAV_ROW)
             button.label:ClearAllPoints()
-            button.label:SetPoint("LEFT", button, "LEFT", 16, 0)
-            button.label:SetFont(Style.FONT, 13, "")
+            button.label:SetPoint("LEFT", button, "LEFT", 24, 0)
+            button.label:SetFont(Style.FONT, 14, "")
+            button.glow = W.Flat(button, "BORDER", W.GOLD)
+            button.glow:SetAllPoints(button)
+            button.glow:SetGradient("HORIZONTAL", Gold(0.15), Gold(0))
+            button.glow:Hide()
             button.accent = W.Flat(button, "ARTWORK", W.GOLD)
-            button.accent:SetPoint("TOPLEFT", button, "TOPLEFT", 0, -6)
-            button.accent:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 6)
+            button.accent:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+            button.accent:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 0)
             button.accent:SetWidth(3)
             button.accent:Hide()
             button.section = section
@@ -713,7 +655,6 @@ do -- private scope
             text:SetPoint("BOTTOMLEFT", sidebar, "BOTTOMLEFT", 24, 16)
             text:SetText("Version " .. version)
         end
-        window.sidebar = sidebar
     end
 
     ---------------------------------------------------------------------------
@@ -743,21 +684,33 @@ do -- private scope
             window:StopMovingOrSizing()
             W.SnapBorders()
         end)
-        local rule = W.Flat(header, "ARTWORK", W.FAINT)
-        rule:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
-        rule:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, 0)
-        rule:SetHeight(W.Pixel(header))
+        -- A gold light from the top, as off a lantern over the window.
+        local glow = W.Flat(header, "BACKGROUND", W.GOLD)
+        glow:SetAllPoints(header)
+        glow:SetGradient("VERTICAL", Gold(0), Gold(GLOW))
+        -- The rule under it, gold and brightest in the middle: two halves,
+        -- each fading out towards its end.
+        for index, point in ipairs({ "BOTTOMLEFT", "BOTTOMRIGHT" }) do
+            local half = W.Flat(header, "ARTWORK", W.GOLD)
+            half:SetPoint(point, header, point, 0, 0)
+            half:SetSize(WIDTH / 2, W.Pixel(header))
+            if index == 1 then
+                half:SetGradient("HORIZONTAL", Gold(0), Gold(0.6))
+            else
+                half:SetGradient("HORIZONTAL", Gold(0.6), Gold(0))
+            end
+        end
 
         local icon = header:CreateTexture(nil, "ARTWORK")
         icon:SetTexture(Core.MEDIA .. "icon")
-        icon:SetSize(24, 24)
-        icon:SetPoint("LEFT", header, "LEFT", 18, 0)
-        local title = W.Text(header, 16, W.GOLD, true)
-        title:SetPoint("LEFT", icon, "RIGHT", 10, 0)
+        icon:SetSize(30, 30)
+        icon:SetPoint("LEFT", header, "LEFT", 20, 0)
+        local title = W.Text(header, 18, W.GOLD, true)
+        title:SetPoint("LEFT", icon, "RIGHT", 12, 0)
         title:SetText(TITLE)
 
-        local close = W.IconButton(header, "close", 28, Options.Close)
-        close:SetPoint("RIGHT", header, "RIGHT", -12, 0)
+        local close = W.IconButton(header, "close", 30, Options.Close)
+        close:SetPoint("RIGHT", header, "RIGHT", -14, 0)
         window.closeButton = close
 
         local reset = W.TwoStep(header, "Reset everything", "Really reset?", 140, function()
@@ -768,26 +721,43 @@ do -- private scope
             end
             Refresh()
         end)
+        reset:SetHeight(BUTTON_HEIGHT)
         reset:SetPoint("RIGHT", close, "LEFT", -12, 0)
         W.Tooltip(reset, "Reset everything",
             "Every setting, size and position back to its default. Your cooldown list and your profiles stay.")
         window.resetButton = reset
 
         local unlock = W.Button(header, UNLOCK_LABEL, 110, function()
-            if not Core.ToggleUnlocked() then
-                Options.Say(false, "The UI cannot be unlocked in combat.")
-            end
+            Core.ToggleUnlocked()
             Refresh()
-        end)
+        end, "primary")
+        unlock:SetHeight(BUTTON_HEIGHT)
         unlock:SetPoint("RIGHT", reset, "LEFT", -8, 0)
-        W.Tooltip(unlock, "Unlock UI",
-            "Drag anything on screen to move it; a grid shows to line things up. Right-click any of it, or click here again, to lock.")
+        -- Unlock Mode, the addon's own (DogsForeverUI.lua, Core\Snap.lua,
+        -- Options\Unlock.lua): this window makes way for it and comes back
+        -- after. The game's own frames are moved in the game's Edit Mode, from
+        -- the box over each in Unlock Mode. No tooltip: the name says it.
         Register(function()
             local unlocked = Core.IsUnlocked()
             W.SetLabel(unlock, unlocked and LOCK_LABEL or UNLOCK_LABEL)
-            W.SetStyle(unlock, unlocked and "active" or nil)
+            W.SetStyle(unlock, unlocked and "active" or "primary")
         end)
         window.unlockButton = unlock
+
+        -- QUICK KEYBINDS, beside Unlock UI (the player, 2026-10-03: "add
+        -- quick keybind button directly to main menu next to unlock ui to
+        -- quick access"): this window makes way for it and comes back after
+        -- (Options\Keybinds.lua).
+        local keybinds = W.Button(header, "Quick Keybinds", 130, function()
+            if InCombatLockdown() then
+                Options.Say(false, "Keys cannot be bound in combat.")
+                return
+            end
+            if Options.Keybinds then Options.Keybinds.Open() end
+        end)
+        keybinds:SetHeight(BUTTON_HEIGHT)
+        keybinds:SetPoint("RIGHT", unlock, "LEFT", -8, 0)
+        window.keybindsButton = keybinds
     end
 
     ---------------------------------------------------------------------------

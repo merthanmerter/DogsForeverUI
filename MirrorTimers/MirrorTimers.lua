@@ -28,7 +28,7 @@ DogsForeverUI.MirrorTimers = MirrorTimers
 do -- private scope
 
     local Style = DogsForeverUI.Style
-    local IsSecret = issecretvalue or function() return false end
+    local IsSecret = issecretvalue
 
     -- The game's bar's width (MirrorTimer.xml), and the castbar's height, so
     -- the label fits inside the bar rather than in a box under it.
