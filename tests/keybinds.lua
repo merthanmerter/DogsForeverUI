@@ -4,7 +4,7 @@
 -- button, where the game will not take the wheel on the command), Escape
 -- taking the first key off as the game's does; every change saved at once
 -- (a quit keeps it), Cancel putting back exactly what the mode changed. And a
--- key pressed showing on the addon's button (ActionBars\Paint.lua).
+-- key pressed showing on the addon's button (ActionBars\ActionBars.lua).
 local ADDON_PATH, TOC_TEXT = ...
 assert(loadfile(ADDON_PATH .. "/tests/wow.lua"))(ADDON_PATH, TOC_TEXT)
 

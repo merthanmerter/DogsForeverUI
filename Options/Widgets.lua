@@ -1,32 +1,13 @@
--- The options window's controls, drawn in the frames' look rather than taken
--- from the game's templates: the same flat fills with their sheen, the same
--- dark background (Core\Style.lua), a plain neutral line inside each
--- control's edges (W.Border) and the addon's font. The gold is the accent:
--- what is on, picked, focused or the main action.
---
---   Button      a flat button; states: normal, primary (gold outline),
---               active (gold), armed (red), flat, nav (the sidebar's)
---   TwoStep     a button that asks first: one click arms it, the next acts
---   Toggle      an on/off switch: a small bar that fills gold, knob at its end
---   Slider      a bar that fills gold to the value, with a thumb
---   NumberBox   a box for a number: Enter or leaving it keeps the number,
---               Esc puts the old one back, Tab goes on to the next box
---   TextBox     a box for a name or an ID
---   Segmented   a few choices side by side, the picked one gold
---   Dropdown    a longer list of choices, opened under the button
---   Card        the panel a section's settings sit on
---   Glyph       the two drawn marks: a close cross and a chevron
---
--- Every control takes `get` and `set` where it shows a setting, and has a
--- Refresh() that shows what `get` says now. No control writes a setting on
--- its own refresh.
+-- The options' controls, drawn in the frames' look (Core\Style.lua) rather
+-- than the game's templates; gold is the one accent. Every control showing a
+-- setting takes `get`/`set` and has a Refresh() that never writes it.
 
 local W = {}
 DogsForeverUI.Widgets = W
 
 do -- private scope
     local Style = DogsForeverUI.Style
-    local FLAT = Style.FLAT_TEXTURE
+    local CursorY = DogsForeverUI.CursorY
 
     W.GOLD = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3], 1 }
     W.TEXT = { 0.94, 0.94, 0.94, 1 }
@@ -41,43 +22,40 @@ do -- private scope
     W.HOVER = { 1, 1, 1, 0.10 }
     W.PRESSED = { 1, 1, 1, 0.03 }
     W.TRACK = { 0.16, 0.16, 0.17, 1 }
-    -- The gold, faint: a row under the mouse, a picked entry's glow.
     W.WASH = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3], 0.06 }
-    -- Outline colours, neutral, so the gold is the one accent (EllesmereUI's
-    -- way: white lines, its accent only where something is on or picked) -
-    -- and OPAQUE, so nothing under a line can show through and make one side
-    -- of an outline look different from another.
-    W.LINE = { 0.25, 0.25, 0.26, 1 }            -- a control's outline
-    W.LINE_HOVER = { 0.42, 0.42, 0.43, 1 }      -- under the mouse
-    W.FAINT = { 0.14, 0.14, 0.15, 1 }           -- a card's, and the rules
+    -- Outlines neutral and opaque, so no side of one looks different.
+    W.LINE = { 0.25, 0.25, 0.26, 1 }
+    W.LINE_HOVER = { 0.42, 0.42, 0.43, 1 }
+    W.FAINT = { 0.14, 0.14, 0.15, 1 }
     W.FOCUS = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3], 1 }
     W.KNOB_LINE = { 0.02, 0.02, 0.02, 1 }
 
     W.CONTROL_HEIGHT = 24
+    W.TOGGLE_WIDTH = 40
+    local TOGGLE_HEIGHT = 20
+    local ARM_TIME = 4
 
     ---------------------------------------------------------------------------
-    -- Pieces.
+    -- Pieces
     ---------------------------------------------------------------------------
-
-    function W.Flat(parent, layer, colour, sublevel)
-        local texture = parent:CreateTexture(nil, layer, nil, sublevel)
-        texture:SetTexture(FLAT)
-        W.Colour(texture, colour)
-        return texture
-    end
 
     function W.Colour(texture, colour)
         texture:SetVertexColor(colour[1], colour[2], colour[3], colour[4] or 1)
     end
 
-    -- Text in the addon's font. One line unless `width` is given, then it
-    -- wraps to that width (give such text two anchors, left and right, too,
-    -- and FitText it).
-    --
-    -- No drop shadow: on the window's dark background it adds nothing, and
-    -- one UI unit of shadow is not a whole number of pixels at most UI
-    -- scales - it smeared the letters' edges, which read as text drawn
-    -- without anti-aliasing.
+    function W.SetTextColour(text, colour)
+        text:SetTextColor(colour[1], colour[2], colour[3], colour[4] or 1)
+    end
+
+    function W.Flat(parent, layer, colour, sublevel)
+        local texture = parent:CreateTexture(nil, layer, nil, sublevel)
+        texture:SetTexture(Style.FLAT_TEXTURE)
+        W.Colour(texture, colour)
+        return texture
+    end
+
+    -- One line, or wrapped to `width` (then anchor both sides and FitText it).
+    -- No shadow: a fraction of a pixel off, it smeared the letters.
     function W.Text(parent, size, colour, bold, width)
         local text = parent:CreateFontString(nil, "OVERLAY")
         if bold then
@@ -86,91 +64,60 @@ do -- private scope
             text:SetFont(Style.FONT, size, "")
         end
         text:SetShadowOffset(0, 0)
-        colour = colour or W.TEXT
-        text:SetTextColor(colour[1], colour[2], colour[3], colour[4] or 1)
+        W.SetTextColour(text, colour or W.TEXT)
         text:SetJustifyH("LEFT")
-        if width then
-            text:SetWidth(width)
-            text:SetWordWrap(true)
-        else
-            text:SetWordWrap(false)
-        end
+        text:SetWordWrap(width ~= nil)
+        if width then text:SetWidth(width) end
         return text
     end
 
-    -- Wrapped text laid out for sure: pinned left and right, so its width is
-    -- the anchors' and not a guess, and as tall as its lines. A width alone
-    -- let a last word drop out of sight (a description ended at "smaller"
-    -- with its "text." gone). Answers the height.
+    -- Wrapped text as tall as its lines, so no last word drops out of sight.
     function W.FitText(text)
         local height = text:GetStringHeight() or 0
         if height > 0 then text:SetHeight(height) end
         return height
     end
 
-    function W.SetTextColour(text, colour)
-        text:SetTextColor(colour[1], colour[2], colour[3], colour[4] or 1)
-    end
+    W.Pixel = Style.OnePixel
 
-    ---------------------------------------------------------------------------
-    -- A CONTROL'S OUTLINE: four plain lines just INSIDE its edges, on a thin
-    -- frame over it (so nothing the control holds - a gold fill, a picked
-    -- segment - is drawn over them). Each line a whole number of pixels thick
-    -- (PixelUtil, the game's own), at least one; square corners; opaque.
-    --
-    -- Not the frames' drawn border (Style.AddBorder): in the options window,
-    -- round boxes and buttons, that came out with some sides missing or dim
-    -- and others bright, and neither pixel-snapping it nor thicker lines put
-    -- it right. The frames themselves keep it; the window wears it too.
-    ---------------------------------------------------------------------------
-
-    local SIDES = { "top", "bottom", "left", "right" }
+    -- A control's outline: four opaque lines just inside its edges, each a
+    -- whole number of pixels, on a frame over it. (Style.AddBorder lost
+    -- sides on the window's small boxes.)
+    -- Each side between two corners; the upright ones stop short of top and
+    -- bottom, so no pixel is drawn twice.
+    local SIDES = {
+        { key = "top", "TOPLEFT", "TOPRIGHT" },
+        { key = "bottom", "BOTTOMLEFT", "BOTTOMRIGHT" },
+        { key = "left", "TOPLEFT", "BOTTOMLEFT", upright = true },
+        { key = "right", "TOPRIGHT", "BOTTOMRIGHT", upright = true },
+    }
     local outlines = setmetatable({}, { __mode = "k" })
 
-    -- One UI unit, to the nearest whole pixel and at least one - and a hair
-    -- over, so a line exactly a pixel thick can never round away to none.
-    local function Thickness(frame)
-        if PixelUtil and PixelUtil.GetNearestPixelSize and frame.GetEffectiveScale then
-            local scale = frame:GetEffectiveScale()
-            if type(scale) == "number" and scale > 0 then
-                return PixelUtil.GetNearestPixelSize(1, scale, 1) * 1.01
-            end
+    local function LayOut(outline)
+        local edge = outline.edge
+        -- A hair over, so a one-pixel line never rounds away.
+        local thick = W.Pixel(edge) * 1.01
+        for _, side in ipairs(SIDES) do
+            local line, inset = outline[side.key], side.upright and thick or 0
+            line:ClearAllPoints()
+            line:SetPoint(side[1], edge, side[1], 0, -inset)
+            line:SetPoint(side[2], edge, side[2], 0, inset)
+            if side.upright then line:SetWidth(thick) else line:SetHeight(thick) end
         end
-        return 1
     end
 
-    local function LayOut(outline)
-        local edge, thick = outline.edge, Thickness(outline.edge)
-        local top, bottom, left, right = outline.top, outline.bottom, outline.left, outline.right
-        top:ClearAllPoints()
-        top:SetPoint("TOPLEFT", edge, "TOPLEFT", 0, 0)
-        top:SetPoint("TOPRIGHT", edge, "TOPRIGHT", 0, 0)
-        top:SetHeight(thick)
-        bottom:ClearAllPoints()
-        bottom:SetPoint("BOTTOMLEFT", edge, "BOTTOMLEFT", 0, 0)
-        bottom:SetPoint("BOTTOMRIGHT", edge, "BOTTOMRIGHT", 0, 0)
-        bottom:SetHeight(thick)
-        -- The sides between the top and the bottom, so no pixel is drawn twice.
-        left:ClearAllPoints()
-        left:SetPoint("TOPLEFT", edge, "TOPLEFT", 0, -thick)
-        left:SetPoint("BOTTOMLEFT", edge, "BOTTOMLEFT", 0, thick)
-        left:SetWidth(thick)
-        right:ClearAllPoints()
-        right:SetPoint("TOPRIGHT", edge, "TOPRIGHT", 0, -thick)
-        right:SetPoint("BOTTOMRIGHT", edge, "BOTTOMRIGHT", 0, thick)
-        right:SetWidth(thick)
-        outline.thick = thick
+    function W.TintBorder(outline, colour)
+        outline.colour = colour
+        for _, side in ipairs(SIDES) do W.Colour(outline[side.key], colour) end
     end
 
     function W.Border(frame, colour)
         local edge = CreateFrame("Frame", nil, frame)
         edge:SetAllPoints(frame)
         edge:SetFrameLevel(frame:GetFrameLevel() + 8)
-        local outline = { frame = frame, edge = edge }
+        local outline = { edge = edge }
         for _, side in ipairs(SIDES) do
-            local line = edge:CreateTexture(nil, "OVERLAY", nil, 7)
-            line:SetTexture(FLAT)
-            outline[side] = line
+            outline[side.key] = W.Flat(edge, "OVERLAY", W.LINE, 7)
         end
         LayOut(outline)
         W.TintBorder(outline, colour or W.LINE)
@@ -178,13 +125,13 @@ do -- private scope
         return outline
     end
 
-    -- An outline's lines in another colour: a box with the keyboard, say.
-    function W.TintBorder(outline, colour)
-        outline.colour = colour
-        for _, side in ipairs(SIDES) do W.Colour(outline[side], colour) end
+    -- A plain `colour` behind `frame`, and an outline (`line`) on it.
+    local function Backdrop(frame, colour, line)
+        frame.bg = W.Flat(frame, "BACKGROUND", colour)
+        frame.bg:SetAllPoints(frame)
+        frame.border = W.Border(frame, line)
     end
 
-    -- A new UI scale: every line a whole number of pixels again.
     local rescale = CreateFrame("Frame")
     rescale:RegisterEvent("UI_SCALE_CHANGED")
     rescale:RegisterEvent("DISPLAY_SIZE_CHANGED")
@@ -192,9 +139,7 @@ do -- private scope
         for outline in pairs(outlines) do LayOut(outline) end
     end)
 
-    -- The window's own border is the frames' (Style.AddBorder); its edges are
-    -- put on whole pixels (Style.SnapBorder) whenever the window is shown or
-    -- moved.
+    -- Windows wearing Style.AddBorder: put on whole pixels when shown or moved.
     local snapped = {}
     function W.KeepSnapped(border)
         snapped[#snapped + 1] = border
@@ -205,21 +150,7 @@ do -- private scope
         end
     end
 
-    -- The thickness of a thin line, in `region`'s units: the whole number of
-    -- real pixels nearest one UI unit, as the borders' lines (W.Border) - one
-    -- pixel alone can vanish.
-    function W.Pixel(region)
-        if PixelUtil and PixelUtil.GetPixelToUIUnitFactor and region.GetEffectiveScale then
-            local scale = region:GetEffectiveScale()
-            if type(scale) == "number" and scale > 0 then
-                local px = PixelUtil.GetPixelToUIUnitFactor() / scale
-                return math.max(1, math.floor(1 / px + 0.5)) * px
-            end
-        end
-        return 1
-    end
-
-    -- A hairline across `parent`: along its top edge, `y` down.
+    -- A hairline along `parent`'s top edge, `y` down.
     function W.Hairline(parent, colour, y, left, right)
         local line = W.Flat(parent, "ARTWORK", colour)
         line:SetPoint("TOPLEFT", parent, "TOPLEFT", left or 0, -(y or 0))
@@ -228,8 +159,7 @@ do -- private scope
         return line
     end
 
-    -- The two drawn marks, from two rotated strokes each: "close" (a cross,
-    -- `size` across) and "down" (a chevron). Answers the strokes.
+    -- Two rotated strokes: "close" (a cross) or "down" (a chevron).
     function W.Glyph(parent, kind, size, colour)
         local thick = math.max(1.2, W.Pixel(parent))
         local strokes = {}
@@ -240,11 +170,9 @@ do -- private scope
                 stroke:SetPoint("CENTER", parent, "CENTER", 0, 0)
                 stroke:SetRotation(math.rad(index == 1 and 45 or -45))
             else
-                -- The two halves of a "v", "\" and "/", meeting at the bottom.
                 local half = size * 0.55
                 stroke:SetSize(half, thick)
-                local x = (index == 1 and -1 or 1) * half * 0.35
-                stroke:SetPoint("CENTER", parent, "CENTER", x, 0)
+                stroke:SetPoint("CENTER", parent, "CENTER", (index == 1 and -1 or 1) * half * 0.35, 0)
                 stroke:SetRotation(math.rad(index == 1 and -45 or 45))
             end
             strokes[index] = stroke
@@ -264,12 +192,13 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- Buttons.
+    -- Buttons. Styles: normal, primary (gold outline), active (gold), armed
+    -- (red), flat, nav (the sidebar's).
     ---------------------------------------------------------------------------
 
     local CLEAR = { 0, 0, 0, 0 }
 
-    local function PaintButton(button)
+    function W.PaintButton(button)
         local style = button.style or "normal"
         local enabled = button:IsEnabled()
         local bg, text, line = W.RAISED, W.TEXT, W.LINE
@@ -282,7 +211,6 @@ do -- private scope
         elseif style == "flat" or style == "nav" then
             bg = CLEAR
         end
-        -- The sidebar's entries: grey until picked or pointed at.
         if style == "nav" and not button.selected then text = W.MUTED end
         if not enabled then
             text = W.DIM
@@ -300,19 +228,15 @@ do -- private scope
                 if style == "normal" then line = W.LINE_HOVER end
             end
         end
-        -- The picked item of a list in gold.
         if button.selected and enabled and style == "flat" then text = W.GOLD end
         W.Colour(button.bg, bg)
         if button.border then W.TintBorder(button.border, line) end
         if button.label then W.SetTextColour(button.label, text) end
-        if button.glyph then
-            for _, stroke in ipairs(button.glyph) do W.Colour(stroke, text) end
-        end
+        for _, stroke in ipairs(button.glyph or {}) do W.Colour(stroke, text) end
     end
-    W.PaintButton = PaintButton
+    local PaintButton = W.PaintButton
 
-    -- `onClick(button, mouseButton)`. The label is button.label; set it with
-    -- W.SetLabel.
+    -- `onClick(button, mouseButton)`.
     function W.Button(parent, label, width, onClick, style)
         local button = CreateFrame("Button", nil, parent)
         button:SetSize(width, W.CONTROL_HEIGHT)
@@ -348,8 +272,7 @@ do -- private scope
         PaintButton(button)
     end
 
-    -- A small square button with a drawn mark and no outline: the window's
-    -- close button, a list row's remove.
+    -- A square, outline-free button with a drawn mark.
     function W.IconButton(parent, kind, size, onClick)
         local button = W.Button(parent, nil, size, onClick, "flat")
         button:SetHeight(size)
@@ -358,19 +281,14 @@ do -- private scope
         return button
     end
 
-    -- A button that asks first: the first click arms it - red, its label
-    -- saying what the next click does - and a second within ARM_TIME acts.
-    -- `ask()` (optional) answers whether this click needs asking at all;
-    -- with none, every click does. button.press is the click, for a box whose
-    -- Enter should press it.
-    W.ARM_TIME = 4
-
+    -- One click arms it (red, `armedLabel`), a second within ARM_TIME acts.
+    -- `ask()` (optional) says whether this click needs arming at all.
+    -- button.press: the click, for a box whose Enter presses it.
     function W.TwoStep(parent, label, armedLabel, width, action, ask)
-        local restStyle
         local function Disarm(button)
             button.armed = false
             W.SetLabel(button, label)
-            W.SetStyle(button, restStyle)
+            W.SetStyle(button, nil)
         end
         local function Press(button)
             if not button.armed and (not ask or ask()) then
@@ -379,7 +297,7 @@ do -- private scope
                 W.SetStyle(button, "armed")
                 local token = (button.armedToken or 0) + 1
                 button.armedToken = token
-                C_Timer.After(W.ARM_TIME, function()
+                C_Timer.After(ARM_TIME, function()
                     if button.armed and button.armedToken == token then Disarm(button) end
                 end)
                 return
@@ -388,18 +306,15 @@ do -- private scope
             action(button)
         end
         local button = W.Button(parent, label, width, Press)
-        restStyle = button.style
         button.press = function() if button:IsEnabled() then Press(button) end end
         button.disarm = function() if button.armed then Disarm(button) end end
         return button
     end
 
     ---------------------------------------------------------------------------
-    -- The toggle: a small bar, dark when off, filled gold when on, a light
-    -- knob riding the end of the fill. It slides between the two.
+    -- The toggle: a bar that fills gold when on, its knob sliding along.
     ---------------------------------------------------------------------------
 
-    W.TOGGLE_WIDTH, W.TOGGLE_HEIGHT = 40, 20
     local KNOB = 14
     local SLIDE_TIME = 0.12
 
@@ -407,8 +322,7 @@ do -- private scope
         toggle.value = v
         toggle.track:SetValue(v)
         toggle.knob:ClearAllPoints()
-        local travel = W.TOGGLE_WIDTH - 6 - KNOB
-        toggle.knob:SetPoint("LEFT", toggle.track, "LEFT", 3 + v * travel, 0)
+        toggle.knob:SetPoint("LEFT", toggle.track, "LEFT", 3 + v * (W.TOGGLE_WIDTH - 6 - KNOB), 0)
         local shade = 0.62 + 0.38 * v
         W.Colour(toggle.knob, { shade, shade, shade, 1 })
     end
@@ -427,27 +341,24 @@ do -- private scope
     -- `set(on)` writes the setting; the caller refreshes.
     function W.Toggle(parent, get, set)
         local toggle = CreateFrame("Button", nil, parent)
-        toggle:SetSize(W.TOGGLE_WIDTH, W.TOGGLE_HEIGHT)
+        toggle:SetSize(W.TOGGLE_WIDTH, TOGGLE_HEIGHT)
         toggle:RegisterForClicks("LeftButtonUp")
 
         local track = CreateFrame("StatusBar", nil, toggle)
         track:SetAllPoints(toggle)
         track:SetMinMaxValues(0, 1)
-        local bg = W.Flat(track, "BACKGROUND", W.TRACK)
-        bg:SetAllPoints(track)
+        W.Flat(track, "BACKGROUND", W.TRACK):SetAllPoints(track)
         Style.Paint(track, W.GOLD)
         toggle.track = track
         toggle.knob = W.Flat(track, "OVERLAY", W.TEXT)
         toggle.knob:SetSize(KNOB, KNOB)
         toggle.border = W.Border(toggle)
 
-        toggle.get = get
         toggle:SetScript("OnClick", function() set(not get()) end)
         toggle:SetScript("OnEnter", function(self) W.TintBorder(self.border, W.FOCUS) end)
         toggle:SetScript("OnLeave", function(self) W.TintBorder(self.border, W.LINE) end)
 
-        -- Instantly the first time (and whenever the panel is not on screen);
-        -- sliding after that.
+        -- At once the first time and while unseen; sliding after.
         function toggle.Refresh()
             local target = get() and 1 or 0
             toggle.target = target
@@ -462,156 +373,12 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- The slider: a thin bar filled gold up to the value, a knob on it, and
-    -- the value written beside it.
-    --
-    -- The knob is a frame of its own, over everything else, drawn where the
-    -- value is. The slider's thumb - what the mouse drags - is invisible
-    -- under it, the same size, so it sits exactly where the knob is drawn. A
-    -- visible thumb could not be used: a thumb is one of the slider's own
-    -- textures, and the track (a child frame) and its border are drawn over
-    -- those, which cut a dark band through the middle of it.
+    -- Boxes. Tab walks them in the order they were made.
     ---------------------------------------------------------------------------
 
-    local KNOB_WIDTH, KNOB_HEIGHT = 12, 12
-    local KNOB_HOVER = { 1, 0.86, 0.55, 1 }
-    -- (The boxes' own, below - a slider's typed value is one of them.)
-    local NewBox, FocusNext
     local boxes = {}
 
-    -- spec = { min, max, step, text(value) -> string }
-    function W.Slider(parent, width, spec, get, set)
-        local slider = CreateFrame("Slider", nil, parent)
-        slider:SetSize(width, 18)
-        slider:SetOrientation("HORIZONTAL")
-        slider:SetMinMaxValues(spec.min, spec.max)
-        slider:SetValueStep(spec.step)
-        slider:SetObeyStepOnDrag(true)
-        slider:EnableMouse(true)
-
-        local track = CreateFrame("StatusBar", nil, slider)
-        track:SetPoint("LEFT", slider, "LEFT", 0, 0)
-        track:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
-        track:SetHeight(4)
-        track:SetMinMaxValues(spec.min, spec.max)
-        local bg = W.Flat(track, "BACKGROUND", W.TRACK)
-        bg:SetAllPoints(track)
-        Style.Paint(track, W.GOLD)
-        track.border = W.Border(track, W.FAINT)
-        slider.track = track
-
-        local thumb = slider:CreateTexture(nil, "OVERLAY")
-        thumb:SetColorTexture(0, 0, 0, 0)
-        thumb:SetSize(KNOB_WIDTH, KNOB_HEIGHT)
-        slider:SetThumbTexture(thumb)
-
-        -- Above the track's border, which is above the track.
-        local knob = CreateFrame("Frame", nil, slider)
-        knob:SetSize(KNOB_WIDTH, KNOB_HEIGHT)
-        knob:SetFrameLevel(track:GetFrameLevel() + 10)
-        knob.fill = W.Flat(knob, "ARTWORK", W.GOLD)
-        knob.fill:SetAllPoints(knob)
-        knob.border = W.Border(knob, W.KNOB_LINE)
-        slider.knob = knob
-        slider:SetScript("OnEnter", function() W.Colour(knob.fill, KNOB_HOVER) end)
-        slider:SetScript("OnLeave", function() W.Colour(knob.fill, W.GOLD) end)
-
-        -- The value beside it: written, or (spec.input) a box it can be typed
-        -- into (Unlock Mode's menus - the player, 2026-10-03: "the sizes also
-        -- should have inputs for precise editing"). The box shows what the
-        -- text would; typed, its number is taken (a "%" or unit dropped,
-        -- divided by spec.scale - 100 for a share shown as a percentage),
-        -- kept inside min..max and on the step. Enter, Tab or leaving it
-        -- keeps it; Esc puts the old one back.
-        local box
-        if spec.input then
-            box = NewBox(parent, nil, spec.inputWidth or 44, 8)
-            box:SetHeight(spec.inputHeight or 20)
-            box:SetTextInsets(3, 3, 0, 0)
-            box:SetPoint("LEFT", slider, "RIGHT", spec.inputGap or 6, 0)
-            slider.input = box
-            slider.valueText = box
-        else
-            slider.valueText = W.Text(parent, 12, W.MUTED)
-            slider.valueText:SetPoint("LEFT", slider, "RIGHT", 10, 0)
-        end
-
-        local function Show(value)
-            track:SetValue(value)
-            local share = 0
-            if spec.max > spec.min then
-                share = math.max(0, math.min(1, (value - spec.min) / (spec.max - spec.min)))
-            end
-            knob:ClearAllPoints()
-            knob:SetPoint("LEFT", slider, "LEFT", share * (width - KNOB_WIDTH), 0)
-            local text = spec.text and spec.text(value) or tostring(value)
-            if box then
-                if not box:HasFocus() then
-                    box:SetText(text)
-                    box.shownText = text
-                end
-            else
-                slider.valueText:SetText(text)
-            end
-        end
-
-        local refreshing = false
-        slider:SetScript("OnValueChanged", function(_, value)
-            value = math.floor(value / spec.step + 0.5) * spec.step
-            Show(value)
-            if not refreshing then set(value) end
-        end)
-
-        function slider.Refresh()
-            local value = get() or spec.min
-            refreshing = true
-            slider:SetValue(value)
-            refreshing = false
-            Show(value)
-        end
-
-        if box then
-            local function Commit()
-                local typed = box:GetText()
-                if typed == box.shownText then return end
-                local number = tonumber((tostring(typed):gsub("[^%d%.%-]", "")))
-                if number then
-                    if spec.scale then number = number / spec.scale end
-                    number = math.max(spec.min, math.min(spec.max, number))
-                    number = math.floor(number / spec.step + 0.5) * spec.step
-                    -- (The slider's own change sets it - unless it is the
-                    -- value it has already.)
-                    slider:SetValue(number)
-                end
-                box:ClearFocus()
-                slider.Refresh()
-            end
-            box:SetScript("OnEnterPressed", Commit)
-            box:SetScript("OnEscapePressed", function(self)
-                self:SetText(self.shownText or "")
-                self:ClearFocus()
-            end)
-            box:SetScript("OnTabPressed", function(self)
-                Commit()
-                FocusNext(self)
-            end)
-            box:HookScript("OnEditFocusLost", function(self)
-                if self:GetText() ~= self.shownText then Commit() end
-            end)
-            box.Refresh = slider.Refresh
-            boxes[#boxes + 1] = box
-        end
-        return slider
-    end
-
-    ---------------------------------------------------------------------------
-    -- Boxes.
-    ---------------------------------------------------------------------------
-
-    -- The boxes in the order they were made, for Tab to walk (`boxes`,
-    -- declared over the slider).
-
-    function FocusNext(box)
+    local function FocusNext(box)
         for index, other in ipairs(boxes) do
             if other == box then
                 for step = 1, #boxes - 1 do
@@ -626,7 +393,7 @@ do -- private scope
         end
     end
 
-    function NewBox(parent, name, width, maxLetters, justify)
+    local function NewBox(parent, name, width, maxLetters, justify)
         local box = CreateFrame("EditBox", name, parent)
         box:SetSize(width, W.CONTROL_HEIGHT)
         box:SetAutoFocus(false)
@@ -636,15 +403,28 @@ do -- private scope
         box:SetTextColor(W.TEXT[1], W.TEXT[2], W.TEXT[3], 1)
         box:SetJustifyH(justify or "CENTER")
         box:SetTextInsets(8, 8, 0, 0)
-        box.bg = W.Flat(box, "BACKGROUND", W.FIELD)
-        box.bg:SetAllPoints(box)
-        box.border = W.Border(box)
+        Backdrop(box, W.FIELD)
         box:HookScript("OnEditFocusGained", function(self) W.TintBorder(self.border, W.FOCUS) end)
         box:HookScript("OnEditFocusLost", function(self) W.TintBorder(self.border, W.LINE) end)
         return box
     end
 
-    -- A text box with a grey hint in it while it is empty.
+    -- A box for a value: Tab or leaving it keeps what was typed (`Commit`),
+    -- Esc puts the shown value back (`Revert`).
+    local function Typed(box, Commit, Revert)
+        box:SetScript("OnEscapePressed", function(self)
+            Revert()
+            self:ClearFocus()
+        end)
+        box:SetScript("OnTabPressed", function(self)
+            Commit()
+            FocusNext(self)
+        end)
+        box:HookScript("OnEditFocusLost", Commit)
+        boxes[#boxes + 1] = box
+    end
+
+    -- A text box, with a grey `hint` while empty.
     function W.TextBox(parent, name, width, maxLetters, hint)
         local box = NewBox(parent, name, width, maxLetters, "LEFT")
         if hint then
@@ -660,15 +440,14 @@ do -- private scope
             box.ShowHint = ShowHint
         end
         box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-        boxes[#boxes + 1] = box
         box:SetScript("OnTabPressed", FocusNext)
+        boxes[#boxes + 1] = box
         return box
     end
 
-    -- A number box. Enter, Tab or leaving it keeps the number typed;
-    -- anything that is not a number, or is outside min..max, is put back
-    -- rather than kept (a nil width takes a bar down with it); Esc puts the
-    -- old one back. `limits` = { min, max, decimals }, optional.
+    -- A number box: Enter, Tab or leaving it keeps a number inside
+    -- `limits` = { min, max, decimals } (optional), anything else is put
+    -- back; Esc puts the old one back.
     function W.NumberBox(parent, name, width, get, set, limits)
         limits = limits or {}
         local box = NewBox(parent, name, width, 7)
@@ -700,45 +479,142 @@ do -- private scope
             Commit()
             self:ClearFocus()
         end)
-        box:SetScript("OnEscapePressed", function(self)
-            Show()
-            self:ClearFocus()
-        end)
-        box:SetScript("OnTabPressed", function(self)
-            Commit()
-            FocusNext(self)
-        end)
-        box:HookScript("OnEditFocusLost", Commit)
+        Typed(box, Commit, Show)
         box.Refresh = Show
-        boxes[#boxes + 1] = box
         return box
     end
 
     ---------------------------------------------------------------------------
-    -- Choices.
+    -- The slider: a thin bar filled gold to the value, a knob on it, the
+    -- value beside it. The knob is a frame over the track; the thumb the
+    -- mouse drags is invisible under it (the track drew over a visible one).
     ---------------------------------------------------------------------------
 
-    -- A few choices side by side in one outline, the picked one filled gold.
+    local KNOB_SIZE = 12
+    local KNOB_HOVER = { 1, 0.86, 0.55, 1 }
+
+    -- spec = { min, max, step, text(value), input, inputWidth, inputHeight,
+    --          inputGap, scale }; with `input` the value is a box to type
+    -- into, its number divided by `scale` (100 for a percentage).
+    function W.Slider(parent, width, spec, get, set)
+        local slider = CreateFrame("Slider", nil, parent)
+        slider:SetSize(width, 18)
+        slider:SetOrientation("HORIZONTAL")
+        slider:SetMinMaxValues(spec.min, spec.max)
+        slider:SetValueStep(spec.step)
+        slider:SetObeyStepOnDrag(true)
+        slider:EnableMouse(true)
+
+        local track = CreateFrame("StatusBar", nil, slider)
+        track:SetPoint("LEFT", slider, "LEFT", 0, 0)
+        track:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
+        track:SetHeight(4)
+        track:SetMinMaxValues(spec.min, spec.max)
+        Backdrop(track, W.TRACK, W.FAINT)
+        Style.Paint(track, W.GOLD)
+        slider.track = track
+
+        local thumb = slider:CreateTexture(nil, "OVERLAY")
+        thumb:SetColorTexture(0, 0, 0, 0)
+        thumb:SetSize(KNOB_SIZE, KNOB_SIZE)
+        slider:SetThumbTexture(thumb)
+
+        local knob = CreateFrame("Frame", nil, slider)
+        knob:SetSize(KNOB_SIZE, KNOB_SIZE)
+        knob:SetFrameLevel(track:GetFrameLevel() + 10)
+        knob.fill = W.Flat(knob, "ARTWORK", W.GOLD)
+        knob.fill:SetAllPoints(knob)
+        knob.border = W.Border(knob, W.KNOB_LINE)
+        slider.knob = knob
+        slider:SetScript("OnEnter", function() W.Colour(knob.fill, KNOB_HOVER) end)
+        slider:SetScript("OnLeave", function() W.Colour(knob.fill, W.GOLD) end)
+
+        local box
+        if spec.input then
+            box = NewBox(parent, nil, spec.inputWidth or 44, 8)
+            box:SetHeight(spec.inputHeight or 20)
+            box:SetTextInsets(3, 3, 0, 0)
+            box:SetPoint("LEFT", slider, "RIGHT", spec.inputGap or 6, 0)
+            slider.input = box
+        else
+            slider.valueText = W.Text(parent, 12, W.MUTED)
+            slider.valueText:SetPoint("LEFT", slider, "RIGHT", 10, 0)
+        end
+
+        local function Show(value)
+            track:SetValue(value)
+            local share = 0
+            if spec.max > spec.min then
+                share = math.max(0, math.min(1, (value - spec.min) / (spec.max - spec.min)))
+            end
+            knob:ClearAllPoints()
+            knob:SetPoint("LEFT", slider, "LEFT", share * (width - KNOB_SIZE), 0)
+            local text = spec.text and spec.text(value) or tostring(value)
+            if not box then
+                slider.valueText:SetText(text)
+            elseif not box:HasFocus() then
+                box:SetText(text)
+                box.shownText = text
+            end
+        end
+
+        local refreshing = false
+        slider:SetScript("OnValueChanged", function(_, value)
+            value = math.floor(value / spec.step + 0.5) * spec.step
+            Show(value)
+            if not refreshing then set(value) end
+        end)
+
+        function slider.Refresh()
+            local value = get() or spec.min
+            refreshing = true
+            slider:SetValue(value)
+            refreshing = false
+            Show(value)
+        end
+
+        if box then
+            local function Commit()
+                local typed = box:GetText()
+                if typed == box.shownText then return end
+                local number = tonumber((tostring(typed):gsub("[^%d%.%-]", "")))
+                if number then
+                    if spec.scale then number = number / spec.scale end
+                    number = math.max(spec.min, math.min(spec.max, number))
+                    slider:SetValue(math.floor(number / spec.step + 0.5) * spec.step)
+                end
+                box:ClearFocus()
+                slider.Refresh()
+            end
+            box:SetScript("OnEnterPressed", Commit)
+            Typed(box, Commit, function() box:SetText(box.shownText or "") end)
+            box.Refresh = slider.Refresh
+        end
+        return slider
+    end
+
+    ---------------------------------------------------------------------------
+    -- Choices
+    ---------------------------------------------------------------------------
+
+    -- A few choices side by side, the picked one gold.
     -- choices = { { value, label }, ... }
     function W.Segmented(parent, choices, segmentWidth, get, set)
         local frame = CreateFrame("Frame", nil, parent)
         frame:SetSize(segmentWidth * #choices, W.CONTROL_HEIGHT - 2)
-        local bg = W.Flat(frame, "BACKGROUND", W.FIELD)
-        bg:SetAllPoints(frame)
-        frame.border = W.Border(frame)
+        Backdrop(frame, W.FIELD)
         frame.segments = {}
 
         for index, choice in ipairs(choices) do
-            local segment = W.Button(frame, choice.label, segmentWidth, function()
-                set(choice.value)
-            end, "flat")
+            local x = (index - 1) * segmentWidth
+            local segment = W.Button(frame, choice.label, segmentWidth, function() set(choice.value) end, "flat")
             segment:SetHeight(W.CONTROL_HEIGHT - 2)
-            segment:SetPoint("LEFT", frame, "LEFT", (index - 1) * segmentWidth, 0)
+            segment:SetPoint("LEFT", frame, "LEFT", x, 0)
             segment.value = choice.value
             if index > 1 then
                 local divider = W.Flat(frame, "ARTWORK", W.FAINT)
-                divider:SetPoint("TOPLEFT", frame, "TOPLEFT", (index - 1) * segmentWidth, 0)
-                divider:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", (index - 1) * segmentWidth, 0)
+                divider:SetPoint("TOPLEFT", frame, "TOPLEFT", x, 0)
+                divider:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, 0)
                 divider:SetWidth(W.Pixel(frame))
             end
             frame.segments[index] = segment
@@ -753,10 +629,10 @@ do -- private scope
         return frame
     end
 
-    -- The one list a dropdown opens, shared: only one is ever open.
+    -- The one list every dropdown opens.
     local popup
     local ITEM_HEIGHT = 22
-    local ITEM_PAD = 8              -- a choice's words from its item's ends
+    local ITEM_PAD = 8
     local POPUP_MAX_WIDTH = 320
 
     local function ClosePopup()
@@ -766,32 +642,30 @@ do -- private scope
         end
     end
     W.ClosePopup = ClosePopup
-    function W.PopupOpen() return popup ~= nil and popup:IsShown() end
 
-    local function Popup()
+    -- Also for windows a click in which must not close it (Unlock Mode's).
+    function W.Popup()
         if popup then return popup end
         popup = CreateFrame("Frame", nil, UIParent)
         popup:SetFrameStrata("FULLSCREEN_DIALOG")
         popup:SetClampedToScreen(true)
         popup:EnableMouse(true)
         popup:Hide()
-        local bg = W.Flat(popup, "BACKGROUND", { 0.06, 0.06, 0.06, 0.98 })
-        bg:SetAllPoints(popup)
-        popup.border = W.Border(popup)
+        Backdrop(popup, { 0.06, 0.06, 0.06, 0.98 })
         popup.items = {}
-        -- A click anywhere else shuts it, as the game's own menus do.
+        -- A click anywhere else shuts it, as the game's menus do.
         popup:SetScript("OnEvent", function(self)
-            if not self:IsMouseOver() and not (self.owner and self.owner:IsMouseOver()) then
-                ClosePopup()
-            end
+            if not self:IsMouseOver() and not (self.owner and self.owner:IsMouseOver()) then ClosePopup() end
         end)
         popup:SetScript("OnShow", function(self) self:RegisterEvent("GLOBAL_MOUSE_DOWN") end)
         popup:SetScript("OnHide", function(self) self:UnregisterEvent("GLOBAL_MOUSE_DOWN") end)
         return popup
     end
 
+    -- As wide as its widest choice (never narrower than the button, never
+    -- past POPUP_MAX_WIDTH, cut short with "..." there).
     local function OpenPopup(owner, choices, get, set)
-        local list = Popup()
+        local list = W.Popup()
         if list:IsShown() and list.owner == owner then
             ClosePopup()
             return
@@ -801,10 +675,6 @@ do -- private scope
         list:ClearAllPoints()
         list:SetPoint("TOPLEFT", owner, "BOTTOMLEFT", 0, -4)
         local current = get()
-        -- As wide as its widest choice needs (the player, 2026-10-03: "those
-        -- texts shouldnt overflow out of comboboxes"), never narrower than
-        -- its button, never past POPUP_MAX_WIDTH - and each choice's words
-        -- held inside its item, cut short with "..." past that.
         local widest = 0
         for index, choice in ipairs(choices) do
             local item = list.items[index]
@@ -819,12 +689,9 @@ do -- private scope
                 list.items[index] = item
             end
             W.SetLabel(item, choice.label)
-            -- (Its width unbounded by the item: the words' own.)
-            local label = item.label
-            local measure = label.GetUnboundedStringWidth or label.GetStringWidth
-            widest = math.max(widest, tonumber(measure(label)) or 0)
+            widest = math.max(widest, item.label:GetUnboundedStringWidth())
         end
-        local width = math.min(math.max(owner:GetWidth() or 0, widest + 2 * ITEM_PAD + 4), POPUP_MAX_WIDTH)
+        local width = math.min(math.max(owner:GetWidth(), widest + 2 * ITEM_PAD + 4), POPUP_MAX_WIDTH)
         list:SetSize(width, #choices * ITEM_HEIGHT + 4)
         for index, choice in ipairs(choices) do
             local item = list.items[index]
@@ -837,16 +704,12 @@ do -- private scope
             end)
             item.selected = choice.value == current
             item:Show()
-            W.PaintButton(item)
+            PaintButton(item)
         end
         for index = #choices + 1, #list.items do list.items[index]:Hide() end
         list:Show()
         list:Raise()
     end
-
-    -- The list itself, for a window a click in which must not count as a
-    -- click elsewhere (Edit Mode's piece window).
-    W.Popup = Popup
 
     -- A button showing the picked choice, opening the list under it.
     function W.Dropdown(parent, width, choices, get, set)
@@ -874,20 +737,150 @@ do -- private scope
                 if choice.value == current then label = choice.label end
             end
             W.SetLabel(button, label)
-            W.PaintButton(button)
+            PaintButton(button)
         end
         return button
     end
 
-    ---------------------------------------------------------------------------
-    -- The card a section's settings sit on.
-    ---------------------------------------------------------------------------
-
+    -- The panel a section's settings sit on.
     function W.Card(parent)
         local card = CreateFrame("Frame", nil, parent)
-        local bg = W.Flat(card, "BACKGROUND", { 1, 1, 1, 0.035 })
-        bg:SetAllPoints(card)
-        card.border = W.Border(card, W.FAINT)
+        Backdrop(card, { 1, 1, 1, 0.035 }, W.FAINT)
         return card
+    end
+
+    -- A one-line note over `parent`, a coloured dot before its text; hidden.
+    function W.Toast(parent)
+        local toast = CreateFrame("Frame", nil, parent)
+        toast:SetFrameLevel(parent:GetFrameLevel() + 40)
+        Backdrop(toast, { 0.09, 0.09, 0.09, 0.97 })
+        toast.dot = W.Flat(toast, "ARTWORK", W.GOOD)
+        toast.dot:SetSize(6, 6)
+        toast.dot:SetPoint("LEFT", toast, "LEFT", 12, 0)
+        toast.text = W.Text(toast, 12)
+        toast.text:SetPoint("LEFT", toast.dot, "RIGHT", 8, 0)
+        toast:Hide()
+        return toast
+    end
+
+    ---------------------------------------------------------------------------
+    -- Smooth scrolling for a ScrollFrame with its child set, by hand (which
+    -- scroll templates a client ships varies). The page eases to its target;
+    -- a slim gold thumb shows and drags it, nothing when the page fits.
+    -- `onScroll(y)` is told every move. Answers { Update, ScrollTo(y, now),
+    -- Limit, Target }.
+    ---------------------------------------------------------------------------
+
+    local SCROLL_WIDTH = 4
+    local MIN_THUMB = 28
+    local WHEEL_STEP = 70
+    local EASE = 14         -- per second: how quickly the page catches up
+    local THUMB = Style.BORDER_COLOR
+
+    function W.Scroller(scrollFrame, onScroll)
+        local scroller = {}
+        local target = 0
+
+        local track = CreateFrame("Frame", nil, scrollFrame:GetParent())
+        track:SetPoint("TOPLEFT", scrollFrame, "TOPRIGHT", 6, -4)
+        track:SetPoint("BOTTOMLEFT", scrollFrame, "BOTTOMRIGHT", 6, 4)
+        track:SetWidth(SCROLL_WIDTH)
+        -- Runs the easing: always shown, unlike the track.
+        local driver = CreateFrame("Frame", nil, scrollFrame:GetParent())
+        local groove = track:CreateTexture(nil, "BACKGROUND")
+        groove:SetAllPoints(track)
+        groove:SetColorTexture(1, 1, 1, 0.04)
+
+        local thumb = CreateFrame("Frame", nil, track)
+        thumb:SetWidth(SCROLL_WIDTH)
+        thumb:SetHeight(MIN_THUMB)
+        thumb:EnableMouse(true)
+        thumb:RegisterForDrag("LeftButton")
+        local thumbTexture = thumb:CreateTexture(nil, "ARTWORK")
+        thumbTexture:SetAllPoints(thumb)
+        thumbTexture:SetColorTexture(THUMB[1], THUMB[2], THUMB[3], 0.7)
+        thumb:SetScript("OnEnter", function() thumbTexture:SetColorTexture(THUMB[1], THUMB[2], THUMB[3], 1) end)
+        thumb:SetScript("OnLeave", function() thumbTexture:SetColorTexture(THUMB[1], THUMB[2], THUMB[3], 0.7) end)
+
+        local function ContentHeight()
+            return scrollFrame:GetScrollChild():GetHeight()
+        end
+
+        function scroller.Limit()
+            return math.max(0, ContentHeight() - scrollFrame:GetHeight())
+        end
+
+        local function Clamp(y)
+            return math.max(0, math.min(y, scroller.Limit()))
+        end
+
+        function scroller.Update()
+            local limit = scroller.Limit()
+            local trackHeight = track:GetHeight()
+            if limit <= 0 or trackHeight <= 0 then
+                track:Hide()
+                return
+            end
+            track:Show()
+            local height = trackHeight * (scrollFrame:GetHeight() / ContentHeight())
+            height = math.min(trackHeight, math.max(MIN_THUMB, height))
+            thumb:SetHeight(height)
+            thumb:ClearAllPoints()
+            thumb:SetPoint("TOP", track, "TOP", 0,
+                -(trackHeight - height) * (scrollFrame:GetVerticalScroll() / limit))
+        end
+
+        local function Set(y)
+            scrollFrame:SetVerticalScroll(y)
+            scroller.Update()
+            onScroll(y)
+        end
+
+        local function Ease(self, elapsed)
+            local y = scrollFrame:GetVerticalScroll()
+            local gap = target - y
+            if math.abs(gap) < 0.5 then
+                self:SetScript("OnUpdate", nil)
+                Set(target)
+            else
+                Set(y + gap * (1 - math.exp(-EASE * elapsed)))
+            end
+        end
+
+        function scroller.ScrollTo(y, now)
+            target = Clamp(y)
+            if now then
+                driver:SetScript("OnUpdate", nil)
+                Set(target)
+            else
+                driver:SetScript("OnUpdate", Ease)
+            end
+        end
+
+        function scroller.Target() return target end
+
+        scrollFrame:EnableMouseWheel(true)
+        scrollFrame:SetScript("OnMouseWheel", function(_, delta)
+            scroller.ScrollTo(target - delta * WHEEL_STEP)
+        end)
+        scrollFrame:HookScript("OnSizeChanged", function()
+            target = Clamp(target)
+            scroller.Update()
+        end)
+
+        thumb:SetScript("OnDragStart", function(self)
+            local startCursor, startScroll = CursorY(self), scrollFrame:GetVerticalScroll()
+            self:SetScript("OnUpdate", function(me)
+                local travel = track:GetHeight() - me:GetHeight()
+                local limit = scroller.Limit()
+                if travel <= 0 or limit <= 0 then return end
+                -- Dragging down scrolls down; the cursor axis points up.
+                scroller.ScrollTo(startScroll + (startCursor - CursorY(me)) * (limit / travel), true)
+            end)
+        end)
+        thumb:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+
+        scroller.Update()
+        return scroller
     end
 end

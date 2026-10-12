@@ -646,18 +646,18 @@ do
     local right = true
     for _, entry in ipairs(Bars.LIST) do
         if DB[entry.key] ~= (want[entry.key] == true) then right = false end
-        if entry.frames[1] == "BagsBar" then right = false end
+        if entry.frame == "BagsBar" then right = false end
     end
     check("every action bar has its own switch: 3-8 and stance on, 1, 2 and pet off; the bag bar is not one",
         right and #Bars.LIST == 12)
     local xp = Bars.LIST[#Bars.LIST - 1]
     check("and the addon's XP bar is one more, off to start",
-        xp.key == "fadeXPBar" and xp.label == "XP Bar" and xp.frames[1] == "DogsForeverUIXPBar"
+        xp.key == "fadeXPBar" and xp.label == "XP Bar" and xp.frame == "DogsForeverUIXPBar"
         and DB.fadeXPBar == false)
     local objectives = Bars.LIST[#Bars.LIST]
     check("and the quest tracker, on to start",
         objectives.key == "fadeObjectives" and objectives.label == "Objectives"
-        and objectives.frames[1] == "ObjectiveTrackerFrame" and DB.fadeObjectives == true)
+        and objectives.frame == "ObjectiveTrackerFrame" and DB.fadeObjectives == true)
     Tick(4)
     check("so those hide, and the others are left alone",
         MultiBarRight.alpha == 0 and MultiBarBottomRight.alpha == 0

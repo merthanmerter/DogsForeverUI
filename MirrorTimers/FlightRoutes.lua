@@ -1,9 +1,6 @@
--- FLIGHT ROUTES  (DogsForeverUI.FlightRoutes)
---
--- The flown length of every direct hop in yards, keyed fromNodeID * 10000 +
--- toNodeID (C_TaxiMap node IDs), from the game's TaxiPath data of WoW Forever
--- build 1.60.1.69913 - the table EllesmereUI's flight timer ships. The flight
--- timer turns a route's length into a time until the route is flown once.
+-- Flight routes (DogsForeverUI.FlightRoutes): every direct hop's flown length in
+-- yards, keyed fromNodeID * 10000 + toNodeID (C_TaxiMap node IDs). TaxiPath data
+-- of build 1.60.1.69913, as EllesmereUI's flight timer ships it.
 
 DogsForeverUI.FlightRoutes = {
     [20004] = 2347,

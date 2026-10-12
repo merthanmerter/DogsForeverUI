@@ -294,8 +294,12 @@ do
         GetActionCooldown = function(slot) return { isActive = cooldowns[slot] ~= nil } end,
         GetActionCooldownDuration = function(slot) return cooldowns[slot] end,
         GetActionCharges = function() return nil end,
+        GetActionChargeDuration = function() return nil end,
+        GetActionLossOfControlCooldownInfo = function() return nil end,
+        GetActionLossOfControlCooldownDuration = function() return nil end,
         GetActionDisplayCount = function(slot) return actionSlots[slot] and actionSlots[slot].count end,
         UsesActionText = function() return false end,
+        GetActionText = function() return nil end,
         IsUsableAction = function(slot) return actionSlots[slot] ~= nil, false end,
     }
     local button = _G.DogsForeverUIActionButton2
@@ -367,7 +371,7 @@ do
     Fire("PET_BAR_UPDATE")
     Tick(0)
     -- By hand: the game's PetActionBar:Update run from the addon tainted the
-    -- game's Edit Mode as it opened (Paint.lua).
+    -- game's Edit Mode as it opened (ActionBars.lua, PaintPets).
     check("the pet bar painted by hand - never the game's own update",
         petBarUpdates == before and PetActionButton1.icon.texture == 132152)
 end

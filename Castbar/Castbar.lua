@@ -1,475 +1,360 @@
 -- MODULE: Castbar  (DogsForeverUI.Castbar, settings section "castbar")
---
--- A casting bar of the addon's own, which replaces the game's rather than
--- editing it. The game's bar is hidden -- see BlizzardCastbar.lua, which never
--- writes an Edit Mode setting and never replaces a Blizzard function.
---
--- The bar draws casts and channels, and nothing else. There is no global
--- cooldown bar: drawing one means deciding whether a cooldown is running, that
--- decision is a boolean, and in combat every boolean on that path is a secret
--- value that addon code may not test. The game's action buttons already run the
--- swipe.
---
--- Above it sit the auto-attack swing bars - main hand, off hand and ranged -
--- which replace the game's own swing timer the same way: styled exactly like
--- the castbar, driven by the client's official C_SwingTimer events, and with
--- the game's bars faded out while the module is on. See SwingBars.lua and
--- BlizzardSwingTimer.lua.
---
--- Between the two, in one row, sit the five-second countdown (FiveSecondRule\)
--- and the combo points (ComboPoints\), which are part of the same group: the
--- same size and look from this module's settings, placed and locked with it,
--- and sized in the options' Sizes section. See RowHeight for the order.
+-- The player's casting bar, in place of the game's (hidden, never edited).
+-- Casts and channels only: a GCD bar would have to branch on a secret boolean.
+-- Leads the castbar group: the row (Rows.lua) and the swing bars sit above it.
 
 DogsForeverUI.Castbar = CreateFrame("Frame")
 
 do -- private scope
     local NS = DogsForeverUI.Castbar
+    local Style = DogsForeverUI.Style
+    local Core = DogsForeverUI
+    local Snap = Core.Snap
+    local IsSecret = issecretvalue
 
-    local CenterBar, onEvent, onUpdate
-    local BeginCast, EndCast, ReadCast, EventIsOurs, Refresh
-    local Lock, Unlock
+    local Refresh, Redraw, Draw, EndCast
 
     NS.key = "castbar"
     NS.title = "Castbars"
 
-    -- The castbar, its spell name, the swing bars, the five-second countdown
-    -- and the combo points are always on - no switches (the player,
-    -- 2026-09-29). What is left to set is the group's size, layer and place.
     NS.defaults = {
         unlocked = false,
         barWidth = 130,
         barHeight = 20,
-        textPadding = 0.15,       -- every bar of the group's
+        textPadding = 0.15,       -- the whole group's
         frameStrata = "MEDIUM",
-        -- The swing bars' own size and layer, as a group (the player,
-        -- 2026-09-29: "all castbars managed individually"). They took the
-        -- castbar's until then; `swingSized` says the castbar's were copied
-        -- over once, so nobody's bars change size on the way.
+        -- The swing bars' own; `swingSized`: the castbar's copied over once.
         swingWidth = 130,
         swingHeight = 20,
         swingStrata = "MEDIUM",
         swingSized = false,
     }
-
-    -- How long a cast that failed stays up in its own colour, in seconds.
-    -- A setting once; fixed since 2026-09-29.
-    NS.FAILED_HOLD = 0.6
-
-    -- Saved keys that are not settings: the bar's placement, and the swing
-    -- bars' once the player has dragged them. Until then they are anchored to
-    -- the castbar and have no position of their own.
     NS.placement = {
         barLeft = true, barTop = true, autoPlaced = true,
         swingLeft = true, swingBottom = true, swingPlaced = true,
     }
 
-    -- SECRET VALUES
-    -- This client hands addon code "secret numbers" it may store and pass on but
-    -- may not read, compare or do arithmetic with. Cast times are normally plain,
-    -- but nothing here assumes it: when they come back secret the bar is still
-    -- driven correctly, because SetMinMaxValues and SetValue accept a secret,
-    -- and only the parts that genuinely need arithmetic -- the remaining-seconds
-    -- text, the spark's position and the drain direction of a channel -- step
-    -- aside. See `cast.plain`.
-    local IsSecret = issecretvalue
+    NS.FAILED_HOLD = 0.6                     -- seconds a failed cast stays up
+    NS.TOP_SHARE = 830 / 1200                -- the default top, as a share of the screen
+    -- Borders sit 3px outside each bar: 6px of daylight between two of the group.
+    NS.STACK_GAP = 6 + 2 * Style.BORDER_INSET
 
-    -- THE CAST IN PROGRESS
-    -- Times are kept in whatever form they arrived: seconds when they could be
-    -- read, raw milliseconds when they could not.
-    local cast = {
-        active = false,
-        channel = false,
-        plain = false,
-        startTime = 0,
-        endTime = 0,
-        name = nil,
-        castID = nil,
-        notInterruptible = false,
-    }
-    NS.cast = cast
+    -- Times kept as they arrived: seconds when plain, raw ms when secret.
+    local cast = { active = false, channel = false, plain = false, startTime = 0, endTime = 0 }
+    local holdUntil, holdFailed = 0, false
+    local settled = false                    -- the castbar has its final place this session
+    local rows = {}                          -- the row's modules (JoinRow)
 
-    -- A cast that failed stays on screen, in its own colour, long enough to be
-    -- read. A cast that simply finished does not: it is gone the moment it is
-    -- done. Zero means nothing is being held.
-    --
-    -- Both live on the namespace because CastBar reads them: every function
-    -- there takes no arguments, since they are all called with a colon and a
-    -- parameter would silently receive the module table instead.
-    NS.holdUntil = 0
-    NS.holdFailed = false
+    local castbar = CreateFrame("StatusBar", "DogsForeverUICastBar", UIParent)
+    castbar:Hide()
+    castbar.bg = castbar:CreateTexture(nil, "BACKGROUND")
+    castbar.bg:SetAllPoints(castbar)
+    castbar.border = Style.AddBorder(castbar)
+    castbar.spark = Style.AddSpark(castbar)
+    castbar.spellText = castbar:CreateFontString(nil, "OVERLAY")
+    castbar.timeText = castbar:CreateFontString(nil, "OVERLAY")
+    NS.CastBar = { castbar = castbar }
 
-    -- Only the player's own casts, so the client filters for us rather than this
-    -- module waking for every cast in the zone.
-    local CAST_EVENTS = {
-        "UNIT_SPELLCAST_START",
-        "UNIT_SPELLCAST_STOP",
-        "UNIT_SPELLCAST_FAILED",
-        "UNIT_SPELLCAST_FAILED_QUIET",
-        "UNIT_SPELLCAST_INTERRUPTED",
-        "UNIT_SPELLCAST_DELAYED",
-        "UNIT_SPELLCAST_CHANNEL_START",
-        "UNIT_SPELLCAST_CHANNEL_UPDATE",
-        "UNIT_SPELLCAST_CHANNEL_STOP",
-        "UNIT_SPELLCAST_INTERRUPTIBLE",
-        "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
-    }
-    for _, event in ipairs(CAST_EVENTS) do
-        -- A client without one of these must not lose the other ten.
-        pcall(NS.RegisterUnitEvent, NS, event, "player")
+    -- A width box's onChange that keeps a bar centred: its left moves by half
+    -- the change. With `placedKey`, only while that says it is placed on its own.
+    function NS.KeepCentred(db, placedKey, leftKey)
+        return function(old, new)
+            local t = db()
+            if type(old) == "number" and type(new) == "number"
+               and (placedKey == nil or t[placedKey]) and t[leftKey] then
+                t[leftKey] = t[leftKey] + (old - new) / 2
+            end
+        end
+    end
+    NS.WidthChanged = NS.KeepCentred(function() return NS.db end, nil, "barLeft")
+
+    function NS.DefaultTop()
+        local height = GetScreenHeight()
+        if height > 0 then return -height * NS.TOP_SHARE end
     end
 
-    -- The swing bars. PLAYER_SWING carries the time to the next swing and which
-    -- hand swung; the rest say that a hand gained or lost something to swing
-    -- with, or that the target moved in or out of reach. Each one on its own,
-    -- for the same reason as above.
-    -- (CVAR_UPDATE: the game's own swing timer switch, SwingBars.GameOn.)
-    for _, event in ipairs({ "PLAYER_SWING", "PLAYER_SWING_RANGE_UPDATE",
-                             "PLAYER_TARGET_CHANGED", "WEAPON_SLOT_CHANGED", "CVAR_UPDATE" }) do
-        pcall(NS.RegisterEvent, NS, event)
-    end
-    pcall(NS.RegisterUnitEvent, NS, "UNIT_ATTACK_SPEED", "player")
-    NS:RegisterEvent("PLAYER_ENTERING_WORLD")
-
-    -- The per-frame drawing runs only while there is something to draw: a
-    -- cast, a failed one held, a swing bar swinging, holding or fading out of
-    -- its row, or the group being placed. Otherwise the frame is hidden,
-    -- which stops its OnUpdate and nothing else - a hidden frame still gets
-    -- its events, and every event (and every Refresh) shows it again.
-    NS:SetScript("OnEvent", function(_, event, ...) onEvent(event, ...); NS:Show() end)
-    NS:SetScript("OnUpdate", function() onUpdate() end)
-
-    -- First start, and after a reset.
-    function NS.Init()
-        Refresh()
+    -- Where a bar of the group goes by default: centred over the castbar,
+    -- `above` its top. Taken once; nothing moves with the castbar after.
+    function NS.OverCastbar(width, height, above)
+        local db = NS.db
+        return db.barLeft + (db.barWidth - width) / 2, db.barTop + above + height
     end
 
-    -- A first run, or a reset, leaves the bar without a position. Settings
-    -- from before the swing bars had a size of their own give them the
-    -- castbar's, once.
+    function NS.GroupSettled() return settled end
+
+    local function CenterBar()
+        local db, width, top = NS.db, GetScreenWidth(), NS.DefaultTop()
+        if not top or width <= 0 then
+            db.barLeft, db.barTop = 90, -68      -- screen not known yet: any place beats none
+            return
+        end
+        db.barLeft, db.barTop = (width - db.barWidth) / 2, top
+        db.autoPlaced = true                     -- worked out again until dragged
+    end
+
     function NS.Normalise(db)
         if db.barLeft == nil or db.barTop == nil then CenterBar() end
         if not db.swingSized then
-            db.swingWidth, db.swingHeight = db.barWidth, db.barHeight
-            db.swingStrata = db.frameStrata
+            db.swingWidth, db.swingHeight, db.swingStrata = db.barWidth, db.barHeight, db.frameStrata
             db.swingSized = true
         end
     end
 
-    -- Where a bar of the group goes by default: centred over the castbar,
-    -- `above` its top edge. Answers the TOPLEFT, worked out from the castbar's
-    -- settings rather than measured. The bars of the group take it ONCE - a
-    -- first start, a reset - and from then on stay where they are: none of
-    -- them moves with the castbar (the player, 2026-10-02: nothing moves with
-    -- anything unless anchored to it on purpose, in Edit Mode).
-    function NS.OverCastbar(width, height, above)
-        local db = NS.db
-        local left = (db.barLeft or 0) + ((db.barWidth or 0) - width) / 2
-        local top = (db.barTop or 0) + above + height
-        return left, top
-    end
+    -- THE ROW over the castbar, shared by the 5SR and combo bars (a rogue has
+    -- no mana). Each has its own size - the castbar's, copied once (`sized`) -
+    -- and its place there worked out once (`placed`); dragged, its own. Placed
+    -- and locked with the castbar. Answers the bar's Place().
+    function NS.JoinRow(module, frame, name)
+        frame:SetMovable(true)
+        frame:SetClampedToScreen(true)
+        rows[#rows + 1] = module
 
-    -- A width box's onChange that keeps a bar centred where it was: a new
-    -- width moves its left by half the change, so it grows or shrinks on both
-    -- sides instead of out to the right. With `placedKey`, only while that
-    -- says it is placed on its own (one still in the castbar group is
-    -- centred over the castbar anyway).
-    function NS.KeepCentred(db, placedKey, leftKey)
-        return function(old, new)
-            if type(old) == "number" and type(new) == "number"
-               and (placedKey == nil or db()[placedKey]) and db()[leftKey] then
-                db()[leftKey] = db()[leftKey] + (old - new) / 2
+        module.defaults = { barWidth = 130, barHeight = 20, frameStrata = "MEDIUM", sized = false }
+        module.placement = { barLeft = true, barTop = true, placed = true }
+        -- A change can give the row to, or take it from, the swing bars above.
+        module.Refresh = Refresh
+
+        function module.Normalise(db)
+            if db.sized then return end
+            local group = NS.db
+            db.barWidth, db.barHeight, db.frameStrata = group.barWidth, group.barHeight, group.frameStrata
+            db.sized = true
+        end
+
+        local function Place()
+            local db = module.db
+            frame:SetSize(db.barWidth, db.barHeight)
+            frame:SetFrameStrata(db.frameStrata)
+            if not db.placed and settled then
+                db.barLeft, db.barTop = NS.OverCastbar(db.barWidth, db.barHeight, NS.STACK_GAP)
+                db.placed = true
             end
+            if db.placed then
+                Snap.Put(frame, db)
+            else
+                frame:ClearAllPoints()
+                frame:SetPoint("BOTTOM", castbar, "TOP", 0, NS.STACK_GAP)
+                frame:SetUserPlaced(false)
+            end
+            frame:EnableMouse(NS.db.unlocked)
         end
-    end
 
-    -- Default placement: centred horizontally, its top edge about 69% of the
-    -- way down the screen - the whole group, since the swing bars and the
-    -- countdown hang off this bar, and the cooldown bars follow its top. Where
-    -- the player put it: first 65% (about 20 below the old -756 on their UI
-    -- 1200 units tall), then 10 higher - 770 of their 1200 - then 60 lower
-    -- with the unit frames' row (Frames.lua ROW_TOP, -840 to -900, 2026-10-01),
-    -- so the two keep the same gap: 830 of their 1200. A share of the screen
-    -- rather than a pixel count, so it lands in the same place at any
-    -- resolution or UI scale.
-    local TOP_SHARE       = 830 / 1200
-
-    -- The daylight between two bars of the group, and what it takes to get it.
-    -- Every bar draws its border on a frame three pixels *outside* itself, so a
-    -- gap measured between the bars is six pixels smaller on screen than it
-    -- reads here: at four, the two borders overlapped by two.
-    local BORDER_INSET    = DogsForeverUI.Style.BORDER_INSET
-    local VISIBLE_GAP     = 6      -- daylight between the two borders
-    local STACK_GAP       = VISIBLE_GAP + 2 * BORDER_INSET
-    NS.STACK_GAP = STACK_GAP
-
-    -- THE GROUP, bottom to top: the castbar; one row for the five-second
-    -- countdown and the combo points, which share it because nobody needs
-    -- both - a rogue has no mana; then the swing bars, main hand, off hand,
-    -- ranged, bottom to top. The row is kept only for a character with something to put in
-    -- it: a warrior has neither, and gets the swing bars straight on the
-    -- castbar.
-    --
-    -- How tall the countdown and combo points' row over the castbar is, for
-    -- the swing bars' default place above it: the taller of whichever of
-    -- them this character has; 0 for none.
-    function NS.RowHeight()
-        local height = 0
-        local fsr, combo = DogsForeverUI.FiveSecondRule, DogsForeverUI.ComboPoints
-        if fsr and fsr.db and fsr.ClassHasMana() then
-            height = math.max(height, fsr.db.barHeight or 0)
+        -- A drag's end, a nudge, or following its anchor (Core\Snap.lua).
+        local function SavePlace()
+            local db = module.db
+            db.placed = true
+            db.barLeft, db.barTop = frame:GetLeft(), frame:GetTop() - GetScreenHeight()
+            module.Redraw()
+            Core.RefreshOptions()
         end
-        if combo and combo.db and combo.ClassUses() then
-            height = math.max(height, combo.db.barHeight or 0)
-        end
-        return height
+        Snap.Draggable(frame, NS, SavePlace)
+        Snap.Register(frame, { save = SavePlace, name = name, id = module.key })
+        return Place
     end
 
-    -- Whether the castbar has its final place for this session (the screen's
-    -- size is known once the world is entered): until then the group's bars
-    -- only show over it, and take their own places after.
-    local settled = false
-    function NS.GroupSettled() return settled end
-
-    -- A new width keeps the castbar where it was centred: it grows or shrinks
-    -- by half on each side rather than out to the right. The bars still in
-    -- the group are centred over it, so they stay centred too.
-    function NS.WidthChanged(old, new)
-        if type(old) ~= "number" or type(new) ~= "number" then return end
-        local db = NS.db
-        if db.barLeft then db.barLeft = db.barLeft + (old - new) / 2 end
+    local function Paint()
+        local state = holdFailed and "failed" or cast.notInterruptible and "uninterruptible"
+            or cast.channel and "channel" or "casting"
+        Style.Paint(castbar, Style.CAST_COLOR[state])
     end
 
-    -- The castbar's own default top, as a TOPLEFT offset (negative): what
-    -- CenterBar gives it. The cooldown bars' first place and the default
-    -- layout (Core\DefaultPlaces.lua) take theirs from it.
-    NS.TOP_SHARE = TOP_SHARE
-    function NS.DefaultTop()
-        local screenHeight = GetScreenHeight() or 0
-        if screenHeight <= 0 then return nil end
-        return -screenHeight * TOP_SHARE
+    -- Full, with no time or spark: the preview and a failed cast.
+    local function ShowFull()
+        Paint()
+        castbar:SetMinMaxValues(0, 1)
+        castbar:SetValue(1)
+        castbar.timeText:SetText("")
+        castbar.spark:Hide()
     end
 
-    function CenterBar()
-        local db = NS.db
-        local screenWidth = GetScreenWidth() or 0
-        local screenHeight = GetScreenHeight() or 0
-
-        if screenWidth <= 0 or screenHeight <= 0 then
-            -- Screen size not known yet: any number beats leaving it unplaced.
-            db.barLeft = 90
-            db.barTop = -68
+    function Draw()
+        if NS.db.unlocked then
+            -- As it really looks, named where the spell goes.
+            Style.ShowNow(castbar)
+            ShowFull()
+            castbar.spellText:SetText("Castbar")
             return
         end
-
-        local width = db.barWidth or NS.defaults.barWidth
-
-        db.barLeft = (screenWidth - width) / 2
-        db.barTop = -screenHeight * TOP_SHARE
-
-        -- Still the addon's placement rather than the player's, so it may be
-        -- recomputed once the screen size is final. Dragging the bar clears it.
-        db.autoPlaced = true
+        if not cast.active then
+            -- A failed cast is held for a moment; anything else fades out.
+            if GetTime() >= holdUntil then Style.FadeOut(castbar) end
+            return
+        end
+        if not cast.plain then
+            -- Secret times go straight to the bar: no time, spark or drain.
+            castbar:SetMinMaxValues(cast.startTime, cast.endTime)
+            castbar:SetValue(GetTime() * 1000)
+            castbar.timeText:SetText("")
+            return
+        end
+        local length = cast.endTime - cast.startTime
+        local elapsed = GetTime() - cast.startTime
+        -- Done: gone at once, not stuck at 0.0 waiting for the stop event.
+        if length <= 0 or elapsed >= length then
+            EndCast(false)
+            return
+        end
+        local value = cast.channel and length - elapsed or elapsed   -- a channel drains
+        castbar:SetMinMaxValues(0, length)
+        castbar:SetValue(value)
+        castbar.timeText:SetFormattedText("%.1f", length - elapsed)
+        castbar.spark:SetPoint("CENTER", castbar, "LEFT", NS.db.barWidth * value / length, 0)
     end
 
-    -------------------------------------------------------------------------
-    -- Reading the cast in progress.
-    --
-    -- Asked of the game rather than pieced together from event arguments: the
-    -- event says *that* something changed, and these two say what the state now
-    -- is, including the new end time after a pushback.
-    -------------------------------------------------------------------------
-
-    -- The last value is the text to show: the cast's display text, as the
-    -- game's own castbar shows it (CastingBarMixin: self.Text:SetText(text)),
-    -- not its name. The name only says that something is being cast; for the
-    -- spells behind picking up a quest item or using an object it is a
-    -- placeholder, "No Text", and the display text says what is happening.
-    function ReadCast()
+    -- The cast now, asked of the game (the event only says that it changed),
+    -- with its display text, as the game's bar shows: "No Text" is a name.
+    local function ReadCast()
         local name, text, _, startMS, endMS, _, castID, notInterruptible = UnitCastingInfo("player")
-        if name then
-            return name, startMS, endMS, notInterruptible, false, castID, text
-        end
-
-        -- Channels report the same values without the cast ID, so the
-        -- not-interruptible flag sits one place earlier.
-        local cname, ctext, _, cstartMS, cendMS, _, cnotInterruptible = UnitChannelInfo("player")
-        if cname then
-            return cname, cstartMS, cendMS, cnotInterruptible, true, nil, ctext
-        end
+        if name then return name, startMS, endMS, notInterruptible, false, castID, text end
+        -- A channel has no cast ID: its flag sits one place earlier.
+        name, text, _, startMS, endMS, _, notInterruptible = UnitChannelInfo("player")
+        if name then return name, startMS, endMS, notInterruptible, true, nil, text end
     end
 
-    -- Whether a stop, failure or interruption is about the cast on the bar.
-    --
-    -- It very often is not. Pressing a second spell while one is casting - a
-    -- queued instant, a second swing at a skinning node - makes the game refuse
-    -- the new one, and that refusal arrives as UNIT_SPELLCAST_FAILED for the
-    -- player like any other. Taking it at face value turned the bar red while
-    -- the cast underneath it carried on quite happily, which is exactly what it
-    -- looked like: a bug.
-    --
-    -- The game's own castbar compares cast IDs, and so does this when it can.
-    -- They are secret values on a unit whose casting is restricted, and a secret
-    -- may not be compared, so there is a second test that needs no reading at
-    -- all: the game clears the cast the instant it really ends, so a cast still
-    -- in progress means the event belongs to something else.
-    --
-    -- Note the order: whether a value is secret is asked *before* anything is
-    -- compared to it, even to nil, because comparing a secret is itself the
-    -- error this is trying to avoid.
-    function EventIsOurs(eventCastID)
+    -- Whether a stop or failure is about the cast on the bar: a refused second
+    -- spell sends the same FAILED. By cast ID when both can be read; else the
+    -- game clears a cast before its end event, so one still running is not it.
+    local function EventIsOurs(eventCastID)
         local mine = cast.castID
-        if not (IsSecret(mine) or IsSecret(eventCastID))
-           and mine ~= nil and eventCastID ~= nil then
+        if not (IsSecret(mine) or IsSecret(eventCastID)) and mine ~= nil and eventCastID ~= nil then
             return mine == eventCastID
         end
-
         return ReadCast() == nil
     end
 
-    function BeginCast()
+    local function BeginCast()
         local name, startMS, endMS, notInterruptible, channel, castID, text = ReadCast()
         if not name then
             EndCast(false)
             return
         end
-
-        cast.active = true
-        cast.channel = channel
-        -- What the bar says. A secret text is passed on as it is; a missing
-        -- one leaves the bar without a name rather than with a placeholder.
-        if IsSecret(text) or type(text) == "string" then cast.name = text else cast.name = "" end
-        cast.castID = castID
+        cast.active, cast.channel, cast.castID = true, channel, castID
         cast.notInterruptible = notInterruptible and true or false
-
-        -- Milliseconds as the game reports them. Converted to seconds only when
-        -- they can be read at all; left untouched when they cannot, so they can
-        -- still be handed to the bar.
         cast.plain = not (IsSecret(startMS) or IsSecret(endMS))
-        if cast.plain then
-            cast.startTime = startMS / 1000
-            cast.endTime = endMS / 1000
-        else
-            cast.startTime = startMS
-            cast.endTime = endMS
-        end
+        if cast.plain then startMS, endMS = startMS / 1000, endMS / 1000 end
+        cast.startTime, cast.endTime = startMS, endMS
+        holdUntil, holdFailed = 0, false
+        if NS.db.unlocked then return end
 
-        NS.holdUntil = 0
-        NS.holdFailed = false
-
-        NS.CastBar:Begin()
+        Paint()
+        -- A secret text is passed on as it is; a missing one leaves no name.
+        if not IsSecret(text) and type(text) ~= "string" then text = "" end
+        castbar.spellText:SetText(text)
+        castbar.spark:SetShown(cast.plain)
+        -- Drawn before it is seen: no frame of the last cast's end.
+        Draw()
+        if cast.active then Style.FadeIn(castbar) end
     end
 
-    -- `failed` distinguishes a cast that was interrupted or refused from one
-    -- that simply finished. A finished cast is gone at once; a failed one is
-    -- held in its own colour for long enough to be read.
+    -- A finished cast is gone at once; a failed one is held, full, in its colour.
     function EndCast(failed)
         if not cast.active then return end
-
-        cast.active = false
-        cast.castID = nil
-        NS.holdFailed = failed and true or false
-
-        local hold = failed and NS.FAILED_HOLD or 0
-        NS.holdUntil = hold > 0 and (GetTime() + hold) or 0
-
-        NS.CastBar:Finish()
-    end
-    NS.EndCast = EndCast
-
-    function onEvent(event, ...)
-        if event == "PLAYER_ENTERING_WORLD" then
-            -- UIParent is unscaled at ADDON_LOADED, so a centred position worked
-            -- out there lands in the wrong coordinate space. Only an
-            -- addon-chosen position is recomputed here, never a dragged one.
-            if NS.db.autoPlaced then CenterBar() end
-            settled = true
-            Refresh()
+        cast.active, cast.castID = false, nil
+        holdFailed = failed
+        holdUntil = failed and GetTime() + NS.FAILED_HOLD or 0
+        if NS.db.unlocked then return end
+        if not failed then
+            Style.FadeOut(castbar)
             return
         end
+        ShowFull()
+        Style.FadeIn(castbar)
+    end
 
-        -- The swing bars take theirs first.
-        if NS.SwingBars.OnEvent(event, ...) then return end
-
-        -- (unit, castGUID, spellID, ...) on every cast event this module takes.
+    local function OnCastEvent(event, ...)
         local _, castID, _, interruptedBy = ...
-
         if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
            or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
-            -- Delay and channel-update are pushbacks and ticks: the cast carries
-            -- on, with new times, which is exactly what re-reading gives.
-            BeginCast()
-
+            BeginCast()   -- a pushback or tick is re-read too
         elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_FAILED_QUIET"
                or event == "UNIT_SPELLCAST_INTERRUPTED" then
-            -- A channel has no cast ID to be named in, and the game reports its
-            -- interruption as CHANNEL_STOP instead, so these never belong to one.
+            -- A channel's interruption comes as CHANNEL_STOP.
             if not cast.channel and EventIsOurs(castID) then EndCast(true) end
-
         elseif event == "UNIT_SPELLCAST_STOP" then
             if EventIsOurs(castID) then EndCast(false) end
-
         elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-            -- The fourth argument names whoever interrupted it, and is nil when
-            -- the channel simply ran its course. Asked secret-first, as above:
-            -- a name that cannot be read is still a name, so it was interrupted.
+            -- Nil when it ran its course; a secret interrupter is still one.
             EndCast(IsSecret(interruptedBy) or interruptedBy ~= nil)
-
-        elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
-            cast.notInterruptible = false
-            NS.CastBar:Refresh()
-
-        elseif event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
-            cast.notInterruptible = true
-            NS.CastBar:Refresh()
+        elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+            cast.notInterruptible = event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"
+            Paint()
         end
     end
 
-    function onUpdate()
-        NS.CastBar:OnUpdate()
-        NS.SwingBars.OnUpdate()
-        if not (NS.db.unlocked or cast.active or GetTime() < NS.holdUntil
-                or NS.SwingBars.Busy()) then
-            NS:Hide()
-        end
+    -- The bar alone, from the settings.
+    function Redraw()
+        local db = NS.db
+        Snap.Put(castbar, db)
+        castbar:SetSize(db.barWidth, db.barHeight)
+        castbar:SetFrameStrata(db.frameStrata)
+        castbar:EnableMouse(db.unlocked)
+        Paint()
+        Style.SetBackground(castbar.bg)
+        Style.BarLabels(castbar, castbar.spellText, castbar.timeText, db.textPadding)
+        castbar.spark:SetHeight(db.barHeight * Style.SPARK_HEIGHT)
+        Draw()
     end
 
-    -------------------------------------------------------------------------
-    -- Settings changed.
-    -------------------------------------------------------------------------
+    -- The game's casting bar shows itself at every cast: held down from its
+    -- OnShow too. Not a protected frame, so safe in combat.
+    PlayerCastingBarFrame:HookScript("OnShow", function(self) self:Hide() end)
 
     function Refresh()
-        NS.CastBar:Refresh()
-        NS.BlizzardCastbar.Refresh()
-        -- After the castbar: the swing bars are anchored to it until dragged.
+        Redraw()
+        PlayerCastingBarFrame:Hide()
+        Core.HoldEditMode(PlayerCastingBarFrame, true)
         NS.SwingBars.Refresh()
-        NS.BlizzardSwingTimer.Refresh()
-        -- And the row over it - the countdown and the combo points - which
-        -- takes its size, its look and its placement mode from this module.
-        for _, module in ipairs({ DogsForeverUI.FiveSecondRule, DogsForeverUI.ComboPoints }) do
-            if module and module.db and module.Redraw then module.Redraw() end
-        end
+        for _, row in ipairs(rows) do row.Redraw() end
         NS:Show()
     end
 
-    -- Unlocked and locked with the rest of the UI, in Edit Mode
-    -- (DogsForeverUI.lua): the bar is off screen except while something is
-    -- casting, so it shows there as a full bar to be placed.
-    function Unlock()
+    -- Only the position is saved: reading the size back rounded it a little on every drag.
+    Snap.Piece(castbar, NS, { name = "Castbar", id = "castbar" }, Redraw)
+
+    function NS.Unlock()
         NS.db.unlocked = true
-        NS.CastBar:Unlock()
         Refresh()
     end
 
-    function Lock()
+    function NS.Lock()
         NS.db.unlocked = false
-        NS.CastBar:Lock()
+        -- The preview goes at once, not faded like a finished cast.
+        if not cast.active then Style.HideNow(castbar) end
         Refresh()
     end
 
+    for _, event in ipairs({
+        "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
+        "UNIT_SPELLCAST_FAILED_QUIET", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
+        "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_CHANNEL_STOP",
+        "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
+    }) do
+        NS:RegisterUnitEvent(event, "player")
+    end
+    NS:RegisterEvent("PLAYER_ENTERING_WORLD")
+    -- Every event shows the frame: its OnUpdate runs only while there is
+    -- something to draw (a cast, a hold, a swing bar busy, the group placed).
+    NS:SetScript("OnEvent", function(_, event, ...)
+        if event == "PLAYER_ENTERING_WORLD" then
+            -- UIParent is unscaled at ADDON_LOADED: only the addon's own place is worked out again.
+            if NS.db.autoPlaced then CenterBar() end
+            settled = true
+            Refresh()
+        elseif not NS.SwingBars.OnEvent(event, ...) then
+            OnCastEvent(event, ...)
+        end
+        NS:Show()
+    end)
+    NS:SetScript("OnUpdate", function()
+        Draw()
+        NS.SwingBars.OnUpdate()
+        if not (NS.db.unlocked or cast.active or GetTime() < holdUntil or NS.SwingBars.Busy()) then
+            NS:Hide()
+        end
+    end)
+
+    NS.Init = Refresh
     NS.Refresh = Refresh
-    NS.Lock = Lock
-    NS.Unlock = Unlock
 
     DogsForeverUI:RegisterModule(NS)
 end

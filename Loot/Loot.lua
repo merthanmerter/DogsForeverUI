@@ -1,24 +1,104 @@
+-- Loot: two modules, the game's roll windows placed and a toast for each item looted.
+
+-------------------------------------------------------------------------------
+-- MODULE: Loot rolls  (DogsForeverUI.LootRolls, settings section "loot")
+-- The game's group loot roll windows on the addon's holder: the first in the
+-- middle of the screen by default, more stacked upwards (a post-hook on
+-- GroupLootContainer_Update). The managed container itself is never touched.
+-------------------------------------------------------------------------------
+
+DogsForeverUI.LootRolls = CreateFrame("Frame")
+
+do -- private scope
+    local NS = DogsForeverUI.LootRolls
+    local Style = DogsForeverUI.Style
+
+    NS.key = "loot"
+    NS.title = "Loot rolls"
+    NS.defaults = { unlocked = false }
+    NS.placement = { barLeft = true, barTop = true, autoPlaced = true }
+
+    local WIDTH, HEIGHT = 277, 67       -- a roll window
+
+    -- One roll window's place: shown in the look while unlocked, hidden otherwise.
+    local holder = CreateFrame("Frame", "DogsForeverUILootRolls", UIParent)
+    holder:SetFrameStrata("DIALOG")
+    holder.bg = holder:CreateTexture(nil, "BACKGROUND")
+    holder.bg:SetAllPoints(holder)
+    Style.SetBackground(holder.bg)
+    holder.border = Style.AddBorder(holder)
+    holder:Hide()
+    NS.holder = holder
+
+    local function Size()
+        local frame = _G.GroupLootFrame1
+        if frame then
+            local w, h = frame:GetWidth(), frame:GetHeight()
+            if w > 0 and h > 0 then return w, h end
+        end
+        return WIDTH, HEIGHT
+    end
+
+    -- The middle of the screen; again on entering the world until the player
+    -- places it (UIParent has no real size at ADDON_LOADED).
+    local function Place()
+        local db = NS.db
+        local w, h = Size()
+        db.barLeft = (GetScreenWidth() - w) / 2
+        db.barTop = -(GetScreenHeight() - h) / 2
+        db.autoPlaced = true
+    end
+
+    function NS.Normalise(db)
+        if db.barLeft == nil or db.barTop == nil then Place() end
+    end
+
+    -- Every roll window to the holder: the first centred on it, the rest the game's distance above.
+    local function Anchor()
+        local container = _G.GroupLootContainer
+        if not container or (InputUtil and InputUtil.IsGamepadUIEnabled()) then return end
+        for i = 1, container.maxIndex do
+            local frame = container.rollFrames[i]
+            if frame then
+                frame:ClearAllPoints()
+                frame:SetPoint("CENTER", holder, "CENTER", 0, container.reservedSize * (i - 1))
+            end
+        end
+    end
+    hooksecurefunc("GroupLootContainer_Update", Anchor)
+
+    local function Refresh()
+        local db = NS.db
+        DogsForeverUI.Snap.Put(holder, db)
+        holder:SetSize(Size())
+        holder:EnableMouse(db.unlocked)
+        holder:SetShown(db.unlocked)
+        Anchor()
+    end
+
+    DogsForeverUI.Snap.Piece(holder, NS, { name = "Loot Rolls", id = "loot" }, Refresh)
+
+    NS:RegisterEvent("PLAYER_ENTERING_WORLD")
+    NS:SetScript("OnEvent", function()
+        if NS.db.autoPlaced then Place() end
+        Refresh()
+    end)
+
+    NS.Init = Refresh
+    NS.Refresh = Refresh
+
+    DogsForeverUI:RegisterModule(NS)
+end
+
+-------------------------------------------------------------------------------
 -- MODULE: Loot toasts  (DogsForeverUI.LootToasts, settings section "toasts")
---
--- What the player loots, a toast each (FunLoot's idea): the item's icon cut
--- round in the game's own round-button ring, and right beside it a block of
--- left-aligned rows, wrapping when a row is too long - its name in its
--- quality's colour (a stackable one with how many the bags now hold, in
--- grey) and what it sells for; money added up on one toast. While placing
--- (Unlock Mode, and its Preview) samples show: a stack, money and a roll won.
--- A roll won is a toast twice as large with a row more - "You Won!" and the
--- roll - and the game's own roll-won alert is switched off (AlertFrame's
--- LOOT_ITEM_ROLL_WON; its other alerts stay the game's).
---
--- Shown the moment the loot line arrives: the item was just looted, so the
--- client has it cached and everything is read at once (FunLoot waited on an
--- item load every time). A toast stays DURATION seconds - held while the
--- mouse is over it, its tooltip shown - then fades; the same item or money
--- again adds to the toast on screen. Nothing runs while no toast shows.
---
--- By default over the focus frame, left edges level, the bottom level with
--- the cooldowns' (Core\DefaultPlaces.lua), anchored to nothing; the newest
--- toast at the bottom, older ones pushed up (or down: its Grow setting).
+-- A toast for each item looted (FunLoot's idea): the icon in the game's round
+-- ring, its name in its quality's colour (a stack with the bags' count) and
+-- what it sells for; money added up on one toast. A roll won is a toast twice
+-- as large with "You Won!" and the roll, replacing the game's roll-won alert.
+-- A toast stays DURATION seconds (held under the mouse), then fades; the same
+-- item again adds to it. Newest at the holder, older pushed up (or down).
+-------------------------------------------------------------------------------
 
 DogsForeverUI.LootToasts = CreateFrame("Frame")
 
@@ -27,7 +107,7 @@ do -- private scope
     local Core = DogsForeverUI
     local Style = Core.Style
 
-    local Layout, Refresh
+    local Layout
 
     NS.key = "toasts"
     NS.title = "Loot toasts"
@@ -39,22 +119,17 @@ do -- private scope
     }
     NS.placement = { barLeft = true, barTop = true, autoPlaced = true }
 
-    -- The width the first version had as its default and saved into the
-    -- player's settings: taken as "the default", which is the player frame's.
-    local OLD_DEFAULT_WIDTH = 260
+    local OLD_DEFAULT_WIDTH = 260               -- the first version's default, saved: taken as the default
     local DURATION, MAX = 5, 5
-    local GAP = 4                               -- daylight between two toasts
-    -- The game's round button, as LibDBIcon draws it (31 across): the ring 50
-    -- across from its top left, the round backing - the icon here - 24
-    -- across in its middle.
+    local GAP = 4                               -- between two toasts
+    -- The game's round button as LibDBIcon draws it (31 across): the ring 50, the icon 24.
     local RING, ICON = 50 / 31, 24 / 31
     local RING_FILE = "Interface\\Minimap\\MiniMap-TrackingBorder"
     local MONEY_KEY, MONEY_ICON = "money", "Interface\\Icons\\INV_Misc_Coin_01"
     -- The game's roll-won alert's icons (LootWonAlertFrame_SetUp): need, greed.
     local ROLL_ICONS = { "Interface\\Buttons\\UI-GroupLoot-Dice-Up", "Interface\\Buttons\\UI-GroupLoot-Coin-Up" }
     local OWNED = " |cff999999(%d)|r"           -- a stackable item: how many are in the bags
-    -- Shown while placing (Unlock Mode, and its Preview): a roll won, money
-    -- and a stack, bottom-most last.
+    -- Shown while placing: a roll won, money and a stack, bottom-most last.
     local SAMPLES = {
         { key = "item:12784", name = "Arcanite Reaper", quality = 4, icon = "Interface\\Icons\\INV_Axe_09",
           price = 90000, stack = 1, count = 1, roll = 87, rollType = 1 },
@@ -71,14 +146,11 @@ do -- private scope
     local LOOT_ONE = "^" .. Pattern(LOOT_ITEM_SELF) .. "$"
     local COINS = { [Pattern(GOLD_AMOUNT)] = 10000, [Pattern(SILVER_AMOUNT)] = 100, [Pattern(COPPER_AMOUNT)] = 1 }
 
-    -- The game's alert for a roll won: these toasts are it now.
+    -- The game's roll-won alert: these toasts are it now (its other alerts stay).
     AlertFrame:UnregisterEvent("LOOT_ITEM_ROLL_WON")
 
-    -- The first toast's place: what is dragged while unlocked (a sample
-    -- toast on it), hidden otherwise.
+    -- The first toast's place: dragged while unlocked, hidden otherwise.
     local holder = CreateFrame("Frame", "DogsForeverUILootToasts", UIParent)
-    holder:SetMovable(true)
-    holder:SetClampedToScreen(true)
     holder:Hide()
     NS.holder = holder
 
@@ -146,10 +218,8 @@ do -- private scope
         return t
     end
 
-    -- The toasts stacked from the holder, sized and lettered as set: the
-    -- round piece as high as set (a won roll's twice that), the text block
-    -- right against it in the rest of the width, both centred on the toast,
-    -- which is as high as the taller of the two.
+    -- Stacked from the holder: the round piece as high as set (a roll won's
+    -- twice that), the text in the rest of the width, the toast as high as the taller.
     function Layout()
         local db = NS.db
         local up = db.growDirection ~= "down"
@@ -195,8 +265,8 @@ do -- private scope
         return colour and CreateColor(colour[1], colour[2], colour[3]):WrapTextInColorCode(text) or text
     end
 
-    -- Its rows: the name (an item's with how many, and - a stackable one -
-    -- how many the bags hold) or Money, what it is worth, and a roll won.
+    -- Its rows: the name (with how many, and a stack's bag count) or Money,
+    -- what it is worth, and a roll won.
     local function Write(t)
         local money = t.key == MONEY_KEY
         local copper = money and t.copper or t.price * t.count
@@ -283,8 +353,7 @@ do -- private scope
         end
     end
 
-    -- Over the left of the screen, halfway up, until the addon's layout puts
-    -- it over the focus frame (Core\DefaultPlaces.lua).
+    -- Halfway up the screen's left until Core\Defaults.lua puts it over the focus frame.
     local function Place()
         local db = NS.db
         db.barLeft = Core.DefaultPlaces.EDGE_GAP
@@ -297,37 +366,17 @@ do -- private scope
         if db.barLeft == nil or db.barTop == nil then Place() end
     end
 
-    function Refresh()
+    local function Refresh()
         local db = NS.db
-        holder:ClearAllPoints()
-        holder:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
+        Core.Snap.Put(holder, db)
         holder:SetSize(db.barWidth, db.barHeight)
-        holder:SetUserPlaced(false)
         holder:EnableMouse(db.unlocked)
         holder:SetShown(db.unlocked)
         Samples(db.unlocked)
         Layout()
     end
 
-    holder:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and NS.db.unlocked then Core.Snap.Start(self) end
-    end)
-    -- Where it is now, kept: a drag's end, a nudge, or - locked or not -
-    -- following what it is anchored to (Core\Snap.lua).
-    local function SavePlace()
-        local db = NS.db
-        db.autoPlaced = false
-        db.barLeft = holder:GetLeft()
-        db.barTop = -(GetScreenHeight() - holder:GetTop())
-        Refresh()
-        Core.RefreshOptions()
-    end
-    holder:SetScript("OnMouseUp", function(self, button)
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        Core.Snap.Stop(self)
-        SavePlace()
-    end)
-    Core.Snap.Register(holder, { save = SavePlace, name = "Loot Toasts", id = "toasts" })
+    Core.Snap.Piece(holder, NS, { name = "Loot Toasts", id = "toasts" }, Refresh)
 
     NS:RegisterEvent("PLAYER_ENTERING_WORLD")
     NS:RegisterEvent("CHAT_MSG_LOOT")
@@ -361,17 +410,6 @@ do -- private scope
             if copper > 0 then Money(copper) end
         end
     end)
-
-    function NS.Unlock()
-        NS.db.unlocked = true
-        Refresh()
-    end
-
-    function NS.Lock()
-        NS.db.unlocked = false
-        holder:StopMovingOrSizing()
-        Refresh()
-    end
 
     NS.Init = Refresh
     NS.Refresh = Refresh

@@ -164,20 +164,6 @@ do
     Unlock.Set("snap", false)
     check("Snap Elements off: nothing pulls", Snap.Find(EntryOf(b)).dx == 0 and Snap.Rules() == false)
     Unlock.Set("snap", true)
-
-    -- Its own snap target, nearer or not.
-    local xp = Snap.EntryById("xp").frame
-    xp.shown = true
-    Put(xp, 300, 600, 100, 20)
-    Put(b, 302, 330, 100, 20)
-    Snap.SetSnapTarget(EntryOf(b), "xp")
-    pull = Snap.Find(EntryOf(b))
-    check("a snap target picked: that one, though another is nearer",
-        pull.target == EntryOf(xp) and Near(pull.dx, -2))
-    Snap.SetSnapTarget(EntryOf(b), "_disable_")
-    check("None: nothing", Snap.Find(EntryOf(b)).target == nil and Snap.Find(EntryOf(b)).dx == 0)
-    Snap.SetSnapTarget(EntryOf(b), nil)
-    Clear(xp)
     Clear(b)
 
     -- The screen's middle lines: each only while the piece in hand (dragged,

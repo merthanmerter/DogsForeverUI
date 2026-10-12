@@ -1,169 +1,140 @@
 -- MODULE: Cooldowns  (DogsForeverUI.Cooldowns, settings section "cooldowns")
---
--- The cooldown manager: spells and items the player adds by ID (its own tab
--- in Settings; hover a spell or an item to see its ID - TooltipIDs.lua). Each
--- is a bar with its icon on the left, its name and the time left, on screen
--- only while it cools down, draining to empty. The bars stack UP from their
--- spot (or down: the growDirection setting) in the order they were added, and
--- close up as they end.
---
--- A spell's cooldown is asked of the rank you know (NS.CooldownID), so an ID
--- added for any rank works. A spell can also track its buff's DURATION: while
--- the buff is on you, a bar of the same look counts it down. A spell with no
--- cooldown of its own always does; one with a cooldown tracks its Cooldown
--- (the default), its Duration, or Both - a dropdown on its row. Duration bars
--- are the game's (Durations.lua) and stack on top of the cooldown bars.
---
--- By default the first bar sits in line with the castbar - its top level with
--- the castbar's top - and over the player frame's health bar: its left edge,
--- its width. More bars stack up from there. That spot is worked out once (a
--- first start, a reset); the bars never move with the castbar or the player
--- frame after it - only when anchored to one on purpose, in Edit Mode.
---
--- NO "READY" / MISSING-BUFF REMINDERS. A mode that showed an icon while a
--- spell was ready and its buff was not on you existed for a few hours on
--- 2026-09-27 and was taken out: whether a buff is on you cannot be read by an
--- addon in combat on this client (every aura query needs aura access a
--- tainted caller does not get there, and GetPlayerAuraBySpellID answers
--- nothing for an aura it keeps secret), so the icons came up in combat with
--- the buff still on. Nothing that cannot work properly with the API ships.
---
--- The game's own Cooldown Manager is in this client but switched off, and it
--- has nothing to show for these classes and no way to add a spell to it.
---
--- COOLDOWNS ARE SECRET ON THIS CLIENT. In combat the start and length of a
--- spell's cooldown cannot be read, compared or worked with. A GCD bar this
--- addon once drew died of exactly that: it decided whether to show on a
--- duration object's IsActive(), which turned secret in combat and threw every
--- frame. So nothing here is decided on a number:
---
---   * whether a spell is cooling down is SpellCooldownInfo.isActive, and
---     whether that is only the global cooldown is .isOnGCD - both documented
---     NeverSecret, fields Blizzard marks for exactly this. isOnGCD is only to
---     be trusted when SPELL_UPDATE_COOLDOWN fires, so it is read then and
---     kept. Should isActive ever arrive secret after all, it is never looked
---     at: the bar keeps its place and the game sets its alpha from the
---     boolean (SetAlphaFromBoolean).
---   * a bar runs from C_Spell.GetSpellCooldownDuration - a duration object
---     handed to the status bar (SetTimerDuration), the global cooldown left
---     out - and its time is formatted by the game (FormatRemainingDuration),
---     rounded UP to the whole second as the game's own cooldown numbers on
---     the action buttons are (it was truncated at first, and read a second
---     behind them).
---
--- Items are not secret (C_Item.GetItemCooldown has no secrecy on it), so their
--- numbers are read - and checked first; an item whose numbers ever are secret
--- shows nothing rather than something wrong.
---
--- The list survives "Reset everything": it is the player's own list, not a
--- setting (NS.keep).
+-- Bars for spells and items added by ID while they cool down, or a spell's buff
+-- while it runs (the game's aura container). Also IDs on tooltips and talent ranks.
+-- Cooldown numbers are secret in combat: only isActive/isOnGCD (NeverSecret) are read.
 
 DogsForeverUI.Cooldowns = CreateFrame("Frame")
 
 do -- private scope
     local NS = DogsForeverUI.Cooldowns
     local Style = DogsForeverUI.Style
+    local Core = DogsForeverUI
     local IsSecret = issecretvalue
 
-    local Place, Refresh, Update, Lock, Unlock, Polling
+    local Place, Refresh, Update, Polling, SavePlace
+    local Durations = {}
+    NS.Durations = Durations
 
     NS.key = "cooldowns"
     NS.title = "Cooldowns"
 
-    -- Always on (the player, 2026-09-29): with nothing in the list there is
-    -- nothing on screen anyway.
     NS.defaults = {
         unlocked = false,
         barWidth = 150,          -- the whole row, icon included: the player frame's width
         barHeight = 20,          -- the castbar's height
-        growDirection = "up",    -- which way more bars stack from the first
+        growDirection = "up",
         frameStrata = "MEDIUM",
-        showTooltipIDs = true,   -- TooltipIDs.lua
-        tracked = {},            -- { kind, id, track, buff }, in order (see Durations.lua)
+        showTooltipIDs = true,
+        tracked = {},            -- { kind, id, track, buff }, in order
     }
     NS.placement = { barLeft = true, barTop = true, autoPlaced = true }
-    NS.keep = { tracked = true }
+    NS.keep = { tracked = true }   -- the player's own list survives Reset everything
 
-    NS.KINDS = { spell = "Spell", item = "Item" }
     NS.GROW = {
         { value = "up",   label = "Upward" },
         { value = "down", label = "Downward" },
     }
+    -- A spell with a cooldown and a buff: what its row tracks ("cooldown" is stored as nothing).
+    NS.TRACK = {
+        { value = "cooldown", label = "Cooldown" },
+        { value = "buff",     label = "Duration" },
+        { value = "both",     label = "Both" },
+    }
+
+    local KINDS = { spell = "Spell", item = "Item" }
     local VALID_GROW = { up = true, down = true }
-    -- Widths earlier versions had as their default and saved into the
-    -- player's settings: 200 (the first), then 130 (the castbars', briefly).
-    -- Either is taken as "the default", which is the player frame's.
-    local OLD_DEFAULT_WIDTHS = { [200] = true, [130] = true }
+    local BUFF_TRACKS = { buff = true, both = true }   -- the tracks saved; "cooldown" is nil
+    local OLD_DEFAULT_WIDTHS = { [200] = true, [130] = true }   -- earlier defaults, taken as today's
+    local NOT_AN_ID = "Type a spell or item ID: a whole number."
 
-    -- Daylight between two bars, as between the castbar group's: every border
-    -- is drawn outside its bar, so a gap has to leave room for two.
-    local GAP = 6 + 2 * Style.BORDER_INSET
-    NS.GAP = GAP   -- the buff bars' too (Durations.lua)
-    -- How often everything looks again - a cooldown ends with no event.
-    local POLL = 0.1
-    -- An item's cooldown this short is the global cooldown, not the item's.
-    local MIN_ITEM_COOLDOWN = 1.5
+    local GAP = 6 + 2 * Style.BORDER_INSET   -- room for two borders drawn outside their bars
+    local POLL = 0.1                          -- a cooldown ends with no event
+    local MIN_ITEM_COOLDOWN = 1.5             -- shorter is the global cooldown
     local QUESTION_MARK = "Interface\\Icons\\INV_Misc_QuestionMark"
-    local COLOR = Style.COOLDOWN_COLOR
+    local WEAK = { __mode = "k" }
+    local IMMEDIATE = Core.EnumValue("StatusBarInterpolation", "Immediate", 0)
+    local REMAINING = Core.EnumValue("StatusBarTimerDirection", "RemainingTime", 1)
+    local ELAPSED = Core.EnumValue("StatusBarTimerDirection", "ElapsedTime", 0)
 
-    local Call, Api = DogsForeverUI.Try, DogsForeverUI.Api
+    -- A game API call; nothing if it is missing or raises.
+    local function Ask(namespace, name, ...)
+        return Core.Try(Core.Api(namespace, name), ...)
+    end
 
-    local function Plain(value)
-        return not IsSecret(value)
+    local function Plain(value, kind)
+        return not IsSecret(value) and type(value) == kind
+    end
+
+    local function GrowsDown()
+        return NS.db.growDirection == "down"
+    end
+
+    -- A positive whole number, or nil.
+    local function WholeID(value)
+        local id = tonumber(value)
+        if id and id > 0 and id % 1 == 0 then return id end
     end
 
     ---------------------------------------------------------------------------
-    -- What an ID is: whether the game knows it, and its name and icon.
+    -- What an ID is
     ---------------------------------------------------------------------------
 
-    function NS.Exists(kind, id)
+    local function Exists(kind, id)
         if kind == "spell" then
-            if Call(Api("C_Spell", "DoesSpellExist"), id) then return true end
-            return type(Call(Api("C_Spell", "GetSpellName"), id)) == "string"
-        elseif kind == "item" then
-            return Call(Api("C_Item", "GetItemInfoInstant"), id) ~= nil
+            return Ask("C_Spell", "DoesSpellExist", id) or type(Ask("C_Spell", "GetSpellName", id)) == "string"
         end
-        return false
+        return Ask("C_Item", "GetItemInfoInstant", id) ~= nil
     end
 
-    -- An item's name may not be loaded yet: the game is asked for it and
-    -- GET_ITEM_INFO_RECEIVED redraws when it comes.
+    -- An item's name may not be loaded yet: asked for, GET_ITEM_INFO_RECEIVED redraws.
     function NS.Describe(entry)
         local name, icon
         if entry.kind == "spell" then
-            name = Call(Api("C_Spell", "GetSpellName"), entry.id)
-            icon = Call(Api("C_Spell", "GetSpellTexture"), entry.id)
+            name = Ask("C_Spell", "GetSpellName", entry.id)
+            icon = Ask("C_Spell", "GetSpellTexture", entry.id)
         else
-            name = Call(Api("C_Item", "GetItemNameByID"), entry.id)
-            icon = Call(Api("C_Item", "GetItemIconByID"), entry.id)
-            if not icon then
-                icon = select(5, Call(Api("C_Item", "GetItemInfoInstant"), entry.id))
-            end
-            if not name then Call(Api("C_Item", "RequestLoadItemDataByID"), entry.id) end
+            name = Ask("C_Item", "GetItemNameByID", entry.id)
+            icon = Ask("C_Item", "GetItemIconByID", entry.id) or select(5, Ask("C_Item", "GetItemInfoInstant", entry.id))
+            if not name then Ask("C_Item", "RequestLoadItemDataByID", entry.id) end
         end
-        if type(name) ~= "string" or IsSecret(name) then
-            name = NS.KINDS[entry.kind] .. " " .. entry.id
-        end
+        if not Plain(name, "string") then name = KINDS[entry.kind] .. " " .. entry.id end
         return name, icon or QUESTION_MARK
     end
 
-    ---------------------------------------------------------------------------
-    -- The list, as the options change it.
-    ---------------------------------------------------------------------------
-
-    local function Valid(entry)
-        return type(entry) == "table" and NS.KINDS[entry.kind] ~= nil
-            and type(entry.id) == "number" and entry.id > 0 and entry.id % 1 == 0
+    -- The rank the game knows by the spell's name (the one learned), and the name.
+    local function KnownRank(id)
+        local name = Ask("C_Spell", "GetSpellName", id)
+        if not Plain(name, "string") then return nil end
+        local info = Ask("C_Spell", "GetSpellInfo", name)
+        return type(info) == "table" and Plain(info.spellID, "number") and info.spellID or nil, name
     end
+
+    local function InBook(id)
+        return Ask("C_SpellBook", "IsSpellInSpellBook", id) == true
+    end
+
+    -- A spell in your spellbook (any rank), an item in your bags or worn.
+    local function Yours(kind, id)
+        if kind == "spell" then
+            if InBook(id) then return true end
+            local known = KnownRank(id)
+            return known ~= nil and InBook(known)
+        end
+        local count = Ask("C_Item", "GetItemCount", id)
+        if Plain(count, "number") and count > 0 then return true end
+        return Ask("C_Item", "IsEquippedItem", id) == true
+    end
+
+    ---------------------------------------------------------------------------
+    -- The list
+    ---------------------------------------------------------------------------
 
     -- Answers whether it was added, and a line to say so.
     function NS.Add(kind, id)
-        id = tonumber(id)
-        if not NS.KINDS[kind] then return false, "Unknown kind." end
-        if not id or id <= 0 or id % 1 ~= 0 then
-            return false, "Type a spell or item ID: a whole number."
-        end
-        if not NS.Exists(kind, id) then
+        id = WholeID(id)
+        if not KINDS[kind] then return false, "Unknown kind." end
+        if not id then return false, NOT_AN_ID end
+        if not Exists(kind, id) then
             return false, "No " .. kind .. " has the ID " .. id .. "."
         end
         local entry = { kind = kind, id = id }
@@ -178,40 +149,13 @@ do -- private scope
         return true, "Tracking " .. name .. "."
     end
 
-    -- Whether the player has it: a spell in the spellbook (that rank, or
-    -- another the game knows by its name), an item in the bags or worn.
-    local function Yours(kind, id)
-        if kind == "spell" then
-            local inBook = Api("C_SpellBook", "IsSpellInSpellBook")
-            if Call(inBook, id) == true then return true end
-            local name = Call(Api("C_Spell", "GetSpellName"), id)
-            if not (Plain(name) and type(name) == "string") then return false end
-            local info = Call(Api("C_Spell", "GetSpellInfo"), name)
-            local known = type(info) == "table" and info.spellID
-            return Plain(known) and type(known) == "number" and Call(inBook, known) == true
-        end
-        local count = Call(Api("C_Item", "GetItemCount"), id)
-        if Plain(count) and type(count) == "number" and count > 0 then return true end
-        return Call(Api("C_Item", "IsEquippedItem"), id) == true
-    end
-
-    -- What the options' one Add button calls, with whatever was typed:
-    --
-    --   * "spell 2983" or "item 6948" (also "Spell ID 2983", as the tooltips
-    --     write it, or just "s"/"i" before the number) adds that kind;
-    --   * a bare number is whichever of the two has that ID. Spell and item
-    --     IDs overlap, so when both do, it is the one you have - the spell in
-    --     your spellbook or the item in your bags or worn. When you have
-    --     neither, it is the spell: an item you do not carry has no cooldown
-    --     to show, while a spell that is never in a spellbook can still put a
-    --     buff on you - a proc like Clearcasting, the player's own example
-    --     (16870, also an item) - and its duration is tracked. The line says
-    --     how to get the item instead. Only when you have both is nothing
-    --     added, and the line names both, so the kind can be typed.
+    -- The options' Add box: "spell 2983", "Item ID 6948", "s2983"... or a bare
+    -- number. An ID both a spell and an item: the one you have; neither, the
+    -- spell (a proc's buff); both, nothing - the line names both.
     local PREFIXES = { s = "spell", spell = "spell", i = "item", item = "item" }
 
     function NS.AddID(text)
-        text = type(text) == "string" and text:lower():match("^%s*(.-)%s*$") or tostring(text or "")
+        text = tostring(text or ""):lower():match("^%s*(.-)%s*$")
         local word, number = text:match("^(%a+)%s*[:%s]%s*i?d?%s*:?%s*(%d+)$")
         if not word then word, number = text:match("^(%a+)(%d+)$") end
         if word then
@@ -220,15 +164,12 @@ do -- private scope
             return NS.Add(kind, number)
         end
 
-        local id = tonumber(text)
-        if not id or id <= 0 or id % 1 ~= 0 then
-            return false, "Type a spell or item ID: a whole number."
-        end
-        local spell, item = NS.Exists("spell", id), NS.Exists("item", id)
+        local id = WholeID(text)
+        if not id then return false, NOT_AN_ID end
+        local spell, item = Exists("spell", id), Exists("item", id)
         if spell and item then
             local mySpell, myItem = Yours("spell", id), Yours("item", id)
             if mySpell ~= myItem then return NS.Add(mySpell and "spell" or "item", id) end
-            local spellName = NS.Describe({ kind = "spell", id = id })
             local itemName = NS.Describe({ kind = "item", id = id })
             if not mySpell then
                 local ok, message = NS.Add("spell", id)
@@ -237,28 +178,18 @@ do -- private scope
                 end
                 return ok, message
             end
-            return false, id .. " is the spell " .. spellName .. " and the item " .. itemName
-                .. ": type spell " .. id .. " or item " .. id .. "."
+            return false, id .. " is the spell " .. NS.Describe({ kind = "spell", id = id })
+                .. " and the item " .. itemName .. ": type spell " .. id .. " or item " .. id .. "."
         end
         if spell then return NS.Add("spell", id) end
         if item then return NS.Add("item", id) end
         return false, "No spell or item has the ID " .. id .. "."
     end
 
-    -- For a spell with a cooldown: what its row tracks. "cooldown" (the
-    -- default, stored as nothing), "buff" (its buff's duration) or "both".
-    -- A spell with no cooldown has no choice: it tracks its duration.
-    NS.TRACK = {
-        { value = "cooldown", label = "Cooldown" },
-        { value = "buff",     label = "Duration" },
-        { value = "both",     label = "Both" },
-    }
-    local SAVED_TRACK = { buff = true, both = true }
-
     function NS.SetTrack(index, track)
         local entry = NS.db.tracked[index]
         if not entry then return end
-        entry.track = SAVED_TRACK[track] and track or nil
+        entry.track = BUFF_TRACKS[track] and track or nil
         Refresh()
     end
 
@@ -269,62 +200,80 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- Reading a cooldown: whether it is cooling down for real (true, false,
-    -- or a secret that is never looked at), the duration for its bar, and a
-    -- spell's charges.
+    -- What an entry tracks. A spell with no cooldown tracks its buff; whether
+    -- it leaves one is learned (entry.buff, saved): no API says so.
     ---------------------------------------------------------------------------
 
-    -- Whether a spell is only on the global cooldown, as read when
-    -- SPELL_UPDATE_COOLDOWN last fired - the only time the field is to be
-    -- trusted.
-    local onGCD = setmetatable({}, { __mode = "k" })
-    -- An item's duration object, reused.
-    local itemDurations = setmetatable({}, { __mode = "k" })
+    local hasCooldown = setmetatable({}, WEAK)   -- entry -> bool, until a refresh
 
-    -- The rank to ask about. Ranks of a spell share one cooldown, but the game
-    -- may answer nothing for a rank you do not know - one added by an old ID
-    -- after a higher rank was trained. So: the ID as added while it is in your
-    -- spellbook, otherwise the rank the game knows by the spell's name.
-    -- Worked out once and kept until the spellbook changes.
-    local cooldownIDs = setmetatable({}, { __mode = "k" })
+    local function HasCharges(charges)
+        return type(charges) == "table" and Plain(charges.maxCharges, "number") and charges.maxCharges > 1
+    end
 
+    -- An item always; a spell unless its base cooldown is 0 and it has no charges.
+    function NS.HasCooldown(entry)
+        if entry.kind ~= "spell" then return true end
+        local known = hasCooldown[entry]
+        if known == nil then
+            local ms = Core.Try(GetSpellBaseCooldown, entry.id)
+            known = not Plain(ms, "number") or ms > 0 or HasCharges(Ask("C_Spell", "GetSpellCharges", entry.id))
+            hasCooldown[entry] = known
+        end
+        return known
+    end
+
+    function NS.HasChoice(entry)
+        return NS.HasCooldown(entry) and entry.kind == "spell" and entry.buff == true
+    end
+
+    -- "cooldown", "buff", "both", or nil once a spell with no cooldown is seen to leave no buff.
+    function NS.TrackOf(entry)
+        if NS.HasChoice(entry) then return entry.track or "cooldown" end
+        if NS.HasCooldown(entry) then return "cooldown" end
+        if entry.buff ~= false then return "buff" end
+    end
+
+    function NS.ShowsCooldown(entry)
+        local track = NS.TrackOf(entry)
+        return track == "cooldown" or track == "both"
+    end
+
+    function NS.ShowsBuff(entry)
+        return BUFF_TRACKS[NS.TrackOf(entry)] == true
+    end
+
+    ---------------------------------------------------------------------------
+    -- Reading a cooldown: active (true, false, or a secret never looked at),
+    -- the duration for its bar, and a spell's charges.
+    ---------------------------------------------------------------------------
+
+    local onGCD = setmetatable({}, WEAK)          -- isOnGCD, trusted only on SPELL_UPDATE_COOLDOWN
+    local itemDurations = setmetatable({}, WEAK)  -- reused duration objects
+    local cooldownIDs = setmetatable({}, WEAK)    -- until a refresh
+
+    -- The game may answer nothing for a rank you don't know: the ID as added
+    -- while in your spellbook, else the rank it knows by the name.
     function NS.CooldownID(entry)
         local id = cooldownIDs[entry]
         if id then return id end
         id = entry.id
-        local inBook = Api("C_SpellBook", "IsSpellInSpellBook")
-        if not (inBook and Call(inBook, id) == true) then
-            local name = Call(Api("C_Spell", "GetSpellName"), id)
-            if Plain(name) and type(name) == "string" then
-                local info = Call(Api("C_Spell", "GetSpellInfo"), name)
-                if type(info) == "table" and Plain(info.spellID) and type(info.spellID) == "number" then
-                    id = info.spellID
-                end
-            end
-        end
+        if not InBook(id) then id = KnownRank(id) or id end
         cooldownIDs[entry] = id
         return id
     end
 
-    local function ForgetRanks()
-        for entry in pairs(cooldownIDs) do cooldownIDs[entry] = nil end
-    end
-
     local function SpellCooldown(entry, cooldownEvent)
         local id = NS.CooldownID(entry)
-        local charges = Call(Api("C_Spell", "GetSpellCharges"), id)
-        if type(charges) == "table" and Plain(charges.maxCharges)
-           and type(charges.maxCharges) == "number" and charges.maxCharges > 1 then
-            -- A spell with charges: the bar is the next charge coming back.
-            return charges.isActive, Call(Api("C_Spell", "GetSpellChargeDuration"), id),
-                charges.currentCharges
+        local charges = Ask("C_Spell", "GetSpellCharges", id)
+        if HasCharges(charges) then   -- the next charge coming back
+            return charges.isActive, Ask("C_Spell", "GetSpellChargeDuration", id), charges.currentCharges
         end
 
-        local info = Call(Api("C_Spell", "GetSpellCooldown"), id)
+        local info = Ask("C_Spell", "GetSpellCooldown", id)
         if type(info) ~= "table" then return false end
         local active = info.isActive
-        if not Plain(active) then
-            return active, Call(Api("C_Spell", "GetSpellCooldownDuration"), id, true)
+        if IsSecret(active) then
+            return active, Ask("C_Spell", "GetSpellCooldownDuration", id, true)
         end
         if not active then
             onGCD[entry] = nil
@@ -332,24 +281,21 @@ do -- private scope
         end
         if cooldownEvent or onGCD[entry] == nil then
             local gcd = info.isOnGCD
-            onGCD[entry] = Plain(gcd) and gcd == true
+            onGCD[entry] = not IsSecret(gcd) and gcd == true
         end
         if onGCD[entry] then return false end
-        return true, Call(Api("C_Spell", "GetSpellCooldownDuration"), id, true)
+        return true, Ask("C_Spell", "GetSpellCooldownDuration", id, true)
     end
 
     local function ItemCooldown(entry)
-        local start, length, enabled = Call(Api("C_Item", "GetItemCooldown"), entry.id)
-        if not (Plain(start) and Plain(length) and Plain(enabled)) then return false end
-        if type(start) ~= "number" or type(length) ~= "number" then return false end
+        local start, length, enabled = Ask("C_Item", "GetItemCooldown", entry.id)
+        if not (Plain(start, "number") and Plain(length, "number")) or IsSecret(enabled) then return false end
         if enabled == false or enabled == 0 then return false end
-        if start <= 0 or length <= MIN_ITEM_COOLDOWN or start + length <= GetTime() then
-            return false
-        end
+        if start <= 0 or length <= MIN_ITEM_COOLDOWN or start + length <= GetTime() then return false end
 
         local duration = itemDurations[entry]
         if not duration then
-            duration = Call(Api("C_DurationUtil", "CreateDuration"))
+            duration = Ask("C_DurationUtil", "CreateDuration")
             if not duration then return false end
             itemDurations[entry] = duration
         end
@@ -358,15 +304,8 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- The time left, formatted by the game: "45s", "1m 30s", "2h 5m". Blizzard's
-    -- own aura timer set-up (Blizzard_AuraContainerShared) with two units
-    -- instead of one. Two of them, each matching the game's own numbers for
-    -- the same thing, which round differently:
-    --
-    --   * cooldowns round UP, as the action buttons' cooldown numbers do
-    --     (truncated, they read a second behind them);
-    --   * buffs TRUNCATE, as the game's own buff timers do (Blizzard's aura
-    --     formatter; rounded up, the buff bars read a second ahead of them).
+    -- The time left, formatted by the game ("45s", "1m 30s"): cooldowns round
+    -- up like the action buttons, buffs truncate like the game's buff timers.
     ---------------------------------------------------------------------------
 
     local function MakeFormatter(rounding)
@@ -391,21 +330,17 @@ do -- private scope
     end
     local formatter = MakeFormatter("RoundUp")
     NS.formatter = formatter
-    NS.auraFormatter = MakeFormatter("Truncate")   -- the buff bars' (Durations.lua)
+    NS.auraFormatter = MakeFormatter("Truncate")
 
+    -- The text is secret in combat: handed on, never compared, every hand-over guarded.
     local function ShowTime(label, duration)
         if type(duration) ~= "table" and type(duration) ~= "userdata" then
             label:SetText("")
             return
         end
-        -- The text is secret in combat: handed on, never compared - not even
-        -- with nil - and every hand-over guarded, so a refusal is one blank
-        -- label, not an error ten times a second.
         if formatter then
             local ok, text = pcall(duration.FormatRemainingDuration, duration, formatter)
-            if ok and (IsSecret(text) or text ~= nil) and pcall(label.SetText, label, text) then
-                return
-            end
+            if ok and (IsSecret(text) or text ~= nil) and pcall(label.SetText, label, text) then return end
         end
         local ok, left = pcall(duration.GetRemainingDuration, duration)
         if ok and (IsSecret(left) or type(left) == "number")
@@ -416,90 +351,87 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- The bars: one per tracked entry, made as needed and kept.
+    -- The bars. The holder is the first bar's place, and what is dragged.
     ---------------------------------------------------------------------------
 
-    local EnumValue = DogsForeverUI.EnumValue
-    local IMMEDIATE = EnumValue("StatusBarInterpolation", "Immediate", 0)
-    local REMAINING = EnumValue("StatusBarTimerDirection", "RemainingTime", 1)
-
-    -- The anchor: the first bar's place. Bars go up (or down) from it. It is
-    -- what is dragged while unlocked.
     local holder = CreateFrame("Frame", "DogsForeverUICooldowns", UIParent)
-    holder:SetMovable(true)
-    holder:SetClampedToScreen(true)
     holder:Hide()
     NS.holder = holder
 
     local rows = {}
     NS.rows = rows
 
-    local function StartDrag(_, button)
-        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(holder) end
+    -- A bar's pieces on `frame`, into `p` (the row itself, or a buff bar's own table).
+    local function MakePieces(frame, p)
+        p.bg = frame:CreateTexture(nil, "BACKGROUND")
+        p.bg:SetAllPoints(frame)
+        p.icon = frame:CreateTexture(nil, "ARTWORK")
+        p.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        p.divider = frame:CreateTexture(nil, "ARTWORK")
+        p.bar = CreateFrame("StatusBar", nil, frame)
+        p.bar:SetMinMaxValues(0, 1)
+        p.bar:SetValue(0)
+        p.spark = Style.AddSpark(p.bar)
+        p.nameText = p.bar:CreateFontString(nil, "OVERLAY")
+        p.timeText = p.bar:CreateFontString(nil, "OVERLAY")
+        p.countText = frame:CreateFontString(nil, "OVERLAY")   -- a spell's charges, in the icon's corner
+        p.border = Style.AddBorder(frame)
+        return p
     end
 
-    -- Where it is now, kept: a drag's end, a nudge, or - locked or not -
-    -- following what it is anchored to (Core\Snap.lua).
-    local function SavePlace()
+    -- Size, fonts and paint. A buff bar brings `paint(bar)`, its own fill, and
+    -- `timeRoom`: its name keeps clear of the time by a fixed space, since the
+    -- game makes the time's text secret and a name anchored to it vanished.
+    local function LayOut(frame, p)
         local db = NS.db
-        db.autoPlaced = false
-        db.barLeft = holder:GetLeft()
-        db.barTop = -1 * (GetScreenHeight() - holder:GetTop())
-        Refresh()
-        DogsForeverUI.RefreshOptions()
+        local width, height = db.barWidth, db.barHeight
+        local px = Style.OnePixel(frame)
+        frame:SetSize(width, height)
+
+        p.icon:ClearAllPoints()
+        p.icon:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+        p.icon:SetSize(height, height)
+
+        p.divider:ClearAllPoints()
+        p.divider:SetPoint("TOPLEFT", p.icon, "TOPRIGHT", 0, 0)
+        p.divider:SetPoint("BOTTOMLEFT", p.icon, "BOTTOMRIGHT", 0, 0)
+        p.divider:SetWidth(px)
+        p.divider:SetColorTexture(unpack(Style.DIVIDER_COLOR))
+
+        -- One anchor and its own size, so its height is there to be read at once.
+        local bar = p.bar
+        bar:ClearAllPoints()
+        bar:SetPoint("TOPLEFT", p.divider, "TOPRIGHT", 0, 0)
+        bar:SetSize(math.max(1, width - height - px), height)
+
+        if p.paint then p.paint(bar) else Style.Paint(bar, Style.COOLDOWN_COLOR) end
+        Style.SetBackground(p.bg)
+
+        Style.BarLabels(bar, p.nameText, p.timeText, nil, nil, p.timeRoom)
+
+        p.countText:ClearAllPoints()
+        Style.SingleLine(p.countText)
+        Style.SetFont(bar, p.countText)
+        p.countText:SetPoint("BOTTOMRIGHT", p.icon, "BOTTOMRIGHT", -1, 1)
+
+        Style.PinSpark(p.spark, bar)
     end
 
-    local function EndDrag(_, button)
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        DogsForeverUI.Snap.Stop(holder)
-        SavePlace()
+    local function LayOutRow(row)
+        LayOut(row, row)
+        row:EnableMouse(NS.db.unlocked)
     end
 
-    -- Snapped by the whole stack of bars on screen, not just the first.
-    DogsForeverUI.Snap.Register(holder, {
-        save = SavePlace,
-        name = "Cooldowns", id = "cooldowns",
-        parts = function()
-            local list = {}
-            for _, row in pairs(rows) do list[#list + 1] = row end
-            return list
-        end,
-    })
-
-    local function NewRow()
-        local row = CreateFrame("Frame", nil, holder)
-        row:SetFrameLevel(holder:GetFrameLevel() + 2)
-        row:Hide()
-
-        row.bg = row:CreateTexture(nil, "BACKGROUND")
-        row.bg:SetAllPoints(row)
-        row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        row.divider = row:CreateTexture(nil, "ARTWORK")
-
-        local bar = CreateFrame("StatusBar", nil, row)
-        bar:SetMinMaxValues(0, 1)
-        bar:SetValue(0)
-        row.bar = bar
-        row.spark = Style.AddSpark(bar)
-        row.nameText = bar:CreateFontString(nil, "OVERLAY")
-        row.timeText = bar:CreateFontString(nil, "OVERLAY")
-        -- A spell's charges, in the icon's corner.
-        row.countText = row:CreateFontString(nil, "OVERLAY")
-
-        row.border = Style.AddBorder(row)
-
-        row:SetScript("OnMouseDown", StartDrag)
-        row:SetScript("OnMouseUp", EndDrag)
-        return row
-    end
-
-    local LayOutRow   -- below
-
+    -- Dragging a row moves the holder, and every row with it.
     local function RowAt(index)
         if not rows[index] then
-            rows[index] = NewRow()
-            LayOutRow(rows[index])
+            local row = CreateFrame("Frame", nil, holder)
+            row:SetFrameLevel(holder:GetFrameLevel() + 2)
+            row:Hide()
+            MakePieces(row, row)
+            Core.Snap.Draggable(row, NS, SavePlace, holder)
+            LayOutRow(row)
+            rows[index] = row
         end
         return rows[index]
     end
@@ -510,98 +442,20 @@ do -- private scope
         end
     end
 
-    -- Size, fonts and paint: everything that follows a setting. `parts` holds
-    -- the pieces - icon, divider, bar, spark, nameText, timeText, countText,
-    -- bg - which on a cooldown bar are the row's own fields and on a buff bar
-    -- (Durations.lua) are kept beside the game's button. A buff bar also
-    -- brings `paint(bar)`, its own fill, and `timeRoom`, the space kept
-    -- clear for its time (see Durations.lua for why).
-    function NS.LayOutParts(frame, parts)
-        local db = NS.db
-        local width, height = db.barWidth, db.barHeight
-        local px = Style.OnePixel(frame)
-        frame:SetSize(width, height)
-        -- The pieces; anchors to the bar's own frame go to `frame`, never to
-        -- this table (on a buff bar the two are different things).
-        local row = parts
-
-        row.icon:ClearAllPoints()
-        row.icon:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-        row.icon:SetSize(height, height)
-
-        row.divider:ClearAllPoints()
-        row.divider:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 0, 0)
-        row.divider:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 0, 0)
-        row.divider:SetWidth(px)
-        local d = Style.DIVIDER_COLOR
-        row.divider:SetColorTexture(d[1], d[2], d[3], d[4] or 1)
-
-        -- One anchor and a size of its own, so its height is there to be read
-        -- for the text and the spark straight away.
-        local bar = row.bar
-        bar:ClearAllPoints()
-        bar:SetPoint("TOPLEFT", row.divider, "TOPRIGHT", 0, 0)
-        bar:SetSize(math.max(1, width - height - px), height)
-
-        if row.paint then row.paint(bar) else Style.Paint(bar, COLOR) end
-        Style.SetBackground(row.bg)
-
-        for _, label in ipairs({ row.nameText, row.timeText }) do
-            label:ClearAllPoints()
-            Style.SingleLine(label)
-            Style.SetFont(bar, label)
-        end
-        row.nameText:SetJustifyH("LEFT")
-        row.nameText:SetPoint("LEFT", bar, "LEFT", 4, 0)
-        if row.timeRoom then
-            row.nameText:SetPoint("RIGHT", bar, "RIGHT", -row.timeRoom, 0)
-        else
-            row.nameText:SetPoint("RIGHT", row.timeText, "LEFT", -6, 0)
-        end
-        row.timeText:SetJustifyH("RIGHT")
-        row.timeText:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
-
-        row.countText:ClearAllPoints()
-        Style.SingleLine(row.countText)
-        Style.SetFont(bar, row.countText)
-        row.countText:SetPoint("BOTTOMRIGHT", row.icon, "BOTTOMRIGHT", -1, 1)
-
-        Style.PinSpark(row.spark, bar)
-    end
-
-    function LayOutRow(row)
-        NS.LayOutParts(row, row)
-        row:EnableMouse(NS.db.unlocked and true or false)
-    end
-
-    local function GrowsDown()
-        return NS.db.growDirection == "down"
-    end
-
-    ---------------------------------------------------------------------------
-    -- SLIDING. When a bar ends and the ones beyond it close up, they glide to
-    -- their new place rather than jump: each eases towards where it should
-    -- be, fast at first and slowing as it arrives (SLIDE_RATE: most of the
-    -- way in about a quarter of a second, whatever the frame rate), and a new
-    -- place set on the way simply becomes the new target. A frame that is not
-    -- on screen yet, or a change of which way the bars grow, is placed at
-    -- once - there is nothing to slide from. Only the addon's own frames move
-    -- here, by anchor offsets, so it is the same in combat.
-    ---------------------------------------------------------------------------
-
+    -- Sliding: bars closing up glide there, easing in (SLIDE_RATE: most of the
+    -- way in a quarter second at any frame rate); a new target on the way is
+    -- simply taken. Only our own frames move, by anchor offsets.
     local SLIDE_RATE = 12            -- per second: 1 - e^(-rate * t) of the way
     local SNAP = 0.5                 -- close enough to stop, in UI units
-    local sliding = setmetatable({}, { __mode = "k" })   -- frame -> { point, y, target }
-    local slider = CreateFrame("Frame")
-    slider:Hide()
+    local sliding = setmetatable({}, WEAK)   -- frame -> { point, y, target }
 
     local function PutAt(frame, point, y)
         frame:ClearAllPoints()
         frame:SetPoint(point, holder, point, 0, y)
     end
 
-    slider:SetScript("OnUpdate", function(self, elapsed)
-        local step = 1 - math.exp(-SLIDE_RATE * (elapsed or 0))
+    local WakeSlider = Core.Waker(function(elapsed)
+        local step = 1 - math.exp(-SLIDE_RATE * elapsed)
         local moving = false
         for frame, s in pairs(sliding) do
             if s.y ~= s.target then
@@ -612,99 +466,285 @@ do -- private scope
                 if y ~= s.target then moving = true end
             end
         end
-        if not moving then self:Hide() end
+        return moving
     end)
 
-    -- Put `frame` at `y` off the holder's `point` (TOPLEFT or BOTTOMLEFT),
-    -- gliding there unless `instant`.
-    function NS.SlideTo(frame, point, y, instant)
+    -- `frame` `count` bars up (or down) from the holder, gliding there unless
+    -- `instant` - or new, or after a change of direction: nothing to glide from.
+    local function StackAt(frame, count, instant)
+        local point = GrowsDown() and "TOPLEFT" or "BOTTOMLEFT"
+        local y = count * (NS.db.barHeight + GAP) * (GrowsDown() and -1 or 1)
         local s = sliding[frame]
         if instant or not s or s.point ~= point then
             sliding[frame] = { point = point, y = y, target = y }
             PutAt(frame, point, y)
+        elseif s.target ~= y then
+            s.target = y
+            WakeSlider()
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- Buff bars: the game's aura container for add-ons, filtered to every rank
+    -- of the tracked spells. The game fills and runs each button, nothing is
+    -- read; the addon shapes a button only as it is made (initializeFrame).
+    -- It won't say how many it shows, so its stack rides on the cooldown bars.
+    ---------------------------------------------------------------------------
+
+    local GROUP = "tracked"
+    local MAX_BARS = 20
+    local DARK = { 0.05, 0.05, 0.05, 1 }   -- the elapsed part, over the colour
+    local TIME_ROOM = 40                   -- kept clear for "59 m" and the like
+    local SHEEN, SHADE = 0.22, 0.25        -- as Style's sheen, under the game's fill
+    local LOOK_AFTER = 0.5                 -- seconds after a cast, to look for its buff
+
+    local entryRanks = setmetatable({}, WEAK)   -- entry -> { [id] = true }
+    local rankOwners = {}                       -- id -> { entry, ... }
+
+    -- Every ID of the spell's ranks you have, into `ids`: as added, the
+    -- game's by name, and the spellbook's of that name.
+    local function AddRanks(id, ids)
+        ids[id] = true
+        local known, name = KnownRank(id)
+        if not name then return end
+        if known then ids[known] = true end
+        local lines = Ask("C_SpellBook", "GetNumSpellBookSkillLines")
+        if not Plain(lines, "number") then return end
+        local bank = Core.EnumValue("SpellBookSpellBank", "Player", 0)
+        for line = 1, lines do
+            local skill = Ask("C_SpellBook", "GetSpellBookSkillLineInfo", line)
+            if type(skill) == "table" and Plain(skill.itemIndexOffset, "number")
+               and Plain(skill.numSpellBookItems, "number") then
+                for slot = skill.itemIndexOffset + 1, skill.itemIndexOffset + skill.numSpellBookItems do
+                    local item = Ask("C_SpellBook", "GetSpellBookItemInfo", slot, bank)
+                    if type(item) == "table" and Plain(item.name, "string") and item.name == name
+                       and Plain(item.spellID, "number") then
+                        ids[item.spellID] = true
+                    end
+                end
+            end
+        end
+    end
+
+    local function AurasReadable()
+        local secret = Ask("C_Secrets", "ShouldAurasBeSecret")
+        return not (IsSecret(secret) or secret == true)
+    end
+
+    local function BuffUp(ranks)
+        for id in pairs(ranks) do
+            local aura = Ask("C_UnitAuras", "GetPlayerAuraBySpellID", id)
+            if not IsSecret(aura) and aura ~= nil then return true end
+        end
+        return false
+    end
+
+    -- Each spell entry's ranks and each ID's entries; a buff already on you noticed.
+    local function MapRanks()
+        for id in pairs(rankOwners) do rankOwners[id] = nil end
+        local readable = AurasReadable()
+        for _, entry in ipairs(NS.db.tracked) do
+            if entry.kind == "spell" then
+                local ranks = {}
+                AddRanks(entry.id, ranks)
+                entryRanks[entry] = ranks
+                for id in pairs(ranks) do
+                    rankOwners[id] = rankOwners[id] or {}
+                    table.insert(rankOwners[id], entry)
+                end
+                if entry.buff ~= true and readable and BuffUp(ranks) then entry.buff = true end
+            end
+        end
+    end
+
+    -- After a cast: its buff seen means it has one; missing proves nothing
+    -- while auras are secret (combat), and "none" otherwise.
+    local function Look(entries)
+        local changed = false
+        local readable = AurasReadable()
+        for _, entry in ipairs(entries) do
+            local ranks = entryRanks[entry]
+            if ranks and tContains(NS.db.tracked, entry) then
+                local learned
+                if BuffUp(ranks) then learned = true elseif readable then learned = false end
+                if learned ~= nil and entry.buff ~= learned then
+                    entry.buff = learned
+                    changed = true
+                end
+            end
+        end
+        if changed then
+            Refresh()
+            Core.RefreshOptions()
+        end
+    end
+
+    local learner = CreateFrame("Frame")
+    learner:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    learner:SetScript("OnEvent", function(_, _, _, _, spellID)
+        if IsSecret(spellID) or not rankOwners[spellID] then return end
+        local entries = {}
+        for i, entry in ipairs(rankOwners[spellID]) do entries[i] = entry end
+        C_Timer.After(LOOK_AFTER, function() Look(entries) end)
+    end)
+
+    local pieces = setmetatable({}, WEAK)   -- button -> its pieces
+    local buttons = {}                      -- every one made, in order
+
+    -- The colour (with its sheen) is the background, the game fills the dark
+    -- with the time ELAPSED from the right: a timed buff drains like a
+    -- cooldown, a buff that never ends (a zero-length timer) stays full.
+    local function Build(button)
+        local p = MakePieces(button, {})
+        local bar = p.bar
+        local fill = bar:CreateTexture(nil, "BACKGROUND", nil, 1)
+        fill:SetAllPoints(bar)
+        fill:SetTexture(Style.FLAT_TEXTURE)
+        fill:SetVertexColor(Style.DURATION_COLOR[1], Style.DURATION_COLOR[2], Style.DURATION_COLOR[3], 1)
+        local sheen = bar:CreateTexture(nil, "BACKGROUND", nil, 2)
+        sheen:SetTexture(Style.FLAT_TEXTURE)
+        sheen:SetPoint("TOPLEFT", bar, "TOPLEFT")
+        sheen:SetPoint("BOTTOMRIGHT", bar, "RIGHT")
+        sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
+        local shade = bar:CreateTexture(nil, "BACKGROUND", nil, 2)
+        shade:SetTexture(Style.FLAT_TEXTURE)
+        shade:SetPoint("TOPLEFT", bar, "LEFT")
+        shade:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT")
+        shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
+
+        p.paint = function(statusBar)
+            Style.SetBarFill(statusBar)
+            statusBar:SetStatusBarColor(unpack(DARK))
+            statusBar:SetReverseFill(true)
+        end
+        p.timeRoom = TIME_ROOM
+        p.spark:SetAlpha(0)   -- its place would be the colour's end
+        pieces[button] = p
+        buttons[#buttons + 1] = button
+        LayOut(button, p)
+        p.width, p.height, p.px = NS.db.barWidth, NS.db.barHeight, p.divider:GetWidth()
+
+        -- Handed to the game, which runs them from here on.
+        Core.Call(button, "SetIcon", p.icon)
+        Core.Call(button, "SetDurationBar", bar, { interpolation = IMMEDIATE, direction = ELAPSED })
+        Core.Call(button, "SetDurationText", p.timeText,
+            NS.auraFormatter and { textFormatter = NS.auraFormatter } or nil)
+        Core.Call(button, "SetSpellName", p.nameText)
+        Core.Call(button, "SetApplicationCount", p.countText)
+    end
+
+    -- A new size for bars already made, only while auras aren't secret. Sizes only:
+    -- re-laying the game's name and time was refused half way and lost every name.
+    local function Resize()
+        if not AurasReadable() then return end
+        local width, height = NS.db.barWidth, NS.db.barHeight
+        for _, button in ipairs(buttons) do
+            local p = pieces[button]
+            if p.width ~= width or p.height ~= height then
+                p.width, p.height = width, height
+                pcall(button.SetSize, button, width, height)
+                pcall(p.icon.SetSize, p.icon, height, height)
+                pcall(p.bar.SetSize, p.bar, math.max(1, width - height - p.px), height)
+            end
+        end
+    end
+
+    local anchor = CreateFrame("Frame", nil, holder)
+    anchor:SetSize(1, 1)
+    Durations.anchor = anchor
+    local placedSlots, placedDown, placedHeight   -- what it was last placed for (nil: not since a refresh)
+
+    local function Direct(c)
+        local flow, down = AnchorUtil.FlowDirection, GrowsDown()
+        local point = down and "TOPLEFT" or "BOTTOMLEFT"
+        Core.Call(c, "SetFlowLayoutAxis", AnchorUtil.FlowLayoutAxis.Vertical)
+        Core.Call(c, "SetFlowLayoutAnchorPoint", point)
+        Core.Call(c, "SetFlowLayoutGrowthDirection", flow.Right, down and flow.Down or flow.Up)
+        Core.Call(c, "ClearAllPoints")
+        Core.Call(c, "SetPoint", point, anchor, point, 0, 0)
+    end
+
+    local function CreateContainer(ids)
+        local c = CreateFrame("AuraContainer", nil, holder, "CustomAuraContainerTemplate")
+        Core.Call(c, "SetEditModePreviewEnabled", false)
+        Core.Call(c, "SetUnit", "player")
+        Direct(c)
+        Core.Call(c, "AddAuraGroup", GROUP, "HELPFUL", {
+            maxFrameCount = MAX_BARS,
+            initializeFrame = Build,
+            candidateFilters = { includeSpellIDs = ids },
+            layout = { elementSpacing = GAP, lineSpacing = GAP },
+        })
+        Durations.container = c
+        return c
+    end
+
+    -- On top of `slots` cooldown bars; at once after a refresh.
+    function Durations.Follow(slots)
+        local db, down = NS.db, GrowsDown()
+        if slots == placedSlots and down == placedDown and db.barHeight == placedHeight then return end
+        local instant = placedSlots == nil
+        placedSlots, placedDown, placedHeight = slots, down, db.barHeight
+        StackAt(anchor, slots, instant)
+    end
+
+    -- Ranks, and whether a spell has a cooldown, worked out again.
+    function Durations.Refresh()
+        for entry in pairs(hasCooldown) do hasCooldown[entry] = nil end
+        for entry in pairs(cooldownIDs) do cooldownIDs[entry] = nil end
+        placedSlots = nil
+        MapRanks()
+        local ids = {}
+        for _, entry in ipairs(NS.db.tracked) do
+            if NS.ShowsBuff(entry) then
+                for id in pairs(entryRanks[entry]) do ids[id] = true end
+            end
+        end
+
+        local c = Durations.container
+        if not next(ids) then
+            if c then
+                Core.Call(c, "SetEnabled", false)
+                Core.Call(c, "Hide")
+            end
             return
         end
-        if s.target == y then return end
-        s.target = y
-        slider:Show()
-    end
-
-    -- Bars from the holder up (or down). A bar not yet on screen takes its
-    -- place at once.
-    local function BarSlot(row, slot, instant)
-        local db = NS.db
-        local offset = (slot - 1) * (db.barHeight + GAP)
-        local instantly = instant or not row:IsShown()
-        if GrowsDown() then
-            NS.SlideTo(row, "TOPLEFT", -offset, instantly)
-        else
-            NS.SlideTo(row, "BOTTOMLEFT", offset, instantly)
-        end
+        c = c or CreateContainer(ids)
+        Core.Call(c, "SetAuraGroupCandidateFilters", GROUP, { includeSpellIDs = ids })
+        Direct(c)
+        Resize()
+        Core.Call(c, "SetEnabled", true)
+        Core.Call(c, "Show")
+        Core.Call(c, "UpdateAllAuras")
     end
 
     ---------------------------------------------------------------------------
-    -- Placing.
+    -- Placing: in line with the castbar's top, over the player frame's left
+    -- edge - worked out once (first run, a reset), never following them after.
     ---------------------------------------------------------------------------
 
-    -- The addon's own spot: x from the player frame (its left edge, the
-    -- health bar's), y from the castbar (its top edge) - both as their
-    -- modules save them, TOPLEFT offsets from the top left of the screen.
-    -- (The castbar not placed yet - Reset everything puts the cooldowns
-    -- back before it - its own default top, never a guess near the top of
-    -- the screen: that guess, kept, took the castbar up there with it in the
-    -- default layout, 2026-10-03.)
-    local function DefaultSpot()
-        local fdb = DogsForeverUI.Frames and DogsForeverUI.Frames.db
-        local castbar = DogsForeverUI.Castbar
-        local cdb = castbar and castbar.db
-        local left, top = fdb and fdb.playerLeft, cdb and cdb.barTop
-        if type(top) ~= "number" and castbar and castbar.DefaultTop then top = castbar.DefaultTop() end
-        if type(left) == "number" and type(top) == "number" then return left, top end
-    end
-
-    -- First run, or a reset: at DefaultSpot, worked out ONCE from where the
-    -- player frame and the castbar are then - and from then on the bars stay
-    -- where they are: they never move with either (the player, 2026-10-02:
-    -- nothing moves with anything unless anchored to it on purpose, in Edit
-    -- Mode). Centred near the top of the screen if the frames have no place
-    -- yet - and worked out again once they have (PLAYER_ENTERING_WORLD).
-    local fromGuess = false
+    local fromGuess = false   -- the player frame had no place yet: again at PLAYER_ENTERING_WORLD
 
     function Place()
-        local db = NS.db
-        local left, top = DefaultSpot()
-        fromGuess = not left
-        if not left then
-            local screenWidth = GetScreenWidth() or 0
-            left = screenWidth > 0 and (screenWidth - db.barWidth) / 2 or 0
-            local castbar = DogsForeverUI.Castbar
-            top = castbar and castbar.DefaultTop and castbar.DefaultTop() or -200
-        end
-        db.barLeft, db.barTop = left, top
+        local db, castbar = NS.db, Core.Castbar
+        local left = Core.Frames.db.playerLeft
+        fromGuess = left == nil
+        db.barLeft = left or (GetScreenWidth() - db.barWidth) / 2
+        db.barTop = castbar.db.barTop or castbar.DefaultTop()
         db.autoPlaced = true
     end
 
-    local function Anchor()
-        local db = NS.db
-        holder:ClearAllPoints()
-        holder:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
-    end
-
+    -- Malformed or repeated entries go, the order kept; only kind, id, track and buff are kept.
     function NS.Normalise(db)
-        -- Anything malformed or twice in the list goes; the order is kept. What
-        -- a spell tracks is kept ("buff" or "both"; the cooldown is the
-        -- default and stored as nothing); anything else an older version saved
-        -- on an entry is dropped.
         local seen, clean = {}, {}
         if type(db.tracked) ~= "table" then db.tracked = {} end
         for _, entry in ipairs(db.tracked) do
-            if Valid(entry) then
+            if type(entry) == "table" and KINDS[entry.kind] and type(entry.id) == "number" and WholeID(entry.id) then
                 local key = entry.kind .. ":" .. entry.id
                 if not seen[key] then
                     seen[key] = true
                     clean[#clean + 1] = { kind = entry.kind, id = entry.id,
-                        track = SAVED_TRACK[entry.track] and entry.track or nil,
-                        -- learned: does it put a buff on you (Durations.lua)
+                        track = BUFF_TRACKS[entry.track] and entry.track or nil,
                         buff = (entry.buff == true or entry.buff == false) and entry.buff or nil }
                 end
             end
@@ -714,29 +754,21 @@ do -- private scope
 
         if not VALID_GROW[db.growDirection] then db.growDirection = "up" end
         if OLD_DEFAULT_WIDTHS[db.barWidth] then db.barWidth = NS.defaults.barWidth end
-
         if db.barLeft == nil or db.barTop == nil then Place() end
     end
 
     ---------------------------------------------------------------------------
-    -- Drawing.
+    -- Drawing
     ---------------------------------------------------------------------------
 
-    local function Appear(frame, instant)
-        if instant then Style.ShowNow(frame) else Style.FadeIn(frame) end
-    end
-
-    -- In Edit Mode: every bar, as it really looks - full, each with the name
-    -- of what it tracks - so there is something to drag and the space they
-    -- take shows. With nothing tracked, one bar stands in.
+    -- Unlocked: every bar full, named, to drag; one stands in for an empty list.
     local function ShowPlacing()
         local tracked = NS.db.tracked
         local count = math.max(1, #tracked)
         for index = 1, count do
             local row = RowAt(index)
-            local entry = tracked[index]
             local name, texture = "Cooldowns", QUESTION_MARK
-            if entry then name, texture = NS.Describe(entry) end
+            if tracked[index] then name, texture = NS.Describe(tracked[index]) end
             row.icon:SetTexture(texture)
             row.bar:SetMinMaxValues(0, 1)
             row.bar:SetValue(1)
@@ -744,7 +776,7 @@ do -- private scope
             row.countText:SetText("")
             row.nameText:SetText(name)
             row.timeText:SetText("")
-            BarSlot(row, index, true)
+            StackAt(row, index - 1, true)
             Style.ShowNow(row)
         end
         HideBeyond(count)
@@ -761,23 +793,18 @@ do -- private scope
         local secret = IsSecret(shown)
 
         if not (secret or shown == true) then
-            -- Fading out keeps its place until it is gone, so the bars beyond
-            -- it do not slide onto it.
-            if row:IsShown() then
-                BarSlot(row, slot + 1)
-                Style.FadeOut(row)
-                return slot + 1
-            end
-            return slot
+            -- Fading out keeps its place, so the bars beyond don't slide onto it.
+            if not row:IsShown() then return slot end
+            StackAt(row, slot)
+            Style.FadeOut(row)
+            return slot + 1
         end
 
-        slot = slot + 1
-        BarSlot(row, slot, instant)
+        StackAt(row, slot, instant or not row:IsShown())
         local name, texture = NS.Describe(entry)
         row.icon:SetTexture(texture)
         row.nameText:SetText(name)
-        if duration and type(row.bar.SetTimerDuration) == "function"
-           and pcall(row.bar.SetTimerDuration, row.bar, duration, IMMEDIATE, REMAINING) then
+        if duration and pcall(row.bar.SetTimerDuration, row.bar, duration, IMMEDIATE, REMAINING) then
             row.spark:SetAlpha(1)
         else
             row.bar:SetMinMaxValues(0, 1)
@@ -792,15 +819,16 @@ do -- private scope
             -- Never looked at: the game shows or hides it.
             Style.ShowNow(row)
             row:SetAlphaFromBoolean(shown, 1, 0)
+        elseif instant then
+            Style.ShowNow(row)
         else
-            Appear(row, instant)
+            Style.FadeIn(row)
         end
-        return slot
+        return slot + 1
     end
 
-    -- What every bar shows now. `cooldownEvent`: SPELL_UPDATE_COOLDOWN just
-    -- fired, so whether a spell is only on the global cooldown can be read.
-    -- `instant`: a setting changed, so bars appear at once rather than fade.
+    -- `cooldownEvent`: SPELL_UPDATE_COOLDOWN just fired, isOnGCD can be read.
+    -- `instant`: a setting changed, bars appear at once.
     function Update(cooldownEvent, instant)
         local db = NS.db
         local tracked = db.tracked
@@ -822,16 +850,13 @@ do -- private scope
             if NS.ShowsCooldown(entry) then
                 slot = ShowBar(index, entry, slot, cooldownEvent, instant)
             elseif rows[index] then
-                -- Only its buff: that bar is the game's, in the stack above.
-                Style.HideNow(rows[index])
+                Style.HideNow(rows[index])   -- its buff bar is the game's, above
             end
         end
         HideBeyond(#tracked)
-        -- The buff bars ride on top of however many cooldown bars there are.
-        NS.Durations.Follow(slot)
+        Durations.Follow(slot)
 
-        -- Polled on only while a bar is up, cooling down or fading out: one
-        -- that ends fires no event, but every one that starts does.
+        -- Polled only while a bar is up: an ending fires no event, a start does.
         local any = false
         for _, row in pairs(rows) do
             if row:IsShown() then any = true; break end
@@ -842,79 +867,259 @@ do -- private scope
 
     function Refresh()
         local db = NS.db
-        holder:SetFrameStrata(db.frameStrata or "MEDIUM")
+        holder:SetFrameStrata(db.frameStrata)
         holder:SetSize(db.barWidth, db.barHeight)
-        Anchor()
-        -- Cleared so the client's layout cache never wins over the position
-        -- saved here.
-        holder:SetUserPlaced(false)
+        Core.Snap.Put(holder, db)
 
-        -- Settings changed: whatever was on screen is redrawn at once, and
-        -- anything that should no longer be there goes at once too.
+        -- Settings changed: redrawn and replaced at once.
         for _, row in pairs(rows) do
             LayOutRow(row)
             Style.HideNow(row)
         end
-        ForgetRanks()
-        NS.Durations.Refresh()
+        Durations.Refresh()
         Update(true, true)
     end
 
-    -- Polled, because a cooldown that ends fires no event - and only while
-    -- there is a bar on screen for one to end on (Update says when).
-    local elapsedSince = 0
+    local elapsedSince, polling = 0, false
     local function Poll(_, elapsed)
         elapsedSince = elapsedSince + elapsed
         if elapsedSince < POLL then return end
         elapsedSince = 0
         Update(false)
     end
-    local polling = false
+
     function Polling(on)
         if on == polling then return end
         polling = on
         holder:SetScript("OnUpdate", on and Poll or nil)
     end
 
-    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "SPELL_UPDATE_COOLDOWN",
-                             "SPELL_UPDATE_CHARGES", "BAG_UPDATE_COOLDOWN",
-                             "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED" }) do
-        pcall(NS.RegisterEvent, NS, event)
+    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "SPELL_UPDATE_COOLDOWN", "SPELL_UPDATE_CHARGES",
+                             "BAG_UPDATE_COOLDOWN", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED" }) do
+        NS:RegisterEvent(event)
     end
     NS:SetScript("OnEvent", function(_, event)
         if event == "PLAYER_ENTERING_WORLD" then
-            -- A default place worked out before the frames had theirs: worked
-            -- out again now that they have (the frames place themselves on
-            -- this event first). Never one the player chose.
+            -- The frames are placed now: a guessed spot worked out again, never the player's.
             if NS.db.autoPlaced and fromGuess then Place() end
             Refresh()
-            DogsForeverUI.RefreshOptions()
+            Core.RefreshOptions()
             return
         end
-        if event == "GET_ITEM_INFO_RECEIVED" then DogsForeverUI.RefreshOptions() end
-        -- A spell learned: its ranks, and whether it has a cooldown, may be new.
-        if event == "SPELLS_CHANGED" then
-            ForgetRanks()
-            NS.Durations.Refresh()
-        end
+        if event == "GET_ITEM_INFO_RECEIVED" then Core.RefreshOptions() end
+        if event == "SPELLS_CHANGED" then Durations.Refresh() end
         Update(event == "SPELL_UPDATE_COOLDOWN")
     end)
 
-    function Unlock()
-        NS.db.unlocked = true
-        Refresh()
-    end
-
-    function Lock()
-        NS.db.unlocked = false
-        holder:StopMovingOrSizing()
-        Refresh()
-    end
+    -- Snapped by the whole stack on screen, not just the first bar.
+    SavePlace = Core.Snap.Piece(holder, NS, {
+        name = "Cooldowns", id = "cooldowns",
+        parts = function()
+            local list = {}
+            for _, row in pairs(rows) do list[#list + 1] = row end
+            return list
+        end,
+    }, Refresh)
+    holder:EnableMouse(false)   -- dragged by its rows: the scripts Piece set catch no clicks
 
     NS.Init = Refresh
     NS.Refresh = Refresh
-    NS.Lock = Lock
-    NS.Unlock = Unlock
 
-    DogsForeverUI:RegisterModule(NS)
+    Core:RegisterModule(NS)
+end
+
+-------------------------------------------------------------------------------
+-- IDs on tooltips: "Spell ID 2983" / "Item ID 6948", small and grey at the foot.
+-- One post-call for every kind, added at the first PLAYER_ENTERING_WORLD so the
+-- line comes last. A secret ID is never read: the line's SetFormattedText gets it.
+-------------------------------------------------------------------------------
+
+do -- private scope
+    local Cooldowns = DogsForeverUI.Cooldowns
+    local Core = DogsForeverUI
+    local IsSecret = issecretvalue
+
+    local GREY = { 0.55, 0.55, 0.55 }
+    local SPELL, ITEM = "Spell ID", "Item ID"
+    local TEXT_SIZE = 10
+    local SECRET_ROOM = "000000"   -- a secret ID's line, as wide as its number
+    local WEAK = { __mode = "k" }
+    -- The C_TooltipInfo getters of a unit's aura.
+    local AURA_GETTERS = {
+        GetUnitAura = true, GetUnitAuraByAuraInstanceID = true,
+        GetUnitBuff = true, GetUnitBuffByAuraInstanceID = true,
+        GetUnitDebuff = true, GetUnitDebuffByAuraInstanceID = true,
+    }
+
+    local restore = setmetatable({}, WEAK)   -- tooltip -> { line = its own font }
+    local added = setmetatable({}, WEAK)     -- tooltip -> its line since last cleared (processed twice: one line)
+    local hooked = setmetatable({}, WEAK)
+
+    -- The tooltips' face (the addon's) at TEXT_SIZE: their small font is 12 too.
+    local idFont
+    local function IDFont()
+        if not idFont then
+            idFont = CreateFont("DogsForeverUITooltipIDFont")
+            local file, _, flags = GameTooltipTextSmall:GetFont()
+            idFont:SetFont(file, TEXT_SIZE, flags or "")
+        end
+        return idFont
+    end
+
+    -- The next tooltip to use that line has its normal size again.
+    local function Cleared(tooltip)
+        added[tooltip] = nil
+        for line, font in pairs(restore[tooltip] or {}) do line:SetFontObject(font) end
+        restore[tooltip] = nil
+    end
+
+    local function LastLine(tooltip)
+        local name, count = tooltip:GetName(), tooltip:NumLines()
+        if IsSecret(name) or IsSecret(count) or type(name) ~= "string" or count < 1 then return nil end
+        return _G[name .. "TextLeft" .. count]
+    end
+
+    local function Number(value)
+        if IsSecret(value) or type(value) ~= "number" or value <= 0 then return nil end
+        return value
+    end
+
+    -- What the tooltip was built from: C_TooltipInfo's getter and its arguments.
+    local function BuiltFrom(tooltip)
+        if not tooltip.GetPrimaryTooltipInfo then return nil end
+        local ok, info = pcall(tooltip.GetPrimaryTooltipInfo, tooltip)
+        if ok and type(info) == "table" then return info end
+    end
+
+    -- An action button (a spell, an item, a macro's), a pet button, a stance.
+    local function FromGetter(tooltip)
+        local info = BuiltFrom(tooltip)
+        if not info or type(info.getterArgs) ~= "table" then return end
+        local getter, first = info.getterName, info.getterArgs[1]
+        if IsSecret(getter) or IsSecret(first) or first == nil then return end
+
+        if getter == "GetAction" then
+            local kind, id, subType = Core.Try(GetActionInfo, first)
+            if IsSecret(kind) or IsSecret(subType) then return end
+            -- A macro showing a spell or item hands back its ID, the subtype saying which.
+            if kind == "spell" or (kind == "macro" and subType == "spell") then return SPELL, Number(id) end
+            if kind == "item" or (kind == "macro" and subType == "item") then return ITEM, Number(id) end
+            if kind == "macro" then return SPELL, Number((Core.Try(GetMacroSpell, id))) end
+        elseif getter == "GetPetAction" then
+            return SPELL, Number((select(7, Core.Try(GetPetActionInfo, first))))
+        elseif getter == "GetShapeshift" then
+            return SPELL, Number((select(4, Core.Try(GetShapeshiftFormInfo, first))))
+        end
+    end
+
+    -- A field of the tooltip data, which may be a secret table (each field comes back secret).
+    local function Field(data, key)
+        if type(data) ~= "table" and not issecrettable(data) then return nil end
+        local ok, value = pcall(function() return data[key] end)
+        if ok then return value end
+    end
+
+    -- The label for a plain tooltip data kind.
+    local function LabelOf(kind)
+        local kinds = Enum.TooltipDataType
+        if kind == kinds.Spell or kind == kinds.UnitAura then return SPELL end
+        if kind == kinds.Item or kind == kinds.Toy then return ITEM end
+    end
+
+    -- The line's label and the ID, or nothing; true third when the ID is secret.
+    local function Resolve(tooltip, data)
+        local kind, raw = Field(data, "type"), Field(data, "id")
+        local plainKind = not IsSecret(kind) and kind ~= nil
+        if IsSecret(raw) then
+            local label
+            if plainKind then
+                label = LabelOf(kind)
+            else
+                -- The kind secret too: the getter says whether it was an aura's.
+                local info = BuiltFrom(tooltip)
+                local getter = info and info.getterName
+                if not IsSecret(getter) and AURA_GETTERS[getter] then label = SPELL end
+            end
+            if label then return label, raw, true end
+            return
+        end
+        local id = Number(raw)
+        if id and plainKind then
+            local label = LabelOf(kind)
+            if label then return label, id end
+            -- A mount's data carries the mount's ID: its spell is in the journal.
+            if kind == Enum.TooltipDataType.Mount then
+                local spell = Number((select(2, Core.Try(Core.Api("C_MountJournal", "GetMountInfoByID"), id))))
+                if spell then return SPELL, spell end
+            end
+        end
+        local label, fromGetter = FromGetter(tooltip)
+        if label and fromGetter then return label, fromGetter end
+    end
+
+    local function AddLine(tooltip, data)
+        if not Cooldowns.db.showTooltipIDs then return end
+        -- `label` stands for the ID: the ID itself may be secret, never tested.
+        local label, id, secret = Resolve(tooltip, data)
+        if not label then return end
+        if secret then
+            -- Shown only through the line itself: no line without a named tooltip.
+            local name = tooltip:GetName()
+            if IsSecret(name) or type(name) ~= "string" then return end
+        end
+        local text = label .. " " .. (secret and SECRET_ROOM or id)
+        if added[tooltip] == text then return end
+        added[tooltip] = text
+
+        if not hooked[tooltip] then
+            hooked[tooltip] = true
+            tooltip:HookScript("OnTooltipCleared", Cleared)
+        end
+        tooltip:AddLine(text, unpack(GREY))
+        local line = LastLine(tooltip)
+        if line then
+            if secret then line:SetFormattedText(label .. " %d", id) end
+            local fonts = restore[tooltip] or {}
+            restore[tooltip] = fonts
+            if fonts[line] == nil then fonts[line] = line:GetFontObject() or GameTooltipText end
+            line:SetFontObject(IDFont())
+        end
+        tooltip:Show()
+    end
+
+    local loader = CreateFrame("Frame")
+    loader:RegisterEvent("PLAYER_ENTERING_WORLD")
+    loader:SetScript("OnEvent", function(self)
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        local processor = TooltipDataProcessor
+        if processor then processor.AddTooltipPostCall(processor.AllTypes, AddLine) end
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Talent ranks: "1/5" on a class talent button, not the game's bare "1".
+    -- One-rank talents and buttons the game leaves blank keep its text.
+    ---------------------------------------------------------------------------
+
+    local function AfterSpendText(button, text)
+        local talents = PlayerSpellsFrame and PlayerSpellsFrame.TalentsFrame
+        if not (talents and button.GetTalentFrame and button:GetTalentFrame() == talents) then return end
+        local info = button.nodeInfo
+        if text == nil or tostring(text) == "" or type(info) ~= "table" then return end
+        local current, max = info.currentRank, info.maxRanks
+        if type(current) ~= "number" or type(max) ~= "number" or max <= 1 then return end
+        local shown = current .. "/" .. max
+        if button.SpendText then button.SpendText:SetText(shown) end
+        for _, shadow in ipairs(button.spendTextShadows or {}) do shadow:SetText(shown) end
+    end
+
+    -- Hooked once the game's talent code is there.
+    local talentLoader = CreateFrame("Frame")
+    local function HookTalents()
+        if not TalentButtonUtil then return end
+        hooksecurefunc(TalentButtonUtil, "SetSpendText", AfterSpendText)
+        talentLoader:UnregisterAllEvents()
+    end
+    talentLoader:RegisterEvent("ADDON_LOADED")
+    talentLoader:SetScript("OnEvent", HookTalents)
+    HookTalents()
 end

@@ -1,165 +1,90 @@
 -- MODULE: XP bar  (DogsForeverUI.XPBar, settings section "xp")
---
--- An experience bar of the addon's own, in the addon's one look, at any size.
--- While a faction is watched ("Show as experience bar"), it shows that
--- reputation instead, in the standing's colour (see WatchedReputation).
---
--- The game's own XP bar cannot be made smaller than Edit Mode's slider allows
--- (half its width, and never any thinner) without taking it apart: its frame
--- art and its segment dividers are built for the size the game gives it, it is
--- part of the stack the protected action bars are laid out on, and Edit Mode's
--- settings must not be written from an addon. The castbar went the same way -
--- see the note on the abandoned castbar resizer: owning the frame beats
--- negotiating with Blizzard's. So this draws one, and the game's is faded out
--- while it is on (BlizzardXPBar.lua).
---
--- There is no text on the bar, by request: it is a bar and nothing else. The
--- numbers are in the tooltip on hover.
---
--- XP is not a secret value on this client, so the numbers are read. They are
--- still asked about first, and a value that cannot be read is handed straight
--- to the bar with no rested shading or tooltip, which both need arithmetic.
+-- Rested XP shaded beyond it, the numbers on hover; a watched reputation shows
+-- in it instead, an honor bar stacks over it. The game's bars are only faded:
+-- their container is in the stack the protected action bars are laid out on.
 
 DogsForeverUI.XPBar = CreateFrame("Frame")
 
 do -- private scope
     local NS = DogsForeverUI.XPBar
     local Style = DogsForeverUI.Style
+    local Core = DogsForeverUI
     local IsSecret = issecretvalue
+    local Number = BreakUpLargeNumbers
 
-    local Place, Refresh, Update, Lock, Unlock
+    local FALLBACK_BOTTOM = 64               -- about the game's XP bar, when it cannot be measured
+    local HONOR_GAP = 2 + 2 * Style.BORDER_INSET
+    local RENOWN_COLOR = { 0.0, 0.6, 1.0 }
+    local BARS = StatusTrackingBarInfo.BarsEnum
+    local OURS = { [BARS.Experience] = true, [BARS.Reputation] = true, [BARS.Honor] = true }
+    local CONTAINERS = { MainStatusTrackingBarContainer, SecondaryStatusTrackingBarContainer }
 
     NS.key = "xp"
     NS.title = "XP bar"
 
-    -- Always on, the rested XP always shaded in (the player, 2026-09-29): only
-    -- its size, layer and place are set.
     NS.defaults = {
         unlocked = false,
         barWidth = 300,
         barHeight = 10,
         frameStrata = "MEDIUM",
     }
-
     NS.placement = { barLeft = true, barTop = true, autoPlaced = true }
 
-    -- The bar, the rested XP shaded in beyond it, and the frame they sit in.
     local bar = CreateFrame("StatusBar", "DogsForeverUIXPBar", UIParent)
     bar:SetFrameLevel(3)
     bar:Hide()
-
+    bar:EnableMouse(true)                    -- the tooltip, and the drag while unlocked
     local rested = CreateFrame("StatusBar", nil, bar)
     rested:SetFrameLevel(2)
     rested:SetAllPoints(bar)
-
-    -- The background belongs to the rested bar, which sits under the XP bar: on
-    -- the XP bar itself it would be drawn over the rested shading.
+    -- The background is the rested bar's: on the XP bar it would cover the shading.
     bar.bg = rested:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints(bar)
     bar.border = Style.AddBorder(bar)
-    -- The spark at the end of the XP, as on the castbar.
     bar.spark = Style.AddSpark(bar)
-
     NS.bar = bar
     NS.rested = rested
 
-    -- THE HONOR BAR, stacked over the XP bar: as wide, two thirds as tall,
-    -- two pixels between their borders. Shown whenever the game would show its
-    -- own (honor watched as XP, a battleground, world PvP), which is faded out
-    -- like its XP bar (BlizzardXPBar.lua). Not the XP bar's child: at the
-    -- level cap, with no XP bar, it takes the XP bar's place.
-    local HONOR_GAP = 2 + 2 * Style.BORDER_INSET
+    -- Not the XP bar's child: at the level cap it takes the XP bar's place.
     local honor = CreateFrame("StatusBar", "DogsForeverUIHonorBar", UIParent)
     honor:Hide()
-    honor:EnableMouse(true)   -- for the tooltip
+    honor:EnableMouse(true)                  -- the tooltip
     honor.bg = honor:CreateTexture(nil, "BACKGROUND")
     honor.bg:SetAllPoints(honor)
     honor.border = Style.AddBorder(honor)
     honor.spark = Style.AddSpark(honor)
     NS.honor = honor
 
-    -- How far above the bottom of the screen the bar sits when the game's own
-    -- XP bar cannot be measured: about where that bar is by default.
-    local FALLBACK_BOTTOM = 64
-
-    local function Number(value)
-        return BreakUpLargeNumbers and BreakUpLargeNumbers(value) or tostring(value)
-    end
-
-    -- Whether the game would show an XP bar at all: not at the level cap, not
-    -- with XP gain switched off, not under a game rule that disables it. The
-    -- game's own answer, asked of its own helper when there is one.
-    local function XPToShow()
-        if type(GameRulesUtil) == "table" and type(GameRulesUtil.CanShowExperienceBar) == "function" then
-            local ok, can = pcall(GameRulesUtil.CanShowExperienceBar)
-            if ok then return can and true or false end
-        end
-        if type(IsXPUserDisabled) == "function" and IsXPUserDisabled() then return false end
-        local level, cap = UnitLevel("player"), GetMaxPlayerLevel and GetMaxPlayerLevel()
-        if IsSecret(level) or type(cap) ~= "number" then return true end
-        return level < cap
-    end
-
-    -- A REPUTATION SHOWN AS THE XP BAR. Ticking "Show as experience bar" for a
-    -- faction (the reputation panel) watches it, and the game then puts that
-    -- reputation in its own bar at the bottom - with the XP bar pushed off to
-    -- a second one. With this bar on, the watched reputation is shown here
-    -- instead, in the colour of the standing (the game's FACTION_BAR_COLORS:
-    -- red, orange, yellow, green), and the game's reputation bar is faded out
-    -- like its XP bar (BlizzardXPBar.lua). Unticked, the bar is the XP bar
-    -- again. Worked out as the game's own reputation bar works it out
-    -- (ReputationStatusBarMixin:Update): the standing within its tier, or
-    -- within a friendship rank, or the renown level of a major faction (drawn
-    -- blue, as the game draws it) - the last two only where this client has
-    -- them. The name and numbers are in the tooltip, as for XP.
-    local RENOWN_COLOR = { 0.0, 0.6, 1.0 }
-    local REACTION_FALLBACK = {
-        { 0.8, 0.13, 0.13 }, { 0.8, 0.13, 0.13 }, { 0.75, 0.27, 0.0 }, { 0.9, 0.7, 0.0 },
-        { 0.0, 0.6, 0.1 }, { 0.0, 0.6, 0.1 }, { 0.0, 0.6, 0.1 }, { 0.0, 0.6, 0.1 },
-    }
-
-    local function Call(fn, ...)
-        if type(fn) ~= "function" then return nil end
-        local ok, a, b, c, d = pcall(fn, ...)
-        if ok then return a, b, c, d end
-    end
-
     local function ReactionColour(reaction)
-        local colours = _G.FACTION_BAR_COLORS
-        local colour = type(colours) == "table" and colours[reaction]
-        if type(colour) == "table" and type(colour.r) == "number" then
-            return { colour.r, colour.g, colour.b }
-        end
-        return REACTION_FALLBACK[reaction] or REACTION_FALLBACK[4]
+        local c = FACTION_BAR_COLORS[reaction] or FACTION_BAR_COLORS[4]
+        return { c.r, c.g, c.b }
     end
 
     local function StandingLabel(reaction)
-        local key = "FACTION_STANDING_LABEL" .. tostring(reaction)
-        if type(GetText) == "function" then
-            local text = Call(GetText, key, UnitSex and UnitSex("player") or nil)
-            if type(text) == "string" then return text end
-        end
-        return type(_G[key]) == "string" and _G[key] or nil
+        local key = "FACTION_STANDING_LABEL" .. reaction
+        return Core.Try(GetText, key, UnitSex("player")) or _G[key]
     end
 
+    -- The watched reputation ("Show as experience bar"), worked out as the
+    -- game's bar does (ReputationStatusBarMixin:Update): the standing within
+    -- its tier, a friendship rank, or a major faction's renown, in blue.
     local function WatchedReputation()
-        local rep = type(C_Reputation) == "table" and Call(C_Reputation.GetWatchedFactionData)
-        if type(rep) ~= "table" or not rep.factionID or rep.factionID == 0 then return nil end
+        local rep = C_Reputation.GetWatchedFactionData()
+        if not rep or rep.factionID == 0 then return end
         local id = rep.factionID
         local low, high, value = rep.currentReactionThreshold, rep.nextReactionThreshold, rep.currentStanding
-        local colour = ReactionColour(rep.reaction)
-        local label = StandingLabel(rep.reaction)
+        local colour, label = ReactionColour(rep.reaction), StandingLabel(rep.reaction)
 
-        if Call(C_Reputation.IsMajorFaction, id) then
-            local major = type(C_MajorFactions) == "table" and Call(C_MajorFactions.GetMajorFactionData, id)
-            if type(major) == "table" and major.renownLevelThreshold then
+        if C_Reputation.IsMajorFaction(id) then
+            local major = C_MajorFactions.GetMajorFactionData(id)
+            if major and major.renownLevelThreshold then
                 low, high, value = 0, major.renownLevelThreshold, major.renownReputationEarned or 0
                 label = major.renownLevel and ("Renown " .. major.renownLevel) or label
                 colour = RENOWN_COLOR
             end
-        elseif type(C_GossipInfo) == "table" then
-            local friend = Call(C_GossipInfo.GetFriendshipReputation, id)
-            if type(friend) == "table" and (friend.friendshipFactionID or 0) > 0 then
+        else
+            local friend = C_GossipInfo.GetFriendshipReputation(id)
+            if friend and friend.friendshipFactionID > 0 then
                 if friend.nextThreshold then
                     low, high, value = friend.reactionThreshold, friend.nextThreshold, friend.standing
                 else
@@ -171,47 +96,31 @@ do -- private scope
         end
 
         if IsSecret(low) or IsSecret(high) or IsSecret(value) then
-            -- Handed to the bar as they are; nothing is worked out from them.
             return { name = rep.name, colour = colour, secret = true, low = low, high = high, value = value }
         end
-        low, high, value = tonumber(low) or 0, tonumber(high) or 1, tonumber(value) or 0
         local max, current = high - low, value - low
         if max <= 0 then max, current = 1, 1 end   -- the top of the last tier: full
         return { name = rep.name, label = label, colour = colour,
-                 value = math.max(0, math.min(current, max)), max = max }
+                 low = 0, high = max, value = math.max(0, math.min(current, max)) }
     end
 
-    -- First run, a reset, or a new resolution while the bar is still where the
-    -- addon put it: centred, over where the game's own XP bar sits when that can
-    -- be measured, and a little above the bottom of the screen when it cannot.
-    function Place()
+    -- First run, a reset, or a new resolution while still the addon's place:
+    -- centred, over the game's XP bar where that can be measured.
+    local function Place()
         local db = NS.db
-        local screenWidth = GetScreenWidth() or 0
-        local screenHeight = GetScreenHeight() or 0
-        local width = db.barWidth or NS.defaults.barWidth
-        local height = db.barHeight or NS.defaults.barHeight
-
-        if screenWidth <= 0 or screenHeight <= 0 then
+        local width, height = GetScreenWidth(), GetScreenHeight()
+        if width <= 0 or height <= 0 then
             db.barLeft, db.barTop = 90, -68
             return
         end
-
-        local centre
-        local game = _G.MainStatusTrackingBarContainer
-        if type(game) == "table" and type(game.GetCenter) == "function" then
-            local ok, _, y = pcall(game.GetCenter, game)
-            local okScale, scale = pcall(game.GetEffectiveScale, game)
-            local okParent, parentScale = pcall(UIParent.GetEffectiveScale, UIParent)
-            if ok and okScale and okParent and type(y) == "number" and not IsSecret(y)
-               and type(scale) == "number" and not IsSecret(scale)
-               and type(parentScale) == "number" and parentScale > 0 and y > 0 then
-                centre = y * scale / parentScale
-            end
+        local centre = FALLBACK_BOTTOM + db.barHeight / 2
+        local game = MainStatusTrackingBarContainer
+        local _, y = game:GetCenter()
+        if type(y) == "number" and not IsSecret(y) and y > 0 then
+            centre = y * game:GetEffectiveScale() / UIParent:GetEffectiveScale()
         end
-        centre = centre or (FALLBACK_BOTTOM + height / 2)
-
-        db.barLeft = (screenWidth - width) / 2
-        db.barTop = -(screenHeight - centre - height / 2)
+        db.barLeft = (width - db.barWidth) / 2
+        db.barTop = -(height - centre - db.barHeight / 2)
         db.autoPlaced = true
     end
 
@@ -219,16 +128,8 @@ do -- private scope
         if db.barLeft == nil or db.barTop == nil then Place() end
     end
 
-    -- Whether the game would show its honor bar: its own answer
-    -- (StatusTrackingManagerMixin:CanShowBar).
-    local function HonorToShow()
-        local manager, info = _G.StatusTrackingBarManager, _G.StatusTrackingBarInfo
-        if type(manager) ~= "table" or type(info) ~= "table" then return false end
-        return Call(manager.CanShowBar, manager, info.BarsEnum.Honor) and true or false
-    end
-
     local function UpdateHonor()
-        if not HonorToShow() then
+        if not StatusTrackingBarManager:CanShowBar(BARS.Honor) then
             honor:Hide()
             return
         end
@@ -239,209 +140,198 @@ do -- private scope
             honor:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT")
         end
         honor:Show()
-
         local current, max = UnitHonor("player"), UnitHonorMax("player")
-        if IsSecret(current) or IsSecret(max) then
-            honor:SetMinMaxValues(0, max)
-            honor:SetValue(current)
-            honor.spark:SetAlpha(0)
-            return
-        end
-        if type(max) ~= "number" or max <= 0 then max = 1 end
-        current = type(current) == "number" and current or 0
+        local secret = IsSecret(current) or IsSecret(max)
+        if not secret and max <= 0 then max = 1 end
         honor:SetMinMaxValues(0, max)
         honor:SetValue(current)
-        honor.spark:SetAlpha(Style.SparkAlpha(current, max))
+        honor.spark:SetAlpha(secret and 0 or Style.SparkAlpha(current, max))
     end
 
-    -- What the bar shows right now: the XP in it and the rested XP beyond it.
-    -- (In Edit Mode it shows the real XP, as it really looks.)
-    local function UpdateXP()
-        local db = NS.db
+    -- Shown at `value` of low..high in `colour`, nothing rested beyond it.
+    local function Fill(colour, low, high, value, sparkAlpha)
+        bar:Show()
+        bar:SetStatusBarColor(colour[1], colour[2], colour[3], 1)
+        bar:SetMinMaxValues(low, high)
+        bar:SetValue(value)
+        bar.spark:SetAlpha(sparkAlpha)
+        rested:SetMinMaxValues(0, 1)
+        rested:SetValue(0)
+    end
 
+    -- Unlocked it shows the real XP, as it really looks.
+    local function UpdateXP()
         local rep = WatchedReputation()
         if rep then
-            bar:Show()
-            local c = rep.colour
-            bar:SetStatusBarColor(c[1], c[2], c[3], 1)
-            rested:SetMinMaxValues(0, 1)
-            rested:SetValue(0)
-            if rep.secret then
-                bar:SetMinMaxValues(rep.low, rep.high)
-                bar:SetValue(rep.value)
-                bar.spark:SetAlpha(0)
-                return
-            end
-            bar:SetMinMaxValues(0, rep.max)
-            bar:SetValue(rep.value)
-            bar.spark:SetAlpha(Style.SparkAlpha(rep.value, rep.max))
+            Fill(rep.colour, rep.low, rep.high, rep.value, rep.secret and 0 or Style.SparkAlpha(rep.value, rep.high))
             return
         end
-
-        if not XPToShow() then
-            -- Nothing to show (the level cap) - but still there to be placed.
-            if db.unlocked then
-                bar:Show()
-                bar:SetMinMaxValues(0, 1)
-                bar:SetValue(0)
-                rested:SetValue(0)
-                bar.spark:SetAlpha(0)
-            else
-                bar:Hide()
-            end
-            return
-        end
-        bar:Show()
-        local xpColour = Style.XP_COLOR
-        bar:SetStatusBarColor(xpColour[1], xpColour[2], xpColour[3], 1)
-
-        local current, max = UnitXP("player"), UnitXPMax("player")
-        if IsSecret(current) or IsSecret(max) then
-            bar:SetMinMaxValues(0, max)
-            bar:SetValue(current)
-            rested:SetMinMaxValues(0, 1)
+        if not GameRulesUtil.CanShowExperienceBar() then
+            -- Nothing to show (the level cap), but still there to be placed.
+            bar:SetShown(NS.db.unlocked)
+            bar:SetMinMaxValues(0, 1)
+            bar:SetValue(0)
             rested:SetValue(0)
-            -- Where the edge is cannot be judged, so no spark over it.
             bar.spark:SetAlpha(0)
             return
         end
-
-        if type(max) ~= "number" or max <= 0 then max = 1 end
-        current = type(current) == "number" and current or 0
-
-        bar:SetMinMaxValues(0, max)
-        bar:SetValue(current)
-        bar.spark:SetAlpha(Style.SparkAlpha(current, max))
-
-        local restedXP = GetXPExhaustion and GetXPExhaustion() or nil
-        if IsSecret(restedXP) or type(restedXP) ~= "number" then restedXP = 0 end
+        local current, max = UnitXP("player"), UnitXPMax("player")
+        if IsSecret(current) or IsSecret(max) then
+            -- Straight to the bar: no rested shading or spark, which need arithmetic.
+            Fill(Style.XP_COLOR, 0, max, current, 0)
+            return
+        end
+        if max <= 0 then max = 1 end
+        Fill(Style.XP_COLOR, 0, max, current, Style.SparkAlpha(current, max))
+        local restedXP = GetXPExhaustion()
+        if IsSecret(restedXP) or not restedXP then restedXP = 0 end
         rested:SetMinMaxValues(0, max)
         rested:SetValue(math.min(current + restedXP, max))
     end
 
-    function Update()
+    local function Update()
         UpdateXP()
         UpdateHonor()
     end
-    NS.Update = Update
 
-    function Refresh()
+    -- THE GAME'S BARS: while a status-tracking container shows one of ours,
+    -- its bar, frame art and dividers are faded - followed after every change
+    -- of bar and every re-layout of dividers (handed out at full alpha).
+    local faded = {}                         -- container -> { region -> its alpha before }
+
+    local function Fade(container, region)
+        local alphas = faded[container]
+        if alphas[region] == nil then alphas[region] = region:GetAlpha() end
+        region:SetAlpha(0)
+    end
+
+    local function Restore(container, region)
+        local alpha = faded[container][region]
+        if alpha == nil then return end
+        region:SetAlpha(alpha)
+        faded[container][region] = nil
+    end
+
+    local function FollowContainer(container)
+        local shown = container.shownBarIndex
+        local hide = OURS[shown] == true
+        if hide then
+            if container.bars[shown] then Fade(container, container.bars[shown]) end
+            Fade(container, container.BarFrameTexture)
+            for divider in container.HorizontalDividersPool:EnumerateActive() do Fade(container, divider) end
+            -- Ours it no longer shows (the game hid them) get their alpha back.
+            for index in pairs(OURS) do
+                if index ~= shown and container.bars[index] then Restore(container, container.bars[index]) end
+            end
+        else
+            for region in pairs(faded[container]) do Restore(container, region) end
+        end
+        -- Out of Edit Mode too while it shows ours.
+        Core.HoldEditMode(container, hide)
+    end
+
+    local function FollowContainers()
+        for _, container in ipairs(CONTAINERS) do FollowContainer(container) end
+    end
+
+    for _, container in ipairs(CONTAINERS) do
+        faded[container] = {}
+        local function Follow() FollowContainer(container) end
+        hooksecurefunc(container, "ApplyPendingBarToShow", Follow)
+        hooksecurefunc(container, "UpdateDividers", Follow)
+        container:HookScript("OnShow", Follow)
+        -- Ours faded the moment they are shown, whatever showed them: a zone
+        -- change once let one through beside the addon's.
+        for index in pairs(OURS) do
+            local gameBar = container.bars[index]
+            if gameBar then gameBar:HookScript("OnShow", function(self) Fade(container, self) end) end
+        end
+    end
+    -- The game sorting out its bars: every zone change and loading screen.
+    hooksecurefunc(StatusTrackingBarManager, "UpdateBarsShown", function()
+        FollowContainers()
+        Update()
+    end)
+
+    local function Refresh()
         local db = NS.db
-
-        bar:ClearAllPoints()
-        bar:SetFrameStrata(db.frameStrata or "MEDIUM")
+        Core.Snap.Put(bar, db)
         bar:SetSize(db.barWidth, db.barHeight)
-        bar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.barLeft, db.barTop)
-        bar:SetMovable(true)
-        -- After SetMovable: SetUserPlaced errors on a frame that is neither
-        -- movable nor resizable. Cleared so the client's layout cache never wins
-        -- over the position saved here.
-        bar:SetUserPlaced(false)
-        bar:SetClampedToScreen(true)
-        -- The mouse is for the tooltip, and for the drag while it is unlocked.
-        bar:EnableMouse(true)
-
+        bar:SetFrameStrata(db.frameStrata)
         Style.Paint(bar, Style.XP_COLOR)
-        -- Solid: the rested stretch is its own colour in the bar.
         Style.Paint(rested, Style.RESTED_COLOR)
         Style.SetBackground(bar.bg)
         Style.PinSpark(bar.spark, bar)
 
-        honor:SetFrameStrata(db.frameStrata or "MEDIUM")
+        honor:SetFrameStrata(db.frameStrata)
         honor:SetSize(db.barWidth, math.max(1, math.floor(db.barHeight * 2 / 3 + 0.5)))
         Style.Paint(honor, Style.HONOR_COLOR)
         Style.SetBackground(honor.bg)
         Style.PinSpark(honor.spark, honor)
 
-        NS.BlizzardXPBar.Refresh()
+        FollowContainers()
         Update()
     end
 
-    -- Hovering says what the numbers are, as the game's bar does.
+    local function HideTooltip() GameTooltip:Hide() end
+
+    -- The tooltip titled "XP: 1,234 / 5,000 (24%)"; false while that cannot be read.
+    local function AmountTooltip(owner, name, current, max)
+        if IsSecret(current) or IsSecret(max) or max <= 0 then return false end
+        GameTooltip:SetOwner(owner, "ANCHOR_TOP")
+        GameTooltip:SetText(("%s: %s / %s (%d%%)"):format(name, Number(current), Number(max),
+            math.floor(current / max * 100)))
+        return true
+    end
+
     bar:SetScript("OnEnter", function(self)
-        if NS.db.unlocked or not GameTooltip then return end
+        if NS.db.unlocked then return end
         local rep = WatchedReputation()
         if rep then
-            if rep.secret or type(rep.name) ~= "string" then return end
+            if rep.secret then return end
+            local line = ("%s / %s"):format(Number(rep.value), Number(rep.high))
+            if rep.label then line = line .. "  (" .. rep.label .. ")" end
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetText(rep.name)
-            local line = string.format("%s / %s", Number(rep.value), Number(rep.max))
-            if rep.label then line = line .. "  (" .. rep.label .. ")" end
-            local c = rep.colour
-            GameTooltip:AddLine(line, c[1], c[2], c[3])
+            GameTooltip:AddLine(line, rep.colour[1], rep.colour[2], rep.colour[3])
             GameTooltip:Show()
             return
         end
         local current, max = UnitXP("player"), UnitXPMax("player")
-        if IsSecret(current) or IsSecret(max) or type(max) ~= "number" or max <= 0 then return end
-
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText(string.format("XP: %s / %s (%d%%)", Number(current), Number(max),
-            math.floor(current / max * 100)))
-        GameTooltip:AddLine(string.format("%s to level", Number(max - current)), 1, 1, 1)
-        local restedXP = GetXPExhaustion and GetXPExhaustion()
-        if type(restedXP) == "number" and not IsSecret(restedXP) and restedXP > 0 then
-            GameTooltip:AddLine(string.format("Rested: %s", Number(restedXP)), 0.4, 0.6, 1)
+        if not AmountTooltip(self, "XP", current, max) then return end
+        GameTooltip:AddLine(("%s to level"):format(Number(max - current)), 1, 1, 1)
+        local restedXP = GetXPExhaustion()
+        if not IsSecret(restedXP) and restedXP and restedXP > 0 then
+            GameTooltip:AddLine(("Rested: %s"):format(Number(restedXP)), 0.4, 0.6, 1)
         end
         GameTooltip:Show()
     end)
-    bar:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    bar:SetScript("OnLeave", HideTooltip)
 
     honor:SetScript("OnEnter", function(self)
-        local current, max = UnitHonor("player"), UnitHonorMax("player")
-        if not GameTooltip or IsSecret(current) or IsSecret(max)
-           or type(max) ~= "number" or max <= 0 then return end
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText(string.format("Honor: %s / %s (%d%%)", Number(current), Number(max),
-            math.floor(current / max * 100)))
+        if not AmountTooltip(self, "Honor", UnitHonor("player"), UnitHonorMax("player")) then return end
         local level = UnitHonorLevel("player")
-        if type(level) == "number" and not IsSecret(level) then
-            GameTooltip:AddLine(string.format("Honor level %d", level), 1, 1, 1)
+        if not IsSecret(level) then
+            GameTooltip:AddLine(("Honor level %d"):format(level), 1, 1, 1)
         end
         GameTooltip:Show()
     end)
-    honor:SetScript("OnLeave", bar:GetScript("OnLeave"))
+    honor:SetScript("OnLeave", HideTooltip)
 
-    -- Dragging, while unlocked. Only the position is written: a drag cannot resize the bar, and
-    -- reading the size back would only round it.
-    bar:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(self) end
-    end)
-    -- Where the bar is now, kept: a drag's end, a nudge, or - locked or not -
-    -- following what it is anchored to (Core\Snap.lua).
-    local function SavePlace()
-        local db = NS.db
-        db.autoPlaced = false
-        db.barLeft = bar:GetLeft()
-        db.barTop = -1 * (GetScreenHeight() - bar:GetTop())
-        Refresh()
-        DogsForeverUI.RefreshOptions()
-    end
-    bar:SetScript("OnMouseUp", function(self, button)
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        DogsForeverUI.Snap.Stop(self)
-        SavePlace()
-    end)
-    DogsForeverUI.Snap.Register(bar, {
-        save = SavePlace,
-        name = "XP Bar", id = "xp",
-    })
+    -- Only the position is saved: reading the size back would only round it.
+    Core.Snap.Piece(bar, NS, { name = "XP Bar", id = "xp" }, Refresh)
 
-    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_XP_UPDATE", "UPDATE_EXHAUSTION",
-                             "PLAYER_LEVEL_UP", "PLAYER_UPDATE_RESTING", "ENABLE_XP_GAIN",
-                             "DISABLE_XP_GAIN",
-                             -- A reputation changing, or another one watched.
-                             "UPDATE_FACTION", "MAJOR_FACTION_RENOWN_LEVEL_CHANGED",
-                             -- Honor, and the zones that bring its bar up.
-                             "HONOR_XP_UPDATE", "HONOR_LEVEL_UPDATE", "ZONE_CHANGED",
-                             "ZONE_CHANGED_NEW_AREA" }) do
-        pcall(NS.RegisterEvent, NS, event)
+    for _, event in ipairs({
+        "PLAYER_ENTERING_WORLD", "PLAYER_XP_UPDATE", "UPDATE_EXHAUSTION", "PLAYER_LEVEL_UP",
+        "PLAYER_UPDATE_RESTING", "ENABLE_XP_GAIN", "DISABLE_XP_GAIN",
+        "UPDATE_FACTION", "MAJOR_FACTION_RENOWN_LEVEL_CHANGED",            -- the watched reputation
+        "HONOR_XP_UPDATE", "HONOR_LEVEL_UPDATE", "ZONE_CHANGED", "ZONE_CHANGED_NEW_AREA",  -- honor
+    }) do
+        NS:RegisterEvent(event)
     end
     NS:SetScript("OnEvent", function(_, event)
         if event == "PLAYER_ENTERING_WORLD" then
-            -- UIParent is unscaled at ADDON_LOADED, so a position worked out
-            -- there lands in the wrong coordinate space. Only the addon's own
-            -- placement is worked out again, never one the player chose.
+            -- UIParent is unscaled at ADDON_LOADED: only the addon's own place is worked out again.
             if NS.db.autoPlaced then Place() end
             Refresh()
             return
@@ -449,21 +339,8 @@ do -- private scope
         Update()
     end)
 
-    function Unlock()
-        NS.db.unlocked = true
-        Refresh()
-    end
-
-    function Lock()
-        NS.db.unlocked = false
-        bar:StopMovingOrSizing()
-        Refresh()
-    end
-
     NS.Init = Refresh
     NS.Refresh = Refresh
-    NS.Lock = Lock
-    NS.Unlock = Unlock
 
     DogsForeverUI:RegisterModule(NS)
 end

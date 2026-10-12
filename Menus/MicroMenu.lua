@@ -1,243 +1,30 @@
--- The micro menu: in the addon's look, laid out by the addon, placed with the
--- rest of the UI, and out of sight until the mouse is over it.
---
--- THE LOOK (no setting: it is the look, like the action buttons'). Every
--- button is drawn exactly as an action button is (ActionButtons.lua): a
--- SQUARE with the frames' semi-transparent black behind it, the thin bevelled
--- gold border round it, and a square icon filling it, its baked-in edge
--- trimmed off.
---
--- The pictures (ICONS) are, as far as there is one, the one the game itself
--- gives each button's window - its portrait, or the icon of its side tab: the
--- professions window's hammer and axe, the Progress Track window's shield,
--- the group finder's eye, the collections window's Appearances portrait, the
--- Guild & Communities window's portrait, the spellbook's portrait, the shop's. The talents button shows the player's spec (the talent
--- tree with the most points), else the talents window's class icon; the
--- character button the player's portrait; the bag button (BagsBar.lua) the
--- game's own backpack icon. The game's micro menu pictures themselves cannot
--- be drawn this way: on this client each one (UI-HUD-MicroMenu-*-Up) is an
--- atlas with a tall bronze frame baked round a narrow plate, and cut out of it
--- (2026-09-29) the plates stood as thin grey strips inside the squares. What
--- this client does not have falls back to the next in its list, then the
--- question mark, rather than draw solid green.
---
--- The game's own art is made invisible by vertex alpha, not alpha or Hide: the
--- game sets the alpha of some of it itself (the icon on hover, the highlight
--- when a window is open, the alert flash) and shows and hides the rest, but
--- never its vertex colour's alpha - except the guild emblem, coloured with the
--- tabard, which is why it is checked again every frame the menu can be seen
--- (faded right out, it waits until it shows again). The game's button
--- stays: its clicks, its keybinding, its tooltip, its enabled state (a
--- disabled one is at half alpha, as the game has it, and its icon greyed) and
--- the notification badge and latency bar it draws over itself. Its hit box is
--- the square (SetHitRectInsets), so neighbours do not overlap.
---
--- The states, drawn as the action buttons draw theirs, in the square:
---   * the mouse over it: a soft light;
---   * its window open (the game holds the button pushed): the border's gold as
---     a wash, as a checked action button;
---   * an alert (the game flashes FlashBorder: talent points to spend, say):
---     that wash again, flashing with the game's flash.
---
--- THE LAYOUT. One row, PITCH apart, in the game's order with the bag button
--- second, after the character, and the addon's own options button last
--- (OptionsButton.lua) - on the addon's own frame (the holder), which
--- is what is placed. The game lays its buttons out in MicroMenu:Layout (a grid
--- anchored to the menu); a post-hook anchors each one to the holder instead,
--- right after, every time - so a button the game shows or hides later closes
--- up the row as the game's own layout would. Only positions are set: no
--- layout of the game's is called, no field written on its frames. The menu
--- frame itself stays where Edit Mode puts it, and is taken out of Edit Mode
--- (HoldEditMode) since the addon places it now.
---
--- When the game lends the menu to another bar (OverrideMicroMenuPosition: a
--- vehicle's bar, in one row or two) the holder goes where the game put the
--- menu, in as many rows as the game asked for.
---
--- THE PLACE. Unlock UI shows the holder in the addon's placement look to
--- drag; Positions has its X and Y. Until the player places it, it sits where
--- the game's menu sits - bottom edges level, and centred on the game's menu's
--- centre, so the row, one button longer than the game's with the bag in it,
--- grows evenly both ways (kept on screen).
---
--- MOUSEOVER ("Micro Menu" under Auto-hide). The whole menu is transparent
--- until the mouse is over the row, then fades in, and fades out once the mouse
--- has been gone for the bars' "Hide after" - exactly as an auto-hidden action
--- bar (NS.Fade in Menus.lua). It is only the menu's alpha, which Blizzard
--- never sets (it sets its buttons', to 1 or 0.5), so its buttons still work.
--- Nothing in it is protected, so this works in combat too. It shows while the
--- UI is unlocked.
+-- The micro menu: each button a square in the action buttons' look with its
+-- window's own picture, one row laid out by the addon (the bag button second,
+-- the options button last), placed with the rest of the UI, and faded out
+-- until the mouse is over it.
 
 local Micro = {}
 DogsForeverUI.Menus.MicroMenu = Micro
 
 do -- private scope
-
     local NS = DogsForeverUI.Menus
     local Style = DogsForeverUI.Style
+    local Core = DogsForeverUI
 
-    Micro.SQUARE = 28             -- a button's square, in the menu's units
-    Micro.GAP = 4                 -- between two squares
+    Micro.SQUARE = 28                   -- a button's square, in the menu's units
+    Micro.GAP = 4
     Micro.PITCH = Micro.SQUARE + Micro.GAP
-    -- The game's button (MainMenuBarMicroButton, Blizzard_MicroMenu\Mainline).
-    local GAME_WIDTH, GAME_HEIGHT = 32, 40
-
-    -- The portrait is a picture of a face, not an icon: zoomed in on it. So
-    -- are the round portrait pictures some windows wear, past their rim.
-    local PORTRAIT_CROP = 0.15
-    local ROUND_CROP = 0.14
-
+    local GAME_WIDTH, GAME_HEIGHT = 32, 40  -- the game's micro button
+    local PORTRAIT_CROP = 0.15          -- zoomed in on the face
+    local ROUND_CROP = 0.14             -- past a round portrait's rim
+    local EMBLEM_HEIGHT = 0.8           -- of the square; the game makes it 7/8 as wide
+    local IDLE_STEP = 0.1               -- auto-hide off: looked at ten times a second
+    local PORTRAIT = "portrait"
     local ICON = "Interface\\Icons\\"
     Micro.FALLBACK_ICON = ICON .. "INV_Misc_QuestionMark"
-    Micro.PORTRAIT = "portrait"
+    local OPTIONS_ICON = { file = Core.MEDIA .. "icon", own = true, crop = 0 }
 
-    -- Live pictures, worked out when asked (see ICONS). Each answers a source,
-    -- or nil when it has nothing to show yet.
-
-    -- The spellbook window's own portrait: the General skill line's icon
-    -- (Blizzard_PlayerSpells\Camelot\Blizzard_PlayerSpellsFrame.lua,
-    -- SetSpellBookPortrait). Known once the spells are.
-    function Micro.SpellbookIcon()
-        if not (C_SpellBook and C_SpellBook.GetSpellBookSkillLineInfo
-                and Enum and Enum.SpellBookSkillLineIndex) then
-            return nil
-        end
-        local ok, info = pcall(C_SpellBook.GetSpellBookSkillLineInfo,
-            Enum.SpellBookSkillLineIndex.General)
-        return ok and info and info.iconID or nil
-    end
-
-    -- THE PLAYER'S SPEC, for the talents button. On this client the talents
-    -- are one trait tree split in the classic three (Blizzard_PlayerSpells\
-    -- Camelot\ClassTalents: RefreshTreeHeaders): each is a group of the active
-    -- config's tree with its own name, icon and points spent - the headers the
-    -- talents window draws. The spec is the tree with the most points (the
-    -- first of a tie, in the game's order); with none spent there is no spec.
-    -- The active config follows dual spec.
-    function Micro.SpecIcon()
-        if not (C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits) then return nil end
-        local ok, icon = pcall(function()
-            local configID = C_ClassTalents.GetActiveConfigID()
-            local config = configID and C_Traits.GetConfigInfo(configID)
-            local treeID = config and config.treeIDs and config.treeIDs[1]
-            if not treeID then return nil end
-            local trees = C_Traits.GetGroupDisplayInfoByTreeID(treeID) or {}
-            local groupIDs = {}
-            for i, tree in ipairs(trees) do groupIDs[i] = tree.groupID end
-            local spent = {}
-            for _, group in ipairs(C_Traits.GetGroupCurrencyInfo(configID, groupIDs) or {}) do
-                local currency = group.currencyInfos and group.currencyInfos[1]
-                spent[group.traitNodeGroupID] = currency and currency.spent or 0
-            end
-            local best, most = nil, 0
-            for _, tree in ipairs(trees) do
-                local points = spent[tree.groupID] or 0
-                if points > most then best, most = tree, points end
-            end
-            return best and best.icon
-        end)
-        if ok then return icon end
-    end
-
-    -- The talents window's own portrait without a spec: the class's round
-    -- icon, cut from the class sheet (PortraitFrameMixin:SetPortraitToClassIcon).
-    function Micro.ClassIcon()
-        if type(UnitClass) ~= "function" or type(CLASS_ICON_TCOORDS) ~= "table" then return nil end
-        local _, class = UnitClass("player")
-        local coords = class and CLASS_ICON_TCOORDS[class]
-        if not coords then return nil end
-        return { file = "Interface/TargetingFrame/UI-Classes-Circles", coords = coords,
-                 crop = ROUND_CROP }
-    end
-
-    -- The guild's tabard, as the Guild & Communities window shows it with the
-    -- guild picked (CommunitiesFrameMixin:UpdatePortrait): only in a guild
-    -- whose tabard has been designed. Drawn by Show as the tabard's colour
-    -- filling the square and the emblem on it.
-    function Micro.GuildTabard()
-        if type(IsInGuild) ~= "function" or not IsInGuild() then return nil end
-        if not (C_GuildInfo and C_GuildInfo.GetGuildTabardInfo) then return nil end
-        local ok, tabard = pcall(C_GuildInfo.GetGuildTabardInfo, "player")
-        if not (ok and type(tabard) == "table" and tabard.emblemFileID) then return nil end
-        return { tabard = tabard }
-    end
-
-    -- The Looking For Group window's first side tab: its eye. That window is
-    -- loaded only when first opened (Blizzard_GroupFinder_VanillaStyle is load
-    -- on demand), so its icon is read off the tab once it is there, and kept
-    -- in the saved settings so the next session starts with it.
-    function Micro.GroupFinderIcon()
-        local frame = _G.LFGParentFrame
-        local tab = type(frame) == "table" and frame.ListingTab
-        local icon
-        if type(tab) == "table" then
-            if type(tab.Icon) == "table" and type(tab.Icon.GetTexture) == "function" then
-                local ok, texture = pcall(tab.Icon.GetTexture, tab.Icon)
-                if ok then icon = texture end
-            end
-            icon = icon or tab.iconTexture
-        end
-        local db = NS.db
-        if icon then
-            db.groupFinderIcon = icon
-            return icon
-        end
-        return db.groupFinderIcon or nil
-    end
-
-    -- One list per button, by the game's name for it, tried in order: the
-    -- first the client has is shown. Each is, as far as there is one, the
-    -- picture the game itself gives that window - its portrait or the icon of
-    -- its side tab - and after it the nearest plain icon. A source is:
-    --   "path"                          an icon file
-    --   { atlas = name }                an atlas, at its own proportions
-    --   { file = path, crop = n }       a file trimmed by its own amount
-    --   { file = path, coords = {...} } a picture cut from a sheet
-    --   { file = path, own = true }     a file of the addon's own, which the
-    --                                   client's file list does not know
-    --   a function                      one of the live pictures above
-    Micro.ICONS = {
-        CharacterMicroButton    = Micro.PORTRAIT,
-        ProfessionMicroButton   = {    -- the professions window's portrait and tab
-            "Interface/ICONS/INV_SideTab_Professions_c60", ICON .. "Trade_BlackSmithing",
-        },
-        PlayerSpellsMicroButton = { Micro.SpellbookIcon, ICON .. "INV_Misc_Book_09" },
-        SpellbookMicroButton    = { Micro.SpellbookIcon, ICON .. "INV_Misc_Book_09" },
-        TalentMicroButton       = {    -- the spec, else the talents window's class icon
-            Micro.SpecIcon, Micro.ClassIcon, ICON .. "Ability_Marksmanship",
-        },
-        AchievementMicroButton  = { ICON .. "Achievement_General" },
-        LegacyMicroButton       = {    -- the Progress Track window's portrait
-            { atlas = "Legacy-up-c60" }, ICON .. "INV_Shield_06",
-        },
-        QuestLogMicroButton     = {    -- the quest log's portrait
-            { file = "Interface\\QuestFrame\\UI-QuestLog-BookIcon", crop = ROUND_CROP },
-            ICON .. "INV_Misc_Note_01",
-        },
-        HousingMicroButton      = { ICON .. "INV_Misc_Key_03" },
-        GuildMicroButton        = {    -- the Guild & Communities window's portrait:
-            Micro.GuildTabard,         -- the guild's tabard in a guild, else its own
-            ICON .. "achievement_guildperk_havegroup willtravel",
-            "Interface/ICONS/INV_Shirt_GuildTabard_01",
-        },
-        LFDMicroButton          = {    -- the group finder's eye, else a group
-            Micro.GroupFinderIcon, ICON .. "INV_Misc_GroupLooking",
-            ICON .. "INV_Misc_GroupNeedMore",
-        },
-        CollectionsMicroButton  = {    -- the collections window's Appearances portrait
-            ICON .. "inv_chest_cloth_17",
-            "Interface/ICONS/INV_Horse3Saddle008_Chestnut", ICON .. "Ability_Mount_RidingHorse",
-        },
-        EJMicroButton           = {    -- the adventure guide's portrait
-            { file = "Interface\\EncounterJournal\\UI-EJ-PortraitIcon", crop = ROUND_CROP },
-            ICON .. "INV_Misc_Book_11",
-        },
-        HelpMicroButton         = { ICON .. "INV_Misc_QuestionMark" },
-        StoreMicroButton        = { ICON .. "UI_Shop", ICON .. "WoW_Store" },  -- the shop's portrait
-        MainMenuMicroButton     = { ICON .. "INV_Misc_QuestionMark" },         -- the red "?"
-    }
-
-    -- The game's art on a button, made invisible (see above).
+    -- The game's art on a button and on the menu, made invisible.
     local ART = {
         "Background", "PushedBackground", "Shadow", "PushedShadow", "Portrait",
         "FlashBorder", "FlashContent", "Emblem", "HighlightEmblem",
@@ -245,69 +32,125 @@ do -- private scope
     local STATE_TEXTURES = {
         "GetNormalTexture", "GetPushedTexture", "GetDisabledTexture", "GetHighlightTexture",
     }
-    local PLATE = { "BorderArt", "BackgroundArt" }      -- the menu's own frame and plate
+
+    -- Live pictures may change as the game does: talents, spells, a window
+    -- loaded, a guild joined or its tabard redone.
+    local ICON_EVENTS = {
+        "TRAIT_CONFIG_UPDATED", "TRAIT_TREE_CURRENCY_INFO_UPDATED", "ACTIVE_TALENT_GROUP_CHANGED",
+        "PLAYER_TALENT_UPDATE", "SPELLS_CHANGED", "ADDON_LOADED", "PLAYER_GUILD_UPDATE",
+        "PORTRAITS_UPDATED", "PLAYER_ENTERING_WORLD",
+    }
 
     Micro.parts = setmetatable({}, { __mode = "k" }) -- button -> what was made for it
 
-    local Wake              -- the menu looked at again (THE FADE, below)
+    local Wake, optionsButton
 
     ---------------------------------------------------------------------------
-    -- The holder: the row's place.
+    -- The pictures. A live one answers a source, or nil; errors are caught
+    -- by Resolve (an API missing before its window loads).
 
-    local holder = CreateFrame("Frame", "DogsForeverUIMicroMenu", UIParent)
-    holder:SetFrameStrata("DIALOG")
-    holder:SetMovable(true)
-    holder:SetClampedToScreen(true)
-    holder:EnableMouse(false)
-    holder:SetSize(Micro.PITCH, Micro.SQUARE)
-    Micro.holder = holder
-
-    ---------------------------------------------------------------------------
-    -- The look.
-
-    local function Invisible(region)
-        if type(region) ~= "table" or type(region.SetVertexColor) ~= "function" then return end
-        local _, _, _, a = region:GetVertexColor()
-        if a ~= 0 then region:SetVertexColor(1, 1, 1, 0) end
+    -- The spellbook window's portrait: the General skill line's icon.
+    local function SpellbookIcon()
+        local info = C_SpellBook.GetSpellBookSkillLineInfo(Enum.SpellBookSkillLineIndex.General)
+        return info and info.iconID
     end
 
-    local function HideGameArt(button)
-        for _, key in ipairs(ART) do Invisible(button[key]) end
-        for _, method in ipairs(STATE_TEXTURES) do
-            if type(button[method]) == "function" then Invisible(button[method](button)) end
+    -- The spec: of the talent tree's three groups, the one with the most
+    -- points spent (the first of a tie); none spent, none.
+    local function SpecIcon()
+        local configID = C_ClassTalents.GetActiveConfigID()
+        local config = configID and C_Traits.GetConfigInfo(configID)
+        local treeID = config and config.treeIDs[1]
+        if not treeID then return end
+        local trees = C_Traits.GetGroupDisplayInfoByTreeID(treeID) or {}
+        local groupIDs = {}
+        for i, tree in ipairs(trees) do groupIDs[i] = tree.groupID end
+        local spent = {}
+        for _, group in ipairs(C_Traits.GetGroupCurrencyInfo(configID, groupIDs) or {}) do
+            local currency = group.currencyInfos and group.currencyInfos[1]
+            spent[group.traitNodeGroupID] = currency and currency.spent or 0
+        end
+        local best, most = nil, 0
+        for _, tree in ipairs(trees) do
+            local points = spent[tree.groupID] or 0
+            if points > most then best, most = tree, points end
+        end
+        return best and best.icon
+    end
+
+    -- The talents window's portrait without a spec: the class's round icon.
+    local function ClassIcon()
+        local _, class = UnitClass("player")
+        local coords = CLASS_ICON_TCOORDS[class]
+        if coords then
+            return { file = "Interface/TargetingFrame/UI-Classes-Circles", coords = coords, crop = ROUND_CROP }
         end
     end
 
-    local function Flat(parent, layer, sublevel, colour)
-        local texture = parent:CreateTexture(nil, layer, nil, sublevel)
-        texture:SetTexture(Style.FLAT_TEXTURE)
-        texture:SetVertexColor(colour[1], colour[2], colour[3], colour[4])
-        return texture
+    -- In a guild with a designed tabard: the tabard, as the guild window shows it.
+    local function GuildTabard()
+        if not IsInGuild() then return end
+        local tabard = C_GuildInfo.GetGuildTabardInfo("player")
+        if tabard and tabard.emblemFileID then return { tabard = tabard } end
     end
 
-    -- Whether this client has the file. The check is only trusted if it knows
-    -- the question mark, which every client has (asked until it does).
+    -- The group finder's eye, off its window's first tab once that loads
+    -- (on demand), and kept for the next session.
+    local function GroupFinderIcon()
+        local frame = _G.LFGParentFrame
+        local tab = frame and frame.ListingTab
+        local icon = tab and (tab.Icon and tab.Icon:GetTexture() or tab.iconTexture)
+        if icon then NS.db.groupFinderIcon = icon end
+        return NS.db.groupFinderIcon or nil
+    end
+
+    -- Per button, its window's own picture first, then the nearest plain
+    -- icon. A source: an icon path or file ID, { atlas }, { file, crop },
+    -- { file, coords } cut from a sheet, { file, own } (the addon's own
+    -- file, unknown to the client's list), or a live picture.
+    Micro.ICONS = {
+        CharacterMicroButton    = PORTRAIT,
+        ProfessionMicroButton   = { "Interface/ICONS/INV_SideTab_Professions_c60", ICON .. "Trade_BlackSmithing" },
+        PlayerSpellsMicroButton = { SpellbookIcon, ICON .. "INV_Misc_Book_09" },
+        SpellbookMicroButton    = { SpellbookIcon, ICON .. "INV_Misc_Book_09" },
+        TalentMicroButton       = { SpecIcon, ClassIcon, ICON .. "Ability_Marksmanship" },
+        AchievementMicroButton  = { ICON .. "Achievement_General" },
+        LegacyMicroButton       = { { atlas = "Legacy-up-c60" }, ICON .. "INV_Shield_06" },
+        QuestLogMicroButton     = {
+            { file = "Interface\\QuestFrame\\UI-QuestLog-BookIcon", crop = ROUND_CROP },
+            ICON .. "INV_Misc_Note_01",
+        },
+        HousingMicroButton      = { ICON .. "INV_Misc_Key_03" },
+        GuildMicroButton        = {
+            GuildTabard, ICON .. "achievement_guildperk_havegroup willtravel",
+            "Interface/ICONS/INV_Shirt_GuildTabard_01",
+        },
+        LFDMicroButton          = {
+            GroupFinderIcon, ICON .. "INV_Misc_GroupLooking", ICON .. "INV_Misc_GroupNeedMore",
+        },
+        CollectionsMicroButton  = {
+            ICON .. "inv_chest_cloth_17", "Interface/ICONS/INV_Horse3Saddle008_Chestnut",
+            ICON .. "Ability_Mount_RidingHorse",
+        },
+        EJMicroButton           = {
+            { file = "Interface\\EncounterJournal\\UI-EJ-PortraitIcon", crop = ROUND_CROP },
+            ICON .. "INV_Misc_Book_11",
+        },
+        HelpMicroButton         = { ICON .. "INV_Misc_QuestionMark" },
+        StoreMicroButton        = { ICON .. "UI_Shop", ICON .. "WoW_Store" },
+        MainMenuMicroButton     = { ICON .. "INV_Misc_QuestionMark" },
+    }
+
+    -- Whether the client has the file (a missing one draws solid green).
+    -- Trusted only once the lookup knows the question mark every client has.
     local trusted = false
     local function HasFile(path)
-        if type(path) == "number" then return true end   -- a file ID the game gave
-        if type(GetFileIDFromPath) ~= "function" then return true end
-        if not trusted then
-            local okFallback, fallbackID = pcall(GetFileIDFromPath, Micro.FALLBACK_ICON)
-            if not (okFallback and fallbackID) then return true end
-            trusted = true
-        end
-        local ok, id = pcall(GetFileIDFromPath, path)
-        return ok and id ~= nil
+        if type(path) == "number" then return true end
+        trusted = trusted or GetFileIDFromPath(Micro.FALLBACK_ICON) ~= nil
+        return not trusted or GetFileIDFromPath(path) ~= nil
     end
 
-    local function HasAtlas(name)
-        if not (C_Texture and C_Texture.GetAtlasInfo) then return true end
-        local ok, info = pcall(C_Texture.GetAtlasInfo, name)
-        return ok and info ~= nil
-    end
-
-    -- The first source in `sources` the client can draw, as { file, crop,
-    -- coords } or { atlas }; the question mark if none.
+    -- The first source the client can draw; else the question mark.
     function Micro.Resolve(sources)
         if type(sources) ~= "table" then sources = { sources } end
         for _, source in ipairs(sources) do
@@ -318,11 +161,10 @@ do -- private scope
             if type(source) == "string" or type(source) == "number" then
                 if HasFile(source) then return { file = source } end
             elseif type(source) == "table" then
-                if source.tabard then
-                    return source
-                elseif source.atlas then
-                    if HasAtlas(source.atlas) then return source end
-                elseif source.file and (source.own or HasFile(source.file)) then
+                if source.tabard then return source end
+                if source.atlas then
+                    if C_Texture.GetAtlasInfo(source.atlas) then return source end
+                elseif source.own or HasFile(source.file) then
                     return source
                 end
             end
@@ -330,16 +172,12 @@ do -- private scope
         return { file = Micro.FALLBACK_ICON }
     end
 
-    local function RGB(colour)
-        if type(colour) == "table" and type(colour.GetRGB) == "function" then
-            return string.format("%.3f,%.3f,%.3f", colour:GetRGB())
-        end
-        return ""
-    end
+    local function RGB(colour) return ("%.3f,%.3f,%.3f"):format(colour:GetRGB()) end
 
+    -- What a source looks like: drawn again only when this changes.
     local function Key(source)
-        if source.tabard then
-            local t = source.tabard
+        local t = source.tabard
+        if t then
             return table.concat({ "tabard", tostring(t.emblemFileID), tostring(t.emblemStyle),
                 RGB(t.backgroundColor), RGB(t.emblemColor) }, ":")
         end
@@ -348,11 +186,24 @@ do -- private scope
         return tostring(source.file) .. (c and (":" .. table.concat(c, ",")) or "")
     end
 
-    -- Draw one source in a button's square: a file filling it, trimmed; an
-    -- atlas centred at its own proportions, as big as the square allows.
-    local EMBLEM_HEIGHT = 0.8   -- of the square; the game's own sets its width to 7/8 of it
+    ---------------------------------------------------------------------------
+    -- The look.
 
-    -- The tabard's two textures, made the first time a tabard is shown.
+    -- Vertex alpha, not alpha or Hide: the game sets those itself.
+    local function Invisible(region)
+        if not region then return end
+        local _, _, _, a = region:GetVertexColor()
+        if a ~= 0 then region:SetVertexColor(1, 1, 1, 0) end
+    end
+
+    local function HideGameArt(button)
+        for _, key in ipairs(ART) do Invisible(button[key]) end
+        for _, method in ipairs(STATE_TEXTURES) do
+            if button[method] then Invisible(button[method](button)) end
+        end
+    end
+
+    -- The tabard's cloth and emblem, made the first time one is shown.
     local function Tabard(parts, shown)
         if not parts.tabard then
             if not shown then return end
@@ -368,32 +219,23 @@ do -- private scope
         parts.art:SetShown(not shown)
     end
 
+    -- A file fills the square, trimmed; an atlas is centred at its own
+    -- proportions; a tabard is coloured and drawn by the game's own function.
     local function Show(parts, source)
         local art, size = parts.art, Micro.SQUARE
+        Tabard(parts, source.tabard ~= nil)
         if source.tabard then
-            -- The game's own colouring and emblem (GuildUtil.lua), on the
-            -- addon's textures: the cloth takes the tabard's colour, the
-            -- emblem its picture, colour and width.
-            Tabard(parts, true)
             local emblem = parts.tabard.emblem
             emblem:SetSize(size * EMBLEM_HEIGHT, size * EMBLEM_HEIGHT)
-            if type(SetLargeGuildTabardTextures) == "function" then
-                pcall(SetLargeGuildTabardTextures, "player", emblem, parts.tabard.cloth, nil,
-                    source.tabard)
-            end
+            SetLargeGuildTabardTextures("player", emblem, parts.tabard.cloth, nil, source.tabard)
             return
         end
-        Tabard(parts, false)
         art:ClearAllPoints()
         if source.atlas then
             art:SetAtlas(source.atlas)
-            local w, h = 1, 1
-            local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(source.atlas)
-            if info and (info.width or 0) > 0 and (info.height or 0) > 0 then
-                w, h = info.width, info.height
-            end
-            local scale = size / math.max(w, h)
-            art:SetSize(w * scale, h * scale)
+            local info = C_Texture.GetAtlasInfo(source.atlas)
+            local scale = size / math.max(info.width, info.height)
+            art:SetSize(info.width * scale, info.height * scale)
             art:SetPoint("CENTER", parts.inner, "CENTER", 0, 0)
         else
             art:SetAllPoints(parts.inner)
@@ -405,46 +247,32 @@ do -- private scope
         end
     end
 
-    local function UpdatePortrait(parts)
-        if parts.kind == Micro.PORTRAIT and type(SetPortraitTexture) == "function" then
+    local function Draw(parts)
+        if parts.kind == PORTRAIT then
             SetPortraitTexture(parts.art, "player")
+            return
+        end
+        local source = Micro.Resolve(parts.kind)
+        local key = Key(source)
+        if parts.shown ~= key then
+            parts.shown = key
+            Show(parts, source)
         end
     end
 
-    -- Every button's picture, worked out again: a live one (the spec, a
-    -- window's icon) changes as the game does. Drawn only when it changed.
     local function UpdateIcons()
-        for _, parts in pairs(Micro.parts) do
-            if parts.kind ~= Micro.PORTRAIT then
-                local source = Micro.Resolve(parts.kind)
-                local key = Key(source)
-                if parts.shown ~= key then
-                    parts.shown = key
-                    Show(parts, source)
-                end
-            end
-        end
+        for _, parts in pairs(Micro.parts) do Draw(parts) end
     end
 
-    -- When a live picture may have changed: talents spent, refunded or
-    -- swapped; the spells known; a window of the game's loaded; a guild
-    -- joined, left or its tabard redone.
-    local ICON_EVENTS = {
-        "TRAIT_CONFIG_UPDATED", "TRAIT_TREE_CURRENCY_INFO_UPDATED",
-        "ACTIVE_TALENT_GROUP_CHANGED", "PLAYER_TALENT_UPDATE", "SPELLS_CHANGED",
-        "ADDON_LOADED", "PLAYER_GUILD_UPDATE",
-    }
-
-    -- The look on one button. `kind`: its sources (see ICONS), or
-    -- Micro.PORTRAIT. `isOpen`, optional: whether its window is open, for a
-    -- button the game does not hold pushed.
+    -- The look on one button. `kind`: its sources (ICONS) or PORTRAIT.
+    -- `isOpen`: whether its window is open, for a button the game does not
+    -- hold pushed.
     function Micro.Skin(button, kind, isOpen)
         if Micro.parts[button] then return Micro.parts[button] end
         local Look = NS.ActionButtons
-        local size = Micro.SQUARE
 
         local inner = CreateFrame("Frame", nil, button)
-        inner:SetSize(size, size)
+        inner:SetSize(Micro.SQUARE, Micro.SQUARE)
         inner:SetPoint("CENTER", button, "CENTER", 0, 0)
         inner:SetFrameLevel(button:GetFrameLevel() + 1)
 
@@ -452,48 +280,50 @@ do -- private scope
         bg:SetAllPoints(inner)
         Style.SetBackground(bg)
 
-        -- The picture fills the square, as an action button's icon.
         local art = inner:CreateTexture(nil, "ARTWORK")
         art:SetAllPoints(inner)
-        if kind == Micro.PORTRAIT then
+        if kind == PORTRAIT then
             art:SetTexCoord(PORTRAIT_CROP, 1 - PORTRAIT_CROP, PORTRAIT_CROP, 1 - PORTRAIT_CROP)
         end
 
-        local hover = Flat(inner, "OVERLAY", 1, Look.HOVER)
-        hover:SetAllPoints(inner)
-        hover:SetBlendMode("ADD")
+        -- The states, as the action buttons draw theirs: hover, window open, alert.
+        local function Wash(sublevel, colour)
+            local texture = inner:CreateTexture(nil, "OVERLAY", nil, sublevel)
+            Look.Flat(texture, inner, colour, "ADD")
+            return texture
+        end
+        local hover, open, alert = Wash(1, Look.HOVER), Wash(2, Look.CHECKED), Wash(3, Look.CHECKED)
         hover:Hide()
-        local open = Flat(inner, "OVERLAY", 2, Look.CHECKED)
-        open:SetAllPoints(inner)
-        open:SetBlendMode("ADD")
         open:Hide()
-        local alert = Flat(inner, "OVERLAY", 3, Look.CHECKED)
-        alert:SetAllPoints(inner)
-        alert:SetBlendMode("ADD")
         alert:SetAlpha(0)
 
-        local border = Style.AddBorder(inner, Look.BORDER, false, Look.BORDER_PIXELS)
-
         local parts = {
-            kind = kind, inner = inner, bg = bg, art = art, border = border,
-            hover = hover, open = open, alert = alert, isOpen = isOpen,
+            kind = kind, inner = inner, bg = bg, art = art, isOpen = isOpen,
+            hover = hover, open = open, alert = alert,
+            border = Style.AddBorder(inner, Look.BORDER, false, Look.BORDER_PIXELS),
         }
         Micro.parts[button] = parts
-        -- The mouse coming onto it wakes the menu: after the game's own
-        -- OnEnter, never instead of it (EllesmereUI's way).
+        -- The mouse coming onto it wakes the menu, after the game's own OnEnter.
         button:HookScript("OnEnter", Wake)
-        if kind == Micro.PORTRAIT then
-            UpdatePortrait(parts)
-        else
-            local source = Micro.Resolve(kind)
-            parts.shown = Key(source)
-            Show(parts, source)
-        end
+        Draw(parts)
         return parts
     end
 
-    -- Every frame: the game's art kept invisible (the bag button has none) -
-    -- but while the whole menu is out of sight, `art` false - and the states.
+    -- An addon button in the row: a child of the menu, so it fades and moves
+    -- with it; no layoutIndex, so the game's own layout never counts it.
+    function Micro.NewButton(name, sources, isOpen, onClick, onEnter)
+        local button = CreateFrame("Button", name, _G.MicroMenu)
+        button:SetSize(Micro.SQUARE, Micro.SQUARE)
+        button:RegisterForClicks("AnyUp")
+        button:SetScript("OnClick", onClick)
+        button:SetScript("OnEnter", onEnter)
+        button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        Micro.Skin(button, sources, isOpen)
+        return button
+    end
+
+    -- Every frame it can be seen: the game's art kept invisible (`art`; the
+    -- guild emblem is recoloured with the tabard), and the states.
     local function UpdateButton(button, parts, art)
         if art then HideGameArt(button) end
 
@@ -508,7 +338,7 @@ do -- private scope
         end
         if parts.open:IsShown() ~= open then parts.open:SetShown(open) end
 
-        local enabled = not button.IsEnabled or button:IsEnabled() and true or false
+        local enabled = button:IsEnabled() and true or false
         if parts.enabled ~= enabled then
             parts.enabled = enabled
             parts.art:SetDesaturated(not enabled)
@@ -516,40 +346,31 @@ do -- private scope
         end
 
         local flash = button.FlashBorder
-        local flashing = 0
-        if type(flash) == "table" and flash:IsShown() then flashing = flash:GetAlpha() or 0 end
+        local flashing = flash and flash:IsShown() and flash:GetAlpha() or 0
         if parts.flashing ~= flashing then
             parts.flashing = flashing
             parts.alert:SetAlpha(flashing)
         end
     end
 
-    local function SkinMenu(menu)
-        for _, child in ipairs({ menu:GetChildren() }) do
-            if child.layoutIndex then
-                local name = child.GetName and child:GetName()
-                Micro.Skin(child, Micro.ICONS[name] or { Micro.FALLBACK_ICON })
-            end
-        end
-    end
-
     ---------------------------------------------------------------------------
-    -- The layout.
+    -- The layout and the place.
 
+    local holder = CreateFrame("Frame", "DogsForeverUIMicroMenu", UIParent)
+    holder:SetFrameStrata("DIALOG")
+    holder:SetMovable(true)
+    holder:SetClampedToScreen(true)
+    holder:EnableMouse(false)
+    holder:SetSize(Micro.PITCH, Micro.SQUARE)
+    Micro.holder = holder
+
+    -- Lent to another bar (a vehicle's, OverrideMicroMenuPosition).
     local function Lent(menu)
-        local container = _G.MicroMenuContainer
-        return container ~= nil and menu:GetParent() ~= container
+        return menu:GetParent() ~= _G.MicroMenuContainer
     end
 
-    -- The addon's own buttons in the row: they are squares already, with no
-    -- game art round them.
-    local function Own(button)
-        return button == NS.BagsBar.button
-            or (NS.OptionsButton ~= nil and button == NS.OptionsButton.button)
-    end
-
-    -- The buttons in the row, in order: the game's shown ones by layoutIndex,
-    -- the bag button after the first, and the addon's options button last.
+    -- The game's shown buttons by layoutIndex, the bag button second, the
+    -- options button last.
     function Micro.Row()
         local menu = _G.MicroMenu
         local row = {}
@@ -560,19 +381,18 @@ do -- private scope
         table.sort(row, function(a, b) return a.layoutIndex < b.layoutIndex end)
         local bag = NS.BagsBar.button
         if bag then table.insert(row, math.min(2, #row + 1), bag) end
-        local options = NS.OptionsButton and NS.OptionsButton.button
-        if options then row[#row + 1] = options end
+        if optionsButton then row[#row + 1] = optionsButton end
         return row
     end
 
+    -- After the game's own MicroMenu:Layout: each button anchored to the
+    -- holder instead, so a button the game shows or hides closes up the row.
     local laying = false
-
     local function Layout()
         local menu = _G.MicroMenu
         if laying or not menu then return end
         laying = true
 
-        -- The holder takes the menu's scale, so its units are the buttons'.
         local scale = menu:GetEffectiveScale() / UIParent:GetEffectiveScale()
         if holder:GetScale() ~= scale then holder:SetScale(scale) end
 
@@ -580,49 +400,36 @@ do -- private scope
         local rows = (Lent(menu) and menu.isStacked) and 2 or 1
         local columns = math.max(1, math.ceil(#row / rows))
         local pitch, half = Micro.PITCH, Micro.SQUARE / 2
+        local insetX, insetY = (GAME_WIDTH - Micro.SQUARE) / 2, (GAME_HEIGHT - Micro.SQUARE) / 2
         for index, button in ipairs(row) do
             local column, line = (index - 1) % columns, math.floor((index - 1) / columns)
             button:ClearAllPoints()
             button:SetPoint("CENTER", holder, "TOPLEFT", column * pitch + half, -(line * pitch + half))
-            if not Own(button) then
-                -- The game's 32x40 button takes the mouse on its square only.
-                local x, y = (GAME_WIDTH - Micro.SQUARE) / 2, (GAME_HEIGHT - Micro.SQUARE) / 2
-                button:SetHitRectInsets(x, x, y, y)
+            if button ~= NS.BagsBar.button and button ~= optionsButton then
+                -- The game's taller button takes the mouse on its square only.
+                button:SetHitRectInsets(insetX, insetX, insetY, insetY)
             end
         end
         holder:SetSize(math.max(1, columns * pitch - Micro.GAP),
             math.max(1, math.min(rows, #row) * pitch - Micro.GAP))
         laying = false
         Micro.Place()
-        -- (Lent to a vehicle's bar, or a button shown or hidden: looked at.)
         Wake()
     end
-    Micro.Layout = Layout
 
-    ---------------------------------------------------------------------------
-    -- The place.
-
-    -- The holder's size in UIParent units.
-    local function Size()
-        local scale = holder:GetScale()
-        return holder:GetWidth() * scale, holder:GetHeight() * scale
-    end
-
-    -- Where the game has its menu: bottom edges level, centred on its centre.
+    -- Until placed by the player: on the game's menu, bottoms level, centred.
     local function DefaultPlace()
         local menu = _G.MicroMenu
         if not menu then return end
-        local x = menu:GetCenter()
-        local bottom = menu:GetBottom()
-        if type(x) ~= "number" or type(bottom) ~= "number" then return end
+        local x, bottom = menu:GetCenter(), menu:GetBottom()
+        if not (x and bottom) then return end
         local ratio = menu:GetEffectiveScale() / UIParent:GetEffectiveScale()
         x, bottom = x * ratio, bottom * ratio
-        local w, h = Size()
-        local screenW, screenH = UIParent:GetWidth(), UIParent:GetHeight()
-        local left = math.max(0, math.min(x - w / 2, screenW - w))
+        local scale = holder:GetScale()
+        local w, h = holder:GetWidth() * scale, holder:GetHeight() * scale
         local db = NS.db
-        db.microLeft = left
-        db.microTop = (bottom + h) - screenH
+        db.microLeft = math.max(0, math.min(x - w / 2, UIParent:GetWidth() - w))
+        db.microTop = (bottom + h) - UIParent:GetHeight()
     end
 
     function Micro.Normalise(db)
@@ -632,8 +439,7 @@ do -- private scope
     end
 
     function Micro.Place()
-        local menu = _G.MicroMenu
-        local db = NS.db
+        local menu, db = _G.MicroMenu, NS.db
         local scale = holder:GetScale()
         holder:ClearAllPoints()
         if menu and Lent(menu) then
@@ -643,58 +449,33 @@ do -- private scope
             holder:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db.microLeft / scale, db.microTop / scale)
         end
         holder:SetUserPlaced(false)
-
-        -- Taking the mouse while unlocked, to be dragged; the buttons
-        -- themselves show, as they really look.
-        holder:EnableMouse(db.unlocked and true or false)
+        holder:EnableMouse(db.unlocked)
     end
 
-    holder:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and NS.db.unlocked then DogsForeverUI.Snap.Start(self) end
-    end)
-    -- Where it is now, kept: a drag's end, a nudge, or - locked or not -
-    -- following what it is anchored to (Core\Snap.lua).
     local function SavePlace()
         local db, scale = NS.db, holder:GetScale()
         db.microPlaced = true
         db.microLeft = holder:GetLeft() * scale
         db.microTop = holder:GetTop() * scale - UIParent:GetHeight()
         Micro.Place()
-        DogsForeverUI.RefreshOptions()
+        Core.RefreshOptions()
     end
-    holder:SetScript("OnMouseUp", function(self, button)
-        if button ~= "LeftButton" or not NS.db.unlocked then return end
-        DogsForeverUI.Snap.Stop(self)
-        SavePlace()
-    end)
-    DogsForeverUI.Snap.Register(holder, {
-        save = SavePlace,
-        name = "Micro Menu", id = "micro",
-    })
+    Core.Snap.Draggable(holder, NS, SavePlace)
+    Core.Snap.Register(holder, { save = SavePlace, name = "Micro Menu", id = "micro" })
 
     ---------------------------------------------------------------------------
-    -- The fade, and the frame.
+    -- The fade. Awake only while something of the menu can be seen: faded
+    -- right out it sleeps until the mouse comes onto a button, a setting or
+    -- Unlock Mode changes, or the game lends the menu out or takes it back.
 
-    -- AWAKE ONLY WHILE SOMETHING OF IT CAN BE SEEN. Faded right out - the
-    -- auto-hide on, the mouse away, nothing to place - the watcher sleeps
-    -- (nothing at all each frame) until the mouse comes onto one of its
-    -- buttons, a setting or Unlock Mode changes (Refresh), or the game lends
-    -- it to a bar or takes it back (Layout). Awake, everything is kept every
-    -- frame, as before; with the auto-hide off, ten times a second while the
-    -- mouse is elsewhere.
-    local fade = nil       -- { alpha, away } while the menu is being faded
-    local heldEditMode = {}
+    local fade              -- { alpha, away } while the auto-hide is on
     local lastParent
-    local hooked = false
-    local IDLE_STEP = 0.1
     local sinceStep = 0
 
     -- Answers whether to stay awake.
     local function Step(delta)
         local menu = _G.MicroMenu
         if not menu then return end
-
-        -- Lent to another bar or given back: laid out again where it went.
         if menu:GetParent() ~= lastParent then
             lastParent = menu:GetParent()
             Layout()
@@ -702,35 +483,28 @@ do -- private scope
 
         local quiet = NS.db.quietMicroMenu
         local shown = quiet and (NS.db.unlocked or NS.MouseOver(holder))
-        -- The game's art kept invisible only while something of the menu can
-        -- be seen: faded right out, it waits (some 170 calls a frame) until
-        -- the menu starts to show again - that same frame, before its alpha
-        -- rises.
+        -- Faded right out, the art waits for the menu to show again.
         local art = not (quiet and fade and fade.alpha == 0 and not shown)
-
-        -- The frame and plate, always: they are no part of the look.
         if art then
-            for _, key in ipairs(PLATE) do Invisible(menu[key]) end
+            Invisible(menu.BorderArt)
+            Invisible(menu.BackgroundArt)
         end
         for button, parts in pairs(Micro.parts) do UpdateButton(button, parts, art) end
 
         if not quiet then
-            -- Switched off: the whole menu, at once.
             if fade then
                 fade = nil
                 menu:SetAlpha(1)
             end
             return true
         end
-
-        -- Starts where it is, as if the mouse had just left it.
         if not fade then fade = { alpha = menu:GetAlpha(), away = 0 } end
         NS.Fade(menu, fade, shown, delta, NS.ActionBars.Delay())
         return shown or fade.alpha > 0
     end
 
     local watcher
-    Wake, watcher = DogsForeverUI.Waker(function(elapsed)
+    Wake, watcher = Core.Waker(function(elapsed)
         if not NS.db.quietMicroMenu then
             sinceStep = sinceStep + elapsed
             if sinceStep < IDLE_STEP and not NS.MouseOver(holder) then return true end
@@ -739,41 +513,45 @@ do -- private scope
         return Step(elapsed)
     end)
 
-    -- A setting, Unlock Mode, the menus applied: looked at now, and awake.
     function Micro:Refresh()
         Wake()
-        Step()
+        Step(0)
+    end
+
+    local function OptionsOpen() return Core.Options ~= nil and Core.Options.IsShown() end
+
+    local function OptionsTooltip(button)
+        GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+        GameTooltip:SetText(Core.TITLE, 1, 1, 1)
+        GameTooltip:AddLine("Settings, sizes, positions and profiles.")
+        GameTooltip:Show()
     end
 
     function Micro:Apply()
         local menu = _G.MicroMenu
         if not menu then return end
 
-        SkinMenu(menu)
-        if _G.MicroMenuContainer then
-            DogsForeverUI.HoldEditMode(heldEditMode, _G.MicroMenuContainer, true)
-        end
-
-        if not hooked then
-            hooked = true
-            hooksecurefunc(menu, "Layout", Layout)
-            -- (Taken back from a bar may not lay it out again.)
-            if type(menu.ResetMicroMenuPosition) == "function" then
-                hooksecurefunc(menu, "ResetMicroMenuPosition", Wake)
+        -- The only way into the options: no slash command, no Settings entry.
+        optionsButton = Micro.NewButton("DogsForeverUIOptionsButton", { OPTIONS_ICON }, OptionsOpen,
+            function() Core.Options.Toggle() end, OptionsTooltip)
+        for _, child in ipairs({ menu:GetChildren() }) do
+            if child.layoutIndex then
+                Micro.Skin(child, Micro.ICONS[child:GetName()] or { Micro.FALLBACK_ICON })
             end
-            -- The player's portrait, whenever the game redraws portraits; the
-            -- live pictures (ICON_EVENTS); and the game's menu placed by Edit
-            -- Mode on entering the world.
-            watcher:RegisterEvent("PORTRAITS_UPDATED")
-            watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
-            watcher:RegisterUnitEvent("UNIT_PORTRAIT_UPDATE", "player")
-            for _, event in ipairs(ICON_EVENTS) do pcall(watcher.RegisterEvent, watcher, event) end
-            watcher:SetScript("OnEvent", function(_, event)
-                for _, parts in pairs(Micro.parts) do UpdatePortrait(parts) end
-                UpdateIcons()
-                if event == "PLAYER_ENTERING_WORLD" then Layout() end
-            end)
         end
+        -- The addon places the menu now: out of the game's Edit Mode.
+        Core.HoldEditMode(_G.MicroMenuContainer, true)
+
+        hooksecurefunc(menu, "Layout", Layout)
+        -- (Taken back from a bar, the menu may not be laid out again.)
+        if menu.ResetMicroMenuPosition then hooksecurefunc(menu, "ResetMicroMenuPosition", Wake) end
+        watcher:RegisterUnitEvent("UNIT_PORTRAIT_UPDATE", "player")
+        for _, event in ipairs(ICON_EVENTS) do watcher:RegisterEvent(event) end
+        watcher:SetScript("OnEvent", function(_, event)
+            UpdateIcons()
+            -- Edit Mode has placed the game's menu by now.
+            if event == "PLAYER_ENTERING_WORLD" then Layout() end
+        end)
 
         UpdateIcons()
         Layout()

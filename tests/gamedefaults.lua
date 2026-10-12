@@ -1,4 +1,4 @@
--- The game's own settings the addon wants on (Core\GameDefaults.lua): Action
+-- The game's own settings the addon wants on (Core\Defaults.lua): Action
 -- Bars 2 to 5, nameplates on in the Large style with class-coloured friendly
 -- names, the damage meter on and reset in each new instance - once per
 -- character, checked again after writing (the server can hand the old values

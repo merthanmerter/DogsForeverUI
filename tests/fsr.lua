@@ -29,7 +29,7 @@ local Castbar = DogsForeverUI.Castbar
 local Style = DogsForeverUI.Style
 local DB = NS.db
 local GROUP = Castbar.db
-local bar = NS.StatusBar.statusbar
+local bar = NS.bar
 local castbar = Castbar.CastBar.castbar
 local GAP = 6 + 3 + 3
 

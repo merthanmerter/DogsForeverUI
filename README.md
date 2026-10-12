@@ -8,7 +8,7 @@ One addon for the **WoW Forever** client (1.60.1, interface 16001), in one look:
 | **Castbars** | one group, bottom to top: your casting bar; the five-second rule countdown — or, for a rogue or cat druid, the combo points, with the game's taken off the target frame — in one row above it; and the auto-attack swing bars at the top |
 | **XP bar** | an XP bar of its own, at any size, with the game's faded out |
 | **Chat** | the chat in a borderless panel (FlareUI's layout, the addon's look): tabs as words in a scrolling sidebar, icons top right, background at none until the mouse is over it; a window you can select and copy chat from |
-| **Menus** | a micro menu in the addon's look with the game's icons, a bag button second and the addon's options button last, placed with the UI and shown only under the mouse; the bag bar gone until a bag is open; the bags' Clean Up button joining stacks and sorting by type, rarity, unit value, stack value or name first (right-click it to pick); action bars that auto-hide until the mouse is over them (Action Bars 3 to 8 and the quest tracker to start); and the beta's Issue Reporter hidden |
+| **Menus** | a micro menu in the addon's look with the game's icons, a bag button second and the addon's options button last, placed with the UI and shown only under the mouse; the bag bar gone until a bag is open (the bags' Clean Up button is the game's own, instant); action bars that auto-hide until the mouse is over them (Action Bars 3 to 8 and the quest tracker to start); and the beta's Issue Reporter hidden |
 | **Cooldowns** | a cooldown manager: spells and items you add by ID, as bars while on cooldown, in line with the castbar over the player frame; spell and item IDs at the foot of tooltips to find them by |
 | **Threat** | one bar over the target frame, in line with the castbar: your threat on the target NPC as the game counts it (100% is holding it), shown only while you are on its threat list |
 | **Loot toasts** | a toast over the focus frame for each item you loot (round icon in the game's ring, name in its quality colour, sell value) and the money, added up; a roll won is twice as large with a "You Won!" row and the roll, and replaces the game's roll-won alert. Hover holds one and shows its tooltip; Grow up or down in Unlock Mode |
@@ -72,7 +72,7 @@ the whole UI:
   nothing do nothing (Print Screen still screenshots). In the game's mode,
   Okay and Cancel are secure buttons clicking the game's own, a strata above
   the window so they always take the click.
-- **A key pressed shows on the button** (`ActionBars\Paint.lua`): after the
+- **A key pressed shows on the button** (`ActionBars\ActionBars.lua`): after the
   game's own `ActionButtonDown` / `MultiActionButtonDown` (post-hooks), the
   addon's button shows its pressed look while the key is held (at least
   0.1 s; a wheel's click, a short flash) - EllesmereUI's pushed-state flash.
@@ -92,7 +92,7 @@ the whole UI:
     name and its place in it, outlined gold — white under the mouse and
     while selected, its name orange while anchored. Nothing on it moves or
     grows (no animation in Unlock Mode, 2026-10-03). Dragged freely, it snaps
-    to the **one piece nearest it** (or its chosen snap target): edges or
+    to the **one piece nearest it**: edges or
     middles within 6 meet exactly, a gold line along each, that piece
     outlined white - and its middle onto the **screen's middle lines**,
     across and up and down, within 6 too. The screen's middle line down it
@@ -165,7 +165,7 @@ the whole UI:
   the swing timers to the five-second rule — once each (remove one and it
   stays removed; *Reset Position* anchors it again).
 
-  **The addon's own default places** (`Core\DefaultPlaces.lua`), laid out
+  **The addon's own default places** (`Core\Defaults.lua`), laid out
   once per character a couple of seconds after the world is up (never in
   combat), at once by Reset everything, and per piece by *Reset
   Position*; anything moved afterwards stays where it is put. "Snapped"
@@ -177,7 +177,7 @@ the whole UI:
     not in Unlock Mode either. **Action Bars 2 to 5 are switched on there**
     once per character (switched off afterwards, they stay off; Reset
     everything switches them on again); 6 to 8 are left as they are - see
-    **The game's own settings** (`Core\GameDefaults.lua`) below. Each
+    **The game's own settings** (`Core\Defaults.lua`) below. Each
     bar's menu also has the game's **Orientation** (Horizontal fills rows,
     the first at the bottom and the next over it, as the game's bars; Vertical
     fills columns top down - its Rows then read Columns) and **Always show
@@ -219,7 +219,7 @@ the whole UI:
   Everything is worked out from the screen's size and the pieces' own, so
   it fits any resolution. Reset everything lays it out in the same moment.
 
-- **The game's own settings** (`Core\GameDefaults.lua`, 2026-10-03), set once
+- **The game's own settings** (`Core\Defaults.lua`, 2026-10-03), set once
   per character: **Action Bars 2 to 5** on; **nameplates on** (Enemy Units,
   Always Show Nameplates) in the **Large** style, friendly players' names and
   bars in **class colours**; **Enable Damage Meter** and **Auto Reset Damage
@@ -235,13 +235,13 @@ the whole UI:
   (`cooldownViewerEnabled`, from the next load), **Camera Following Style:
   Never Adjust Camera** (`cameraSmoothStyle` 0) and **Max Camera Distance 2**
   (the slider's top). Numbers are compared as numbers ("2.000000" is 2).
-- **The first start asks** (`Options\Install.lua`), once per character: *Install*
+- **The first start asks** (`Options\Panel.lua`), once per character: *Install*
   puts every setting of the addon back to its default (Reset everything), sets
   the game's settings above again (checked after the load) and reloads the UI;
   *Cancel* changes nothing. Either answer is kept, through Reset everything
   too. It is not the game's `/console cvar_default`, which would throw away
   every game setting (graphics, sound...), not only the ones the UI uses.
-- **The game menu (Esc) has a Dog's Forever UI button** (`Options\GameMenu.lua`,
+- **The game menu (Esc) has a Dog's Forever UI button** (`Options\Panel.lua`,
   EllesmereUI's way): the game's own button template, its red art greyed and
   tinted the addon's gold, under Options (or the Shop); the game's buttons
   below move down and the menu grows to fit. It opens the options.
@@ -339,7 +339,7 @@ one place, `Core\Style.lua`:
   padding* share kept clear above and below, and **never larger than 11**: a
   taller bar only gains room round its text (the default 30-high health bar gets
   11, a 16-high one 10). **White** on every bar;
-- **the game's fonts too** (`Core\Fonts.lua`): every shared font object the
+- **the game's fonts too** (`Core\Style.lua`): every shared font object the
   game lists (`GetFonts`) in one of its Latin faces — Friz Quadrata, Arial
   Narrow, Morpheus, Skurri — is given `Media\Dog.ttf` with `SetFont`, keeping
   its size and outline; the display faces and fonts named as headings or titles
@@ -394,7 +394,7 @@ list belongs to the character that set it. Every section is
 created once and never replaced, so anything holding a reference to one — a
 module, the options panel — keeps looking at the settings in use.
 
-**Profiles** (`Core\Profiles.lua`, last section of the options page) are the
+**Profiles** (`DogsForeverUI.lua`, last section of the options page) are the
 one account-wide table, `DogsForeverUIProfiles` (`SavedVariables`): a copy of
 every module's settings under a name. *Save* takes a copy of this character's
 settings (asking first when the name is taken). Each saved profile is a line
@@ -519,7 +519,7 @@ the other runs back from the bar's far end inside the heal absorb's bar, which
 clips it at the fill's end - so it shows only what the missing health could not
 hold, over the health. They wear the game's own shield look: its fill
 (`Interface\RaidFrame\Shield-Fill`) with its stripes (`Shield-Overlay`) tiled
-over it. The party pets' boxes (`Frames\PartyPets.lua`) draw all
+over it. The party pets' boxes (`Frames\UnitPlate.lua`) draw all
 of it, turned upright.
 
 The one value that *is* read is the unit's class, because it is used as a table
@@ -630,7 +630,7 @@ height, layer; their text at 0.8, `UnitPlate.PARTY_SCALE`), in **one column**
 down the left of the screen (party1 on top, against the left edge - its
 border's width in - and exactly centred top to bottom as Unlock Mode boxes it;
 `NS.PlaceParty`, and the default layout's `party` step for a column already
-placed (`Core\DefaultPlaces.lua`, v15), which keeps it centred when the party
+placed (`Core\Defaults.lua`, v15), which keeps it centred when the party
 frames' size changes until it is placed). The column is placed as one:
 dragging any of them with *Unlock UI* moves all four. Each step down is a
 frame's bars, its border and 2 of daylight (`UnitPlate.PartyStep`).
@@ -652,7 +652,7 @@ Unlock Mode is open each frame shows **a few made-up auras** there instead
 swipes, picked at random each time it opens - `UnitAuras` PREVIEW), the real
 row back as it closes. No party castbars.
 
-**The members' pets** (partypet1–4, `Frames\PartyPets.lua`): **a narrow box
+**The members' pets** (partypet1–4, `Frames\UnitPlate.lua`): **a narrow box
 left of each member's frame**, as tall as its bars and a fifth of its width
 (`PartyPets.WIDTH`), in the frames' background, border and shaded fill — its
 health a fill growing from the bottom in the frames' health green, the sheen
@@ -661,13 +661,13 @@ drawn as the party role icons are, at their size - the game has no pet role
 icon, so it is the damage role's own for its gold ring, a dark disc of ours
 over its red one, and the game's paw (`paw-icon`, its character window's pet
 tab) on that in the healer cross's pale green (greyed, doubled to full by a
-second copy added over it, both tinted), exactly the role icons' size (`UnitPlate.PartyRoleSize`) - and
+second copy added over it, both tinted), exactly the role icons' size - and
 your own buffs on it (your heals over time) as tiny icons from its
 bottom up (8 across, up to 4; `UnitAuras.NewMineRow`); no name, no power.
 Click targets the pet, right-click its menu. A child of its
 owner's frame, hung off its left edge, so it goes wherever the column lays the
 owner out (in combat too); its own fade - the
-pet's range, not its owner's (`UnitPlate.ShowRange`, as the party frames). Shown by a secure
+pet's range, not its owner's (as the party frames). Shown by a secure
 driver while the pet exists (never in a raid), hidden while placing. So a box
 is never pushed off the screen's left edge onto its owner, every frame of the
 column keeps its room clear of that edge (`PartyPets.Room`, the frames'
@@ -695,7 +695,7 @@ took when last seen (`FlowContainer_GetUsedBounds`, kept as
 
 The game's raid frames (and its raid-style party frames, when the game shows
 them) keep everything of the game's except their textures
-(`Frames\RaidFrames.lua`): the health and resource fills become this addon's
+(`Frames\BlizzardFrames.lua`): the health and resource fills become this addon's
 flat fill with its sheen and shade (in the game's colours), and the
 backgrounds behind them the frames' dark background. A post-hook on
 `CompactUnitFrame_SetUpFrame` does it to each frame as the game sets it up
@@ -1076,7 +1076,7 @@ addon's:
 for every character on 2026-10-03); changed in the game's chat menu afterwards,
 it stays; Reset everything sets it again.
 
-**Default places** (`Core\DefaultPlaces.lua`): the chat's panel 400 × 200 and
+**Default places** (`Core\Defaults.lua`): the chat's panel 400 × 200 and
 its tabs' sidebar beside it (502 wide in all), 15 in from the bottom left
 corner. It can be moved and resized in Unlock Mode afterwards; Reset everything
 puts it back. The chat's **Width and Height in Unlock Mode are its whole
@@ -1291,7 +1291,7 @@ is placed.
 fatigue, feign death — in the addon's look, each drawn on the game's own bar,
 which is faded.
 
-**Flight paths** (`MirrorTimers\FlightTimer.lua`): while on a taxi, a bar like
+**Flight paths** (`MirrorTimers\MirrorTimers.lua`): while on a taxi, a bar like
 the breath bar in yellow, in the breath bar's spot (the timer bars' Edit Mode
 anchor and size), with where you are flying on the left and the time left on
 the right. The game has **no call for a flight's length**, so each route —

@@ -1,18 +1,6 @@
--- A PANEL: the frame the chat windows sit in (the
--- player, 2026-10-03: "make the chatbar look like the Flare addon - their
--- layout but with our style ... default background opacity 0, on mouseover
--- 50%"). Drawn in the addon's own look (Core\Style.lua): the windows' dark
--- tone, no border and no line (the player, 2026-10-05: "remove the border
--- from the chat", then the line under the letter buttons).
---
---   * the background: the windows' tone, at no opacity until the mouse is
---     over the panel (or `active()` says it is in use), then at half -
---     faded over a fifth of a second either way;
---   * the panel's letter buttons: faded with the background - gone at rest,
---     whole under the mouse.
---
--- The panel is the addon's own frame and takes no mouse: clicks go through it
--- to whatever is under it, as before.
+-- Panel: the backdrop the chat sits in (DogsForeverUI.Panel) - the windows'
+-- tone, clear at rest and at half under the mouse - plus letters in place of
+-- button icons and the addon's thin scrollbar. Takes no mouse itself.
 
 local Panel = {}
 DogsForeverUI.Panel = Panel
@@ -20,114 +8,35 @@ DogsForeverUI.Panel = Panel
 do -- private scope
     local Style = DogsForeverUI.Style
 
-    Panel.REST_ALPHA = 0        -- the background with the mouse away
-    Panel.HOVER_ALPHA = 0.5     -- and with it over the panel
-    Panel.FADE_TIME = 0.2       -- seconds from one to the other
-
-    local function Step(panel, elapsed)
-        local over = panel:IsMouseOver() or (panel.active and panel.active())
-        local target = over and Panel.HOVER_ALPHA or Panel.REST_ALPHA
-        local now = panel.bgAlpha
-        if now == target then return end
-        local step = (elapsed or 0) * (Panel.HOVER_ALPHA - Panel.REST_ALPHA) / Panel.FADE_TIME
-        if now < target then now = math.min(target, now + step) else now = math.max(target, now - step) end
-        panel.bgAlpha = now
-        Panel.Paint(panel)
-    end
-
-    -- The background at its opacity; its letter buttons with it - none at
-    -- rest, whole at the top of the fade (the player, 2026-10-03: "icons
-    -- (letter buttons) should fade with bg and borders aswell"): the panel's
-    -- owner says which they are (panel.letters).
-    function Panel.Paint(panel)
-        local colour = Style.WINDOW_BACKGROUND
-        panel.bg:SetColorTexture(colour[1], colour[2], colour[3], panel.bgAlpha)
-        if panel.letters then
-            local k = (panel.bgAlpha - Panel.REST_ALPHA) / (Panel.HOVER_ALPHA - Panel.REST_ALPHA)
-            k = math.max(0, math.min(1, k))
-            for _, button in ipairs(panel.letters() or {}) do Panel.FadeLetter(button, k) end
-        end
-    end
-
-    -- `opts`: active = function() -> whether to keep the background up with
-    -- the mouse away (a chat edit box in use), letters = function() -> the
-    -- letter buttons (Panel.Letter) that fade with it.
-    function Panel.New(parent, opts)
-        opts = opts or {}
-        local panel = CreateFrame("Frame", nil, parent)
-        panel:EnableMouse(false)
-        panel.active = opts.active
-        panel.letters = opts.letters
-        panel.bgAlpha = Panel.REST_ALPHA
-
-        panel.bg = panel:CreateTexture(nil, "BACKGROUND", nil, -8)
-        panel.bg:SetAllPoints(panel)
-        local colour = Style.WINDOW_BACKGROUND
-        panel.bg:SetColorTexture(colour[1], colour[2], colour[3], panel.bgAlpha)
-
-        Panel.Paint(panel)
-        panel:SetScript("OnUpdate", Step)
-        return panel
-    end
-
     ---------------------------------------------------------------------------
-    -- LETTERS FOR ICONS (the player, 2026-10-03: "all icons in chat and
-    -- damage meter should be letters similar to our minimap calendar and
-    -- tracking"): a button's art off and a letter on it instead, as the
-    -- minimap's header has them (Minimap\Minimap.lua, THE HEADER'S LETTERS) -
-    -- the clock's font, the zone name's gold, a little dimmed until the mouse
-    -- is over it, a pixel down while pressed. The panels' titles are written
-    -- in the same font and gold (Panel.Title).
+    -- Letters for icons, as the minimap header has them: the clock's font in
+    -- the zone name's gold, dimmed until the mouse is on it, a pixel down
+    -- while pressed. Kept by button in our own table - nothing written on it.
     ---------------------------------------------------------------------------
 
-    Panel.LETTER_FONT = "WhiteNormalNumberFont"     -- the minimap clock's
-    Panel.LETTER_COLOR = { 1, 0.82, 0 }             -- NORMAL_FONT_COLOR, the zone name's gold
+    Panel.LETTER_FONT = "WhiteNormalNumberFont"
+    Panel.LETTER_COLOR = { 1, 0.82, 0 }             -- NORMAL_FONT_COLOR
     Panel.LETTER_ALPHA = 0.8                        -- at rest; 1 under the mouse
     Panel.MUTED = { 0.5, 0.5, 0.5 }                 -- a letter for something switched off
+    -- A blinking letter (the game flashing its button): low to whole and back.
+    Panel.BLINK_TIME = 1
+    Panel.BLINK_LOW = 0.25
 
-    function Panel.Font(text)
-        if type(text) ~= "table" or type(text.SetFontObject) ~= "function" then return end
-        local font = _G[Panel.LETTER_FONT] or _G.GameFontNormal
-        if font then text:SetFontObject(font) end
-    end
-
-    -- A pane's title (a tab's words): the letters' font,
-    -- in `colour` (the gold when none).
-    function Panel.Title(text, colour)
-        if type(text) ~= "table" then return end
-        Panel.Font(text)
-        colour = colour or Panel.LETTER_COLOR
-        if text.SetTextColor then text:SetTextColor(colour[1], colour[2], colour[3]) end
-    end
-
-    -- A letter's opacity: dimmed or whole (the mouse on it), times its
-    -- panel's fade. Kept here, by button - nothing written on the button.
-    local holders = setmetatable({}, { __mode = "k" })   -- button -> { frame, hover, fade, alert }
+    local holders = setmetatable({}, { __mode = "k" })   -- button -> { frame, hover, fade, alert, blink }
 
     local function PaintLetter(entry)
-        if entry.alert then return end      -- (blinking: Blink paints it)
+        if entry.alert then return end      -- (Blink paints it)
         entry.frame:SetAlpha((entry.hover and 1 or Panel.LETTER_ALPHA) * entry.fade)
     end
 
-    ---------------------------------------------------------------------------
-    -- A LETTER THAT BLINKS (the player, 2026-10-03: "when chat for example
-    -- 'Channels' icon is blinking it should show that icon too"): while the
-    -- game flashes a button the letter shows, faded or not, and blinks as the
-    -- game's flash does - a second up, a second down (ChannelFrameButton's
-    -- FlashAnim) - from BLINK_LOW to whole and back.
-    ---------------------------------------------------------------------------
-
-    Panel.BLINK_TIME = 1        -- seconds from low to whole
-    Panel.BLINK_LOW = 0.25
-
     local function Blink(entry, elapsed)
-        entry.blink = (entry.blink + (elapsed or 0)) % (2 * Panel.BLINK_TIME)
+        entry.blink = (entry.blink + elapsed) % (2 * Panel.BLINK_TIME)
         local up = entry.blink / Panel.BLINK_TIME
         if up > 1 then up = 2 - up end
         entry.frame:SetAlpha(Panel.BLINK_LOW + (1 - Panel.BLINK_LOW) * up)
     end
 
-    -- `button`'s letter blinking (`on`) or back to its panel's fade.
+    -- `button`'s letter blinking (`on`), or back to its panel's fade.
     function Panel.Alert(button, on)
         local entry = holders[button]
         on = on and true or false
@@ -143,16 +52,26 @@ do -- private scope
         end
     end
 
-    -- `button`'s letter faded to `k` (0 none - 1 whole) with its panel.
-    function Panel.FadeLetter(button, k)
-        local entry = holders[button]
-        if not entry or entry.fade == k then return end
-        entry.fade = k
+    -- `letter` on `frame`, kept for `button`. Answers its text and its entry.
+    local function Hold(button, frame, letter)
+        local text = frame:CreateFontString(nil, "OVERLAY")
+        text:SetFontObject(_G[Panel.LETTER_FONT] or GameFontNormal)
+        local colour = Panel.LETTER_COLOR
+        text:SetTextColor(colour[1], colour[2], colour[3])
+        text:SetText(letter)
+        text:SetPoint("CENTER", frame, "CENTER", 0, 0)
+        local entry = { frame = frame, hover = false, fade = 1 }
+        holders[button] = entry
+        PaintLetter(entry)
+        return text, entry
+    end
+
+    local function Hover(entry, on)
+        entry.hover = on
         PaintLetter(entry)
     end
 
-    -- `button` showing `letter` (its own art off: the textures the caller
-    -- names, `art`). Answers the letter's text, to change it later.
+    -- `button` showing `letter`, its own `art` textures off. Answers the text.
     function Panel.Letter(button, letter, art)
         for _, texture in ipairs(art or {}) do
             if type(texture) == "table" and texture.SetAlpha then texture:SetAlpha(0) end
@@ -161,144 +80,147 @@ do -- private scope
         holder:SetAllPoints(button)
         holder:EnableMouse(false)
         holder:SetFrameLevel(button:GetFrameLevel() + 2)
-        local text = holder:CreateFontString(nil, "OVERLAY")
-        Panel.Title(text)
-        text:SetText(letter)
+        local text, entry = Hold(button, holder, letter)
         local function At(x, y)
             text:ClearAllPoints()
             text:SetPoint("CENTER", holder, "CENTER", x, y)
         end
-        At(0, 0)
-        local entry = { frame = holder, hover = false, fade = 1 }
-        holders[button] = entry
-        PaintLetter(entry)
-        button:HookScript("OnEnter", function() entry.hover = true; PaintLetter(entry) end)
-        button:HookScript("OnLeave", function() entry.hover = false; PaintLetter(entry) end)
+        button:HookScript("OnEnter", function() Hover(entry, true) end)
+        button:HookScript("OnLeave", function() Hover(entry, false) end)
         button:HookScript("OnMouseDown", function() At(1, -1) end)
         button:HookScript("OnMouseUp", function() At(0, 0) end)
         return text
     end
 
-    -- A frame that sees the mouse come and go but takes no click: the click
-    -- and the mouse's motion go on to whatever is under it (EllesmereUI's
-    -- ghost tabs, field-tested: without the passing on, the frame under it
-    -- lost its clicks and its tooltip). Where the client has no such flags:
-    -- deaf to the mouse.
+    -- Sees the mouse but takes no click: clicks and motion pass on to what is
+    -- under it (EllesmereUI's ghost tabs: else the frame below lost its tooltip).
     function Panel.PassThrough(frame)
-        if frame.SetMouseClickEnabled and frame.SetMouseMotionEnabled then
-            frame:SetMouseClickEnabled(false)
-            frame:SetMouseMotionEnabled(true)
-            if frame.SetPropagateMouseClicks then frame:SetPropagateMouseClicks(true) end
-            if frame.SetPropagateMouseMotion then frame:SetPropagateMouseMotion(true) end
-        else
-            frame:EnableMouse(false)
-        end
+        frame:SetMouseClickEnabled(false)
+        frame:SetMouseMotionEnabled(true)
+        frame:SetPropagateMouseClicks(true)
+        frame:SetPropagateMouseMotion(true)
     end
 
-    -- A LETTER OVER A BUTTON OF THE GAME'S (the chat's header buttons): the
-    -- button stays the game's, untouched by any script of the addon's - the
-    -- letter is drawn by a ghost on `host` laid over it (anchored to it,
-    -- never its child), whole while the mouse is on it, faded and blinking
-    -- as any letter (keyed by the game's button, in the addon's own table).
-    -- Answers the letter's text and the ghost.
+    -- A letter over a game button (the chat's header): the button untouched,
+    -- the letter drawn by a ghost on `host` laid over it. Answers the text and the ghost.
     function Panel.Ghost(host, button, letter)
         local ghost = CreateFrame("Frame", nil, host)
         ghost:SetAllPoints(button)
-        local text = ghost:CreateFontString(nil, "OVERLAY")
-        Panel.Title(text)
-        text:SetText(letter)
-        text:SetPoint("CENTER", ghost, "CENTER", 0, 0)
-        local entry = { frame = ghost, hover = false, fade = 1 }
-        holders[button] = entry
-        PaintLetter(entry)
-        ghost:SetScript("OnEnter", function() entry.hover = true; PaintLetter(entry) end)
-        ghost:SetScript("OnLeave", function() entry.hover = false; PaintLetter(entry) end)
+        local text, entry = Hold(button, ghost, letter)
+        ghost:SetScript("OnEnter", function() Hover(entry, true) end)
+        ghost:SetScript("OnLeave", function() Hover(entry, false) end)
         Panel.PassThrough(ghost)
         return text, ghost
     end
 
     ---------------------------------------------------------------------------
-    -- A SCROLLBAR IN THE ADDON'S LOOK (the player, 2026-10-03: "scrollbars of
-    -- chat and damage meter should be suitable with our style"): the game's
-    -- minimal scrollbar (MinimalScrollBar.xml) - its track, thumb and arrow
-    -- art at no opacity (the game changes the thumb's art as the mouse comes
-    -- and goes, but each texture keeps its own opacity) - with a thin dark
-    -- track and a gold thumb of the addon's drawn in their place, and no
-    -- arrows. The game's thumb is still what is dragged.
+    -- The backdrop
+    ---------------------------------------------------------------------------
+
+    local REST_ALPHA = 0
+    Panel.HOVER_ALPHA = 0.5
+    local FADE_TIME = 0.2       -- seconds from one to the other
+
+    -- The background at its opacity, the panel's letter buttons faded with it.
+    function Panel.Paint(panel)
+        local colour = Style.WINDOW_BACKGROUND
+        panel.bg:SetColorTexture(colour[1], colour[2], colour[3], panel.bgAlpha)
+        if not panel.letters then return end
+        local k = (panel.bgAlpha - REST_ALPHA) / (Panel.HOVER_ALPHA - REST_ALPHA)
+        k = math.max(0, math.min(1, k))
+        for _, button in ipairs(panel.letters() or {}) do
+            local entry = holders[button]
+            if entry and entry.fade ~= k then
+                entry.fade = k
+                PaintLetter(entry)
+            end
+        end
+    end
+
+    local function Step(panel, elapsed)
+        local over = panel:IsMouseOver() or (panel.active and panel.active())
+        local target = over and Panel.HOVER_ALPHA or REST_ALPHA
+        local now = panel.bgAlpha
+        if now == target then return end
+        local step = elapsed * (Panel.HOVER_ALPHA - REST_ALPHA) / FADE_TIME
+        if now < target then now = math.min(target, now + step) else now = math.max(target, now - step) end
+        panel.bgAlpha = now
+        Panel.Paint(panel)
+    end
+
+    -- opts.active() -> keep the background up with the mouse away (an edit
+    -- box in use); opts.letters() -> the letter buttons that fade with it.
+    function Panel.New(parent, opts)
+        opts = opts or {}
+        local panel = CreateFrame("Frame", nil, parent)
+        panel:EnableMouse(false)
+        panel.active = opts.active
+        panel.letters = opts.letters
+        panel.bgAlpha = REST_ALPHA
+        panel.bg = panel:CreateTexture(nil, "BACKGROUND", nil, -8)
+        panel.bg:SetAllPoints(panel)
+        Panel.Paint(panel)
+        panel:SetScript("OnUpdate", Step)
+        return panel
+    end
+
+    ---------------------------------------------------------------------------
+    -- The game's minimal scrollbar in the addon's look: its art and arrows
+    -- clear, a thin dark track and a gold thumb drawn instead; the game's
+    -- thumb is still what is dragged.
     ---------------------------------------------------------------------------
 
     Panel.SCROLL_WIDTH = 3      -- the room a scrollbar takes
-    Panel.SCROLL_PIXELS = 2     -- its track and thumb: real screen pixels
+    Panel.SCROLL_PIXELS = 2     -- its track and thumb, in real pixels
 
-    -- THE SAME THICKNESS ON THE SCREEN WHEREVER IT IS DRAWN (the player,
-    -- 2026-10-05, the tabs' sidebar's scrollbar beside the chat's: "obviously
-    -- thicker than chat scroll"): the same width in UI units came out at
-    -- different widths, the chat window being drawn at a scale of its own.
-    -- `pixels` real pixels in `region`'s UI units.
+    -- `pixels` real pixels in `region`'s units: the same on screen whatever its scale.
     function Panel.Pixels(region, pixels)
-        local scale = region:GetEffectiveScale()
-        if PixelUtil and PixelUtil.GetPixelToUIUnitFactor and type(scale) == "number" and scale > 0 then
-            return pixels * PixelUtil.GetPixelToUIUnitFactor() / scale
-        end
-        return pixels
+        return pixels * Style.PixelSize(region)
     end
 
     local function Off(region)
-        if type(region) == "table" and region.SetAlpha then region:SetAlpha(0) end
+        if region then region:SetAlpha(0) end
+    end
+
+    -- A full-height strip of `colour` on `parent`, `width` wide.
+    local function Strip(parent, layer, colour, alpha, width)
+        local texture = parent:CreateTexture(nil, layer)
+        texture:SetColorTexture(colour[1], colour[2], colour[3], alpha)
+        texture:SetWidth(width)
+        texture:SetPoint("TOP", parent, "TOP", 0, 0)
+        texture:SetPoint("BOTTOM", parent, "BOTTOM", 0, 0)
+        return texture
     end
 
     local styledBars = setmetatable({}, { __mode = "k" })
     function Panel.ScrollBar(bar)
-        if type(bar) ~= "table" or styledBars[bar] then return end
+        if not bar or styledBars[bar] then return end
         local track = bar.Track
         local thumb = track and track.Thumb
-        if type(track) ~= "table" or type(thumb) ~= "table" or type(track.CreateTexture) ~= "function" then return end
+        if not thumb then return end
         styledBars[bar] = true
         for _, key in ipairs({ "Begin", "Middle", "End" }) do
             Off(track[key])
             Off(thumb[key])
         end
-        -- No arrows at all (the player, 2026-10-03: "we dont need scroll
-        -- arrow icons"): each arrow button invisible and deaf to the mouse;
-        -- the wheel and the thumb still scroll.
+        -- No arrows: invisible and deaf; the wheel and the thumb still scroll.
         for _, key in ipairs({ "Back", "Forward" }) do
             local step = bar[key]
-            if type(step) == "table" then
+            if step then
                 Off(step.Texture)
                 Off(step)
-                if step.EnableMouse then step:EnableMouse(false) end
+                step:EnableMouse(false)
             end
         end
 
-        -- The track the bar's whole height (the player, 2026-10-03: "chat
-        -- scrollbar should be full height properly fit the actual text
-        -- area"): the game keeps 19 at each end for the arrows, gone here.
-        if track.ClearAllPoints and track.SetPoint then
-            track:ClearAllPoints()
-            track:SetPoint("TOP", bar, "TOP", 0, 0)
-            track:SetPoint("BOTTOM", bar, "BOTTOM", 0, 0)
-        end
+        -- The track the bar's whole height (the game keeps 19 for the arrows).
+        track:ClearAllPoints()
+        track:SetPoint("TOP", bar, "TOP", 0, 0)
+        track:SetPoint("BOTTOM", bar, "BOTTOM", 0, 0)
 
         local width = Panel.Pixels(track, Panel.SCROLL_PIXELS)
-        local back = track:CreateTexture(nil, "BACKGROUND")
         local tone = Style.BACKGROUND_COLOR
-        back:SetColorTexture(tone[1], tone[2], tone[3], tone[4])
-        back:SetWidth(width)
-        back:SetPoint("TOP", track, "TOP", 0, 0)
-        back:SetPoint("BOTTOM", track, "BOTTOM", 0, 0)
-
-        local fill = thumb:CreateTexture(nil, "OVERLAY")
-        local gold = Style.BORDER_COLOR
-        fill:SetColorTexture(gold[1], gold[2], gold[3], 1)
-        fill:SetWidth(width)
-        fill:SetPoint("TOP", thumb, "TOP", 0, 0)
-        fill:SetPoint("BOTTOM", thumb, "BOTTOM", 0, 0)
-        return fill
-    end
-
-    -- At rest now, whatever it was (a panel shown again).
-    function Panel.Rest(panel)
-        panel.bgAlpha = Panel.REST_ALPHA
-        Panel.Paint(panel)
+        Strip(track, "BACKGROUND", tone, tone[4], width)
+        return Strip(thumb, "OVERLAY", Style.BORDER_COLOR, 1, width)
     end
 end

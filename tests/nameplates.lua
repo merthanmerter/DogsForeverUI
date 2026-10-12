@@ -130,8 +130,9 @@ end
 -- The game's nameplate styles, as far as where the name goes: "Modern" puts it
 -- inside the bar, "Default" and "Cast Focus" above it.
 NamePlateConstants = { NAME_ANCHOR_STYLES = { InsideHealthBar = 1, AboveHealthBar = 2 } }
-NamePlateSetupOptions = { unitNameAnchorStyle = 1, playerLevelDiffWidth = 20,
-                          levelFontHeight = 9, healthBarFontHeight = 12, castBarFontHeight = 11 }
+NamePlateSetupOptions = { unitNameAnchorStyle = 1, playerLevelDiffWidth = 20, playerLevelDiffHeight = 12,
+                          healthBarHeight = 20, levelFontHeight = 9, healthBarFontHeight = 12,
+                          castBarFontHeight = 11 }
 -- The game's nameplate fonts.
 SystemFont_NamePlate = { name = "SystemFont_NamePlate" }
 SystemFont_NamePlate_Outlined = { name = "SystemFont_NamePlate_Outlined" }

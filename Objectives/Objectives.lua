@@ -1,109 +1,50 @@
--- THE QUEST TRACKER  (DogsForeverUI.Objectives)
+-- The quest tracker and quest rewards  (DogsForeverUI.Objectives, no settings)
 --
--- The game's objective tracker (Blizzard_ObjectiveTracker) in the addon's
--- look, quieter: the same tracker doing everything it did - collapsing,
--- clicking a quest open, the right-click menu, super-tracking from the quest
--- buttons, quest items, sorting, Edit Mode - only drawn with less. No setting
--- and no command; it is the look.
+-- The game's objective tracker in the addon's look, doing all it did: the
+-- headers' strips replaced by a gold line fading out at the right, the
+-- collapse buttons a flat gold minus/plus, the quest buttons smaller, no
+-- dashes, item buttons and progress bars in the bars' look, and the Edit
+-- Mode opacity background the frames' box. Text and the scenario, bonus and
+-- world quest sections stay the game's. And reputation rows in quest rewards.
 --
--- WHAT CHANGES:
---
---   * "All Objectives", the tracker's own header: the game's bronze strip
---     gone, and in its place only the gold line of the player frame's NAME
---     BAND (UnitPlate.NAME_BAND's line alpha) under the title, solid, then
---     fading out over the right end (FADE). No black behind it;
---   * each section's header ("Quests", "Achievements"...): its strip, glow and
---     shine gone, only a fainter gold hairline under the title, fading out
---     the same way;
---   * the collapse buttons: the game's red and yellow squares become a flat
---     gold minus outlined in black, a plus while collapsed, white under the
---     mouse - the same buttons, the same clicks;
---   * the quest buttons left of each title (the "?" and "..." that
---     super-track a quest) kept exactly as they are - their art says whether
---     a quest is done and which one is followed - only smaller (POI_SCALE);
---   * no dash before the objectives: the lines keep the dash's indent, so
---     they still sit in under their quest's title;
---   * quest item buttons in the action buttons' look (ActionButtons.Skin):
---     the thin border, the dark slot, the icon trimmed, flat pressed and
---     hover states. Their range dot, count, cooldown and "in the area" glow
---     are the game's still;
---   * progress bars flat with the bars' sheen, the dark background and the
---     action buttons' thin border instead of the skill-bar frame, in the
---     game's own colour;
---   * the background Edit Mode's Opacity setting gives the tracker: the
---     frames' own box and rounded border instead of the game's nine-slice
---     (see THE BACKGROUND).
---
--- Left as the game draws them: the text, its fonts and colours (quest level
--- and difficulty colour included), and everything inside the scenario, bonus
--- and world quest sections.
---
--- "Objectives" is also one of the Auto-hide switches (Menus\ActionBars.lua),
--- with a pin for it left of "All Objectives" (THE PIN).
---
--- HOW. Each section of the tracker lays itself out in its own EndLayout; a
--- secure post-hook on it (hooksecurefunc - it cannot taint the game's code)
--- goes over what that layout uses: the header, every block's quest button
--- and lines, the item buttons and the progress bars. The game pools all of
--- these and hands them round, so each is done once (kept in weak tables on
--- the addon's side) and the cheap parts - the quest button's size, a dash's
--- opacity - checked again each time. The collapse state comes from a
--- post-hook on each header's SetCollapsed.
---
--- Nothing of the game's is given a field, has a script replaced or is moved;
--- its layout values (spacing, offsets) are never written. The game's art is
--- only hidden or faded, its textures given other looks, and regions and
--- frames of the addon's added. The game never sets these regions' opacity
--- or shows the strips again (checked across Blizzard_ObjectiveTracker); the
--- header's appear animation fades the strip in, which is why the strip is
--- hidden rather than faded.
+-- Secure post-hooks on each section's EndLayout go over what it laid out
+-- (pooled, so each is done once, kept in weak tables). Nothing of the game's
+-- is given a field or moved; its art is only hidden or faded (hidden where
+-- the header's appear animation would fade it back in).
 
 local Objectives = {}
 DogsForeverUI.Objectives = Objectives
 
 do -- private scope
-
-    local Style = DogsForeverUI.Style
+    local Core = DogsForeverUI
+    local Style = Core.Style
+    local Faded, Get = Core.Fade, Core.Region
+    local NONE = {}
 
     Objectives.POI_SCALE = 0.8     -- the quest buttons, of the game's size
-    Objectives.FADE = 0.35         -- each header's band and line fade out over this share, at the right
-    Objectives.SECTION_LINE = 0.45 -- a section header's hairline, against the name band's gold line
+    Objectives.FADE = 0.35         -- each header's line fades out over this share, at the right
+    Objectives.SECTION_LINE = 0.45 -- a section header's hairline alpha
     Objectives.GLYPH = 10          -- the collapse buttons' minus and plus, wide
     Objectives.GLYPH_LINE = 2      -- and thick
-    Objectives.GLYPH_OUTLINE = 1   -- the black round each stroke, so it reads on bright ground
+    Objectives.GLYPH_OUTLINE = 1   -- the black round each stroke, to read on bright ground
 
-    -- The player frame's name band (UnitPlate.NAME_BAND: the black's and the
-    -- gold line's alpha) and height (UnitPlate.TopRoom).
-    local NameBand = DogsForeverUI.Frames.UnitPlate.NameBand
+    -- The player frame's name band: its gold line's alpha and its height.
+    local NameBand = Core.Frames.UnitPlate.NameBand
 
     local skinned = setmetatable({}, { __mode = "k" })   -- game object -> done
     Objectives.parts = setmetatable({}, { __mode = "k" }) -- game object -> what was made for it
 
-    local function Hidden(region)
-        if type(region) == "table" and type(region.Hide) == "function" then
-            pcall(region.Hide, region)
-        end
-    end
-
-    local Faded, Get = DogsForeverUI.Fade, DogsForeverUI.Region
-
     local function OnePixelTall(region)
-        if PixelUtil and PixelUtil.SetHeight then
-            PixelUtil.SetHeight(region, 1, 1)
-        else
-            region:SetHeight(1)
-        end
+        if PixelUtil then PixelUtil.SetHeight(region, 1, 1) else region:SetHeight(1) end
     end
 
     ---------------------------------------------------------------------------
-    -- THE HEADERS
+    -- Headers
     ---------------------------------------------------------------------------
 
-    -- A strip in two pieces along `header` - solid, then fading to nothing
-    -- over the right FADE of its width (a texture fades one way only).
-    -- Drawn as the header's own regions, under its title: a frame of the
-    -- addon's would be a child, and a child is drawn over all of its
-    -- parent's regions, the title included.
+    -- A line in two pieces - solid, then fading over the right FADE (a texture
+    -- fades one way only). The header's own regions, under its title: a child
+    -- frame would draw over the title.
     local function Pieces(header, sublevel, colour, alpha)
         local r, g, b = colour[1], colour[2], colour[3]
         local solid = header:CreateTexture(nil, "BACKGROUND", nil, sublevel)
@@ -111,65 +52,41 @@ do -- private scope
         solid:SetVertexColor(r, g, b, alpha)
         local fade = header:CreateTexture(nil, "BACKGROUND", nil, sublevel)
         fade:SetTexture(Style.FLAT_TEXTURE)
-        if fade.SetGradient and CreateColor then
-            fade:SetGradient("HORIZONTAL", CreateColor(r, g, b, alpha), CreateColor(r, g, b, 0))
-        else
-            fade:SetVertexColor(r, g, b, alpha / 2)
-        end
+        fade:SetGradient("HORIZONTAL", CreateColor(r, g, b, alpha), CreateColor(r, g, b, 0))
         return { solid = solid, fade = fade }
     end
 
-    -- The two pieces laid along the header's width. `point` is where the
-    -- strip sits (LEFT for the band, BOTTOMLEFT for a hairline), `y` its
-    -- offset; the height is the band's, or one real pixel for a line.
-    local function LayOut(header, pieces, point, y, height)
+    -- One real pixel tall along the header's foot, `y` up.
+    local function LayOut(header, pieces, y)
         local width = header:GetWidth() or 0
         if width <= 0 then return end
         local fadeWidth = math.floor(width * Objectives.FADE + 0.5)
         local solid, fade = pieces.solid, pieces.fade
         solid:ClearAllPoints()
-        solid:SetPoint(point, header, point, 0, y)
+        solid:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, y)
         solid:SetWidth(width - fadeWidth)
         fade:ClearAllPoints()
         fade:SetPoint("LEFT", solid, "RIGHT", 0, 0)
         fade:SetWidth(fadeWidth)
-        if height then
-            solid:SetHeight(height)
-            fade:SetHeight(height)
-        else
-            OnePixelTall(solid)
-            OnePixelTall(fade)
-        end
+        OnePixelTall(solid)
+        OnePixelTall(fade)
     end
 
-    -- The tracker's own header: the name band's gold line, where the band's
-    -- foot would be - no black behind the title (the player had it taken
-    -- out, 2026-10-01).
-    local function TitleStrip(header)
+    -- The tracker's own header: the name band's gold line where the band's
+    -- foot would be. A section's: a fainter hairline along its foot.
+    local function Strip(header, isTitle)
         local look, height = NameBand()
-        local strip = { line = Pieces(header, -1, Style.BORDER_COLOR, look.lineAlpha) }
+        local alpha = isTitle and look.lineAlpha or Objectives.SECTION_LINE
+        local strip = { line = Pieces(header, -1, Style.BORDER_COLOR, alpha) }
         function strip.Place()
-            -- The band's height, centred on the header: its foot.
-            local foot = ((header:GetHeight() or height) - height) / 2
-            LayOut(header, strip.line, "BOTTOMLEFT", foot, nil)
+            LayOut(header, strip.line, isTitle and ((header:GetHeight() or height) - height) / 2 or 2)
         end
         return strip
     end
 
-    -- A section's header: the hairline only, along its foot.
-    local function SectionStrip(header)
-        local strip = { line = Pieces(header, -1, Style.BORDER_COLOR, Objectives.SECTION_LINE) }
-        function strip.Place()
-            LayOut(header, strip.line, "BOTTOMLEFT", 2, nil)
-        end
-        return strip
-    end
-
-    -- THE COLLAPSE BUTTON: the game's art at no opacity (it only ever swaps
-    -- the atlas, in SetCollapsed), and a minus of the addon's over it, with
-    -- the plus's upright while collapsed. Gold, white under the mouse, each
-    -- stroke on a black one GLYPH_OUTLINE larger all round: the muted border
-    -- gold and one pixel were lost against the world (the player, 2026-10-01).
+    -- THE COLLAPSE BUTTON: the game's art at no opacity (it only swaps the
+    -- atlas), a minus of the addon's over it, the plus's upright while
+    -- collapsed; gold, white under the mouse, each stroke on a black one.
     local IDLE, HOVER = Style.GOLD, Style.TEXT_COLOR
 
     local function PaintGlyph(glyph)
@@ -186,18 +103,14 @@ do -- private scope
         bar:SetTexture(Style.FLAT_TEXTURE)
         if r then bar:SetVertexColor(r, g, b, 1) end
         bar:SetPoint("CENTER", frame, "CENTER", 0, 0)
-        if PixelUtil and PixelUtil.SetSize then
-            PixelUtil.SetSize(bar, width, height, 1, 1)
-        else
-            bar:SetSize(width, height)
-        end
+        if PixelUtil then PixelUtil.SetSize(bar, width, height, 1, 1) else bar:SetSize(width, height) end
         return bar
     end
 
     local function SkinMinimize(button, collapsed)
-        Faded(Get(button, "GetNormalTexture", "NormalTexture"))
-        Faded(Get(button, "GetPushedTexture", "PushedTexture"))
-        Faded(Get(button, "GetHighlightTexture", "HighlightTexture"))
+        for _, state in ipairs({ "Normal", "Pushed", "Highlight" }) do
+            Faded(Get(button, "Get" .. state .. "Texture", state .. "Texture"))
+        end
 
         local frame = CreateFrame("Frame", nil, button)
         frame:SetAllPoints(button)
@@ -217,86 +130,66 @@ do -- private scope
         return glyph
     end
 
-    -- `collapsed`: what the header shows now (the game set it before the
-    -- hook went on); after that its SetCollapsed says.
+    -- `collapsed`: what the header shows now; after that its SetCollapsed says.
     local function SkinHeader(header, isTitle, collapsed)
-        if type(header) ~= "table" or skinned[header] then return end
+        if not header or skinned[header] then return end
         skinned[header] = true
-        Hidden(header.Background)
-        Hidden(header.Glow)
-        Hidden(header.Shine)
+        for _, key in ipairs({ "Background", "Glow", "Shine" }) do
+            if header[key] then header[key]:Hide() end
+        end
 
-        local parts = { strip = isTitle and TitleStrip(header) or SectionStrip(header) }
+        local parts = { strip = Strip(header, isTitle) }
         parts.strip.Place()
-        if type(header.MinimizeButton) == "table" then
-            parts.glyph = SkinMinimize(header.MinimizeButton, collapsed)
-        end
-        if type(header.SetCollapsed) == "function" then
-            hooksecurefunc(header, "SetCollapsed", function(_, isCollapsed)
-                if parts.glyph then
-                    parts.glyph.collapsed = isCollapsed and true or false
-                    PaintGlyph(parts.glyph)
-                end
-            end)
-        end
+        if header.MinimizeButton then parts.glyph = SkinMinimize(header.MinimizeButton, collapsed) end
+        hooksecurefunc(header, "SetCollapsed", function(_, isCollapsed)
+            if not parts.glyph then return end
+            parts.glyph.collapsed = isCollapsed and true or false
+            PaintGlyph(parts.glyph)
+        end)
         Objectives.parts[header] = parts
     end
 
     ---------------------------------------------------------------------------
-    -- WHAT A SECTION LAYS OUT
+    -- What a section lays out
     ---------------------------------------------------------------------------
 
     local function SkinBlock(block)
         local poi = block.poiButton
-        if type(poi) == "table" and type(poi.SetScale) == "function" then
-            -- (A scale comes back as a 32-bit float: compared with room.)
-            local scale = poi:GetScale() or 1
-            if math.abs(scale - Objectives.POI_SCALE) > 0.001 then poi:SetScale(Objectives.POI_SCALE) end
+        -- (A scale comes back as a 32-bit float: compared with room.)
+        if poi and math.abs((poi:GetScale() or 1) - Objectives.POI_SCALE) > 0.001 then
+            poi:SetScale(Objectives.POI_SCALE)
         end
-        if type(block.usedLines) == "table" then
-            for _, line in pairs(block.usedLines) do
-                if type(line) == "table" then Faded(line.Dash) end
-            end
-        end
+        for _, line in pairs(block.usedLines or NONE) do Faded(line.Dash) end
     end
 
-    -- An item button made in combat waits for the end of it if the game ever
-    -- protects it: the look makes frames on it and moves its icon.
+    -- An item button the game protects waits out combat: the look makes frames on it.
     local waiting = setmetatable({}, { __mode = "k" })
 
     local function SkinItemButton(button)
         if skinned[button] then return end
-        local Buttons = DogsForeverUI.Menus and DogsForeverUI.Menus.ActionButtons
-        if not (Buttons and Buttons.Skin) then return end
-        if InCombatLockdown() and type(button.IsProtected) == "function" and button:IsProtected() then
+        if InCombatLockdown() and button:IsProtected() then
             waiting[button] = true
             return
         end
         skinned[button] = true
         waiting[button] = nil
-        Buttons.Skin(button)
+        Core.Menus.ActionButtons.Skin(button)
     end
 
+    -- Flat with the sheen, the dark background and the action buttons' thin
+    -- border, in the game's colour.
     local function SkinProgressBar(progress)
-        local bar = type(progress) == "table" and progress.Bar
-        if type(bar) ~= "table" or skinned[bar] then return end
-        if type(bar.GetStatusBarTexture) ~= "function" then return end
+        local bar = progress.Bar
+        if not bar or skinned[bar] then return end
         skinned[bar] = true
 
-        -- The skill-bar frame round it and the navy behind it (an unnamed
-        -- texture: the bar's only background region other than its fill).
-        Faded(bar.BorderLeft)
-        Faded(bar.BorderRight)
-        Faded(bar.BorderMid)
+        -- The skill-bar frame, and the navy behind it (its only other background region).
+        for _, key in ipairs({ "BorderLeft", "BorderRight", "BorderMid" }) do Faded(bar[key]) end
         local fill = bar:GetStatusBarTexture()
         for _, region in ipairs({ bar:GetRegions() }) do
-            if region ~= fill and type(region.GetDrawLayer) == "function"
-                and region:GetDrawLayer() == "BACKGROUND" then
-                Faded(region)
-            end
+            if region ~= fill and region:GetDrawLayer() == "BACKGROUND" then Faded(region) end
         end
 
-        -- The game's colour, on the flat fill with the sheen.
         local r, g, b, a = bar:GetStatusBarColor()
         Style.SetBarFill(bar)
         if r then bar:SetStatusBarColor(r, g, b, a or 1) end
@@ -305,71 +198,38 @@ do -- private scope
         local bg = bar:CreateTexture(nil, "BACKGROUND", nil, -8)
         bg:SetAllPoints(bar)
         Style.SetBackground(bg)
-        local Buttons = DogsForeverUI.Menus and DogsForeverUI.Menus.ActionButtons
-        local border = Style.AddBorder(bar, Buttons and Buttons.BORDER, false,
-            Buttons and Buttons.BORDER_PIXELS or 1)
+        local Buttons = Core.Menus.ActionButtons
+        local border = Style.AddBorder(bar, Buttons.BORDER, false, Buttons.BORDER_PIXELS)
         Objectives.parts[bar] = { sheen = sheen, shade = shade, bg = bg, border = border }
     end
 
     local ITEM_TEMPLATE = "QuestObjectiveItemButtonTemplate"
 
-    -- One section after its layout.
     local function SkinModule(module)
-        if type(module) ~= "table" then return end
-        if type(module.usedBlocks) == "table" then
-            for _, blocks in pairs(module.usedBlocks) do
-                if type(blocks) == "table" then
-                    for _, block in pairs(blocks) do
-                        if type(block) == "table" then SkinBlock(block) end
-                    end
-                end
-            end
+        for _, blocks in pairs(module.usedBlocks or NONE) do
+            for _, block in pairs(blocks) do SkinBlock(block) end
         end
-        if type(module.usedRightEdgeFrames) == "table" then
-            for _, frame in pairs(module.usedRightEdgeFrames) do
-                if type(frame) == "table" and frame.template == ITEM_TEMPLATE then
-                    SkinItemButton(frame)
-                end
-            end
+        for _, frame in pairs(module.usedRightEdgeFrames or NONE) do
+            if frame.template == ITEM_TEMPLATE then SkinItemButton(frame) end
         end
-        if type(module.usedProgressBars) == "table" then
-            for _, progress in pairs(module.usedProgressBars) do SkinProgressBar(progress) end
-        end
+        for _, progress in pairs(module.usedProgressBars or NONE) do SkinProgressBar(progress) end
     end
 
     ---------------------------------------------------------------------------
-    -- THE BACKGROUND
+    -- THE BACKGROUND: Edit Mode's Opacity drives the frames' box (background,
+    -- rounded border) instead of the game's nine-slice, which is kept at no
+    -- opacity (a post-hook on SetBackgroundAlpha, its only writer). From the
+    -- header to under the last section (only the header while collapsed),
+    -- BOX_LEFT / BOX_RIGHT out from the sides. The tracker's child at its own
+    -- level, under the sections.
     ---------------------------------------------------------------------------
 
-    -- Edit Mode's Opacity setting gives the tracker a background: the game's
-    -- nine-slice (container.NineSlice, "common-opacity-background"), hung 30
-    -- out on the left for retail's quest buttons and down to 10 under the
-    -- last section - at full opacity a dark slab with its own corners, out of
-    -- line with everything else (the player, 2026-10-01). It is kept at no
-    -- opacity, and the setting drives the addon's box instead: the frames'
-    -- background and border (Style.BACKGROUND_COLOR, Style.DEFAULT_BORDER,
-    -- rounded corners and all), from the tracker's header to under its last
-    -- section - only round the header while the tracker is collapsed - and
-    -- BOX_LEFT / BOX_RIGHT out from the tracker's sides, so the quest buttons
-    -- and the collapse buttons sit inside with room round them. Its opacity
-    -- is the setting's, so at 0 nothing shows, as before.
-    --
-    -- The game writes the nine-slice's opacity in SetBackgroundAlpha (its only
-    -- writer); a post-hook fades it again after and passes the value on.
-    -- The box is the tracker's child at the tracker's own frame level, under
-    -- the sections (one level up), as the nine-slice was.
     Objectives.BOX_LEFT, Objectives.BOX_RIGHT = 14, 8
     Objectives.BOX_BOTTOM = 0      -- from where the game's background ends
 
     local box
 
-    local function Collapsed(frame)
-        if type(frame) == "table" and type(frame.IsCollapsed) == "function" then
-            local ok, collapsed = pcall(frame.IsCollapsed, frame)
-            return ok and collapsed and true or false
-        end
-        return false
-    end
+    local function Collapsed(frame) return frame:IsCollapsed() and true or false end
 
     local function PlaceBox()
         local tracker = _G.ObjectiveTrackerFrame
@@ -388,11 +248,7 @@ do -- private scope
     end
 
     local function BackgroundAlpha(alpha)
-        if not box then return end
-        local manager = _G.ObjectiveTrackerManager
-        if type(alpha) ~= "number" then
-            alpha = type(manager) == "table" and tonumber(manager.backgroundAlpha) or 0
-        end
+        alpha = alpha or ObjectiveTrackerManager.backgroundAlpha or 0
         box:SetAlpha(math.max(0, math.min(1, alpha)))
     end
 
@@ -401,116 +257,79 @@ do -- private scope
         local bg = box:CreateTexture(nil, "BACKGROUND", nil, -8)
         bg:SetAllPoints(box)
         Style.SetBackground(bg)
-        local border = Style.AddBorder(box)
-        Objectives.box = { frame = box, bg = bg, border = border }
+        Objectives.box = { frame = box, bg = bg, border = Style.AddBorder(box) }
 
         Faded(tracker.NineSlice)
-        if type(tracker.SetBackgroundAlpha) == "function" then
-            hooksecurefunc(tracker, "SetBackgroundAlpha", function(_, alpha)
-                Faded(tracker.NineSlice)
-                BackgroundAlpha(alpha)
-            end)
-        end
-        if type(tracker.SetCollapsed) == "function" then
-            hooksecurefunc(tracker, "SetCollapsed", PlaceBox)
-        end
+        hooksecurefunc(tracker, "SetBackgroundAlpha", function(_, alpha)
+            Faded(tracker.NineSlice)
+            BackgroundAlpha(alpha)
+        end)
+        hooksecurefunc(tracker, "SetCollapsed", PlaceBox)
         PlaceBox()
         BackgroundAlpha()
     end
 
-    -- What the tracker draws, for the auto-hide's mouse test (ActionBars.lua):
-    -- its frame runs far down the screen in its default place.
+    -- What the tracker draws, for the auto-hide's mouse test (Menus\Menus.lua):
+    -- its frame runs far down the screen.
     function Objectives.HoverFrame() return box end
 
-    -- EDIT MODE'S BOX. The game's (EditModeObjectiveTrackerSystemMixin:
-    -- AnchorSelectionFrame) is the tracker's whole frame, 30 out on the left
-    -- for retail's quest buttons - and the frame runs down to the bottom of
-    -- the free room in its default place, or as tall as Edit Mode's Height
-    -- setting once moved: a tall box round a short list (the player,
-    -- 2026-10-01). Edit Mode lets a system's box sit inside its frame,
-    -- anchored by its TOPLEFT and BOTTOMRIGHT from the frame's own corners
-    -- (the unit frames', castbar's and auras' systems do; Edit Mode's
-    -- snapping reads those two points' offsets), so it is put round the
-    -- addon's box with its border, EDIT_PADDING out - never shorter than the
-    -- header. Fitted again after the game anchors it, when it shows, and
-    -- whenever the tracker or the box changes size. The Height setting still
-    -- limits how much the tracker shows.
-    --
-    -- The tracker's CLAMP goes with the box (2026-10-02, the raid frames'
-    -- bug, Frames\RaidFrames.lua): Edit Mode keeps every system on screen by
-    -- its clamp rect, which was still the whole tall frame - so a tracker
-    -- whose frame is about the screen's height could hardly be dragged up or
-    -- down. Fitted as UpdateClampOffsets would fit it to this box, also after
-    -- the game works it out again. (Not in combat while the tracker is
-    -- protected - a quest item's secure button makes it so - the next update
-    -- after combat fits it.)
+    -- EDIT MODE'S BOX is the tracker's whole tall frame: put round the
+    -- addon's box instead, EDIT_PADDING out, never shorter than the header,
+    -- by its TOPLEFT and BOTTOMRIGHT from the frame's corners (as Edit Mode's
+    -- snapping reads them). The CLAMP goes with it, or a screen-tall frame
+    -- could hardly be dragged (not in combat while a quest item protects it).
     Objectives.EDIT_PADDING = 2
 
     local function FitEditBox()
         local tracker = _G.ObjectiveTrackerFrame
         local selection = tracker and tracker.Selection
-        if not (box and selection and type(selection.SetPoint) == "function") then return end
+        if not (box and selection) then return end
         local header = tracker.Header or tracker
         local tl, tr, tt, tb = tracker:GetLeft(), tracker:GetRight(), tracker:GetTop(), tracker:GetBottom()
         local bl, br, bt, bb = box:GetLeft(), box:GetRight(), box:GetTop(), box:GetBottom()
         local hb = header:GetBottom()
         if not (tl and tr and tt and tb and bl and br and bt and bb and hb) then return end
         -- All in the tracker's units: the box is its child, never scaled.
-        local border = Objectives.box and Objectives.box.border
+        local border = Objectives.box.border
         local out = ((border and border.out) or Style.BORDER_INSET) + Objectives.EDIT_PADDING
-        local bottom = math.min(bb, hb)
         local dl, dr = bl - out - tl, br + out - tr
-        local dt, db = bt + out - tt, bottom - out - tb
+        local dt, db = bt + out - tt, math.min(bb, hb) - out - tb
         selection:ClearAllPoints()
         selection:SetPoint("TOPLEFT", tracker, "TOPLEFT", dl, dt)
         selection:SetPoint("BOTTOMRIGHT", tracker, "BOTTOMRIGHT", dr, db)
-        if type(tracker.SetClampRectInsets) == "function"
-           and not (InCombatLockdown() and tracker:IsProtected()) then
+        if not (InCombatLockdown() and tracker:IsProtected()) then
             tracker:SetClampRectInsets(dl, dr, dt, db)
         end
     end
 
+    -- Fitted again after the game anchors it, when it shows, on any size
+    -- change, and after the header moves (every update's end).
     local function HookEditBox(tracker)
-        -- (The mixin's methods are the frame's own fields: hooked there,
-        -- never added to it.)
+        -- (The mixin's methods are the frame's own fields: hooked there.)
         for _, method in ipairs({ "AnchorSelectionFrame", "UpdateClampOffsets" }) do
             if type(rawget(tracker, method)) == "function" then hooksecurefunc(tracker, method, FitEditBox) end
         end
-        if type(tracker.Selection) == "table" and type(tracker.Selection.HookScript) == "function" then
-            tracker.Selection:HookScript("OnShow", FitEditBox)
-        end
-        if type(tracker.HookScript) == "function" then
-            tracker:HookScript("OnSizeChanged", FitEditBox)
-        end
+        if tracker.Selection then tracker.Selection:HookScript("OnShow", FitEditBox) end
+        tracker:HookScript("OnSizeChanged", FitEditBox)
         box:SetScript("OnSizeChanged", FitEditBox)
-        -- The header (and the box's top with it) moves down for what sits
-        -- above it, at the end of every update.
-        if type(tracker.UpdateHeaderPosition) == "function" then
-            hooksecurefunc(tracker, "UpdateHeaderPosition", FitEditBox)
-        end
+        hooksecurefunc(tracker, "UpdateHeaderPosition", FitEditBox)
         FitEditBox()
     end
 
     ---------------------------------------------------------------------------
-    -- THE PIN
+    -- THE PIN: the tracker's Auto-hide switch (fadeObjectives, Menus\Menus.lua)
+    -- left of "All Objectives", in the room BOX_LEFT keeps. Pinned: in colour,
+    -- always shown. Grey and faint: auto-hides. Painted on every auto-hide refresh.
     ---------------------------------------------------------------------------
 
-    -- The tracker's Auto-hide switch (fadeObjectives, Menus\ActionBars.lua)
-    -- at hand, left of "All Objectives" in the room the box keeps there
-    -- (BOX_LEFT) - the title is not moved (the player, 2026-10-04). Pinned,
-    -- in its colour: the tracker stays shown. Grey and faint until the mouse
-    -- is on it: the tracker auto-hides. Painted again whenever the auto-hide
-    -- is refreshed, which every way of changing a setting ends in.
-    Objectives.PIN = 14         -- the pin's size
-    Objectives.PIN_X = -4       -- its centre, from the header's left (the title starts at 7)
-    Objectives.PIN_IDLE = 0.5   -- an unpinned pin's opacity, away from the mouse
+    Objectives.PIN = 14         -- its size
+    Objectives.PIN_X = -4       -- its centre, from the header's left
+    Objectives.PIN_IDLE = 0.5   -- unpinned, away from the mouse
 
-    local Menus = DogsForeverUI.Menus
+    local Menus = Core.Menus
     local pin
 
-    local function Pinned()
-        return not (Menus.db and Menus.db.fadeObjectives)
-    end
+    local function Pinned() return not Menus.db.fadeObjectives end
 
     local function PaintPin()
         local pinned = Pinned()
@@ -540,7 +359,7 @@ do -- private scope
         pin:SetScript("OnClick", function()
             Menus.db.fadeObjectives = Pinned()
             Menus.Refresh()
-            DogsForeverUI.RefreshOptions()
+            Core.RefreshOptions()
             PinTooltip()
         end)
         pin:SetScript("OnEnter", function() pin.hovered = true; PaintPin(); PinTooltip() end)
@@ -550,39 +369,32 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- FINDING THE SECTIONS
+    -- Finding the sections
     ---------------------------------------------------------------------------
 
     local hooked = setmetatable({}, { __mode = "k" })
 
     local function HookModule(module)
-        if type(module) ~= "table" or hooked[module] then return end
-        if type(module.EndLayout) ~= "function" then return end
+        if hooked[module] then return end
         hooked[module] = true
         SkinHeader(module.Header, false, Collapsed(module))
         hooksecurefunc(module, "EndLayout", SkinModule)
         SkinModule(module)
     end
 
-    -- The tracker, once it exists: its own header, every section it has, and
-    -- each section added to it later (the game adds them when the world is
-    -- first entered).
+    -- The tracker once it exists: its header, its sections, and each added later.
     local function Apply()
         local tracker = _G.ObjectiveTrackerFrame
-        if type(tracker) ~= "table" then return end
+        if not tracker then return end
         if not hooked[tracker] then
             hooked[tracker] = true
             SkinHeader(tracker.Header, true, Collapsed(tracker))
             BuildPin(tracker.Header)
             BuildBox(tracker)
             HookEditBox(tracker)
-            if type(tracker.AddModule) == "function" then
-                hooksecurefunc(tracker, "AddModule", function(_, module) HookModule(module) end)
-            end
+            hooksecurefunc(tracker, "AddModule", function(_, module) HookModule(module) end)
         end
-        if type(tracker.modules) == "table" then
-            for _, module in ipairs(tracker.modules) do HookModule(module) end
-        end
+        for _, module in ipairs(tracker.modules) do HookModule(module) end
         local parts = Objectives.parts[tracker.Header]
         if parts then parts.strip.Place() end
         PlaceBox()
@@ -592,16 +404,122 @@ do -- private scope
     Objectives.Apply = Apply
     Apply()
 
-    local watcher = CreateFrame("Frame")
-    watcher:RegisterEvent("ADDON_LOADED")
-    watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
-    watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
-    watcher:SetScript("OnEvent", function(_, event, name)
+    local events = CreateFrame("Frame")
+    events:RegisterEvent("ADDON_LOADED")
+    events:RegisterEvent("PLAYER_ENTERING_WORLD")
+    events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    events:SetScript("OnEvent", function(_, event, name)
         if event == "PLAYER_REGEN_ENABLED" then
             for button in pairs(waiting) do SkinItemButton(button) end
-            return
+        elseif event ~= "ADDON_LOADED" or name == "Blizzard_ObjectiveTracker" then
+            Apply()
         end
-        if event == "ADDON_LOADED" and name ~= "Blizzard_ObjectiveTracker" then return end
-        Apply()
+    end)
+
+    ---------------------------------------------------------------------------
+    -- REPUTATION IN THE QUEST REWARDS: a row per faction, in the quest log,
+    -- the quest window and the hand-in window, red for a loss. The game's own
+    -- rows read only renown factions; GetQuestLogRewardFactionInfo (after
+    -- ProcessQuestLogRewardFactions) still has Classic's, in hundredths, for
+    -- the log's selected quest. A post-hook on QuestInfo_Display
+    -- (QuestInfo_ShowRewards sits in the template tables, unhookable) adds
+    -- rows from the game's reputation template after the last reward and
+    -- grows the panel; its height is all of the game's that is written.
+    ---------------------------------------------------------------------------
+
+    local REP_ICON = "Interface\\Icons\\Achievement_Reputation_01"
+    -- The game's REWARDS_ROW_OFFSET and REWARDS_SECTION_OFFSET (locals of QuestInfo.lua).
+    local ROW_OFFSET, SECTION_OFFSET = 2, 5
+
+    local repRows = {}          -- panel -> its rows
+
+    -- Each faction the selected quest gives reputation with, the amount whole
+    -- as the server gives it (37.5 is 37); one with no name left out.
+    local function Rewards()
+        local list = {}
+        for i = 1, GetNumQuestLogRewardFactions() do
+            local factionID, amount = GetQuestLogRewardFactionInfo(i)
+            local faction = factionID and C_Reputation.GetFactionDataByID(factionID)
+            amount = amount and (amount < 0 and math.ceil(amount / 100) or math.floor(amount / 100))
+            if faction and faction.name and amount and amount ~= 0 then
+                list[#list + 1] = { factionID = factionID, name = faction.name, amount = amount }
+            end
+        end
+        return list
+    end
+
+    -- The quest handed in is in the log: selected for the read, then the
+    -- selection put back (as the game's Abandon does). An offered quest has none.
+    local function HandInRewards()
+        local questID = GetQuestID()
+        if not C_QuestLog.GetLogIndexForQuestID(questID) then return {} end
+        local selected = C_QuestLog.GetSelectedQuest()
+        C_QuestLog.SetSelectedQuest(questID)
+        ProcessQuestLogRewardFactions()
+        local list = Rewards()
+        C_QuestLog.SetSelectedQuest(selected)
+        return list
+    end
+
+    -- The map's small rows or the windows' large ones, as wide as the
+    -- panel's item rewards, so the right-hand column lines up.
+    local function RepRow(panel, i)
+        repRows[panel] = repRows[panel] or {}
+        local row = repRows[panel][i]
+        if not row then
+            local template = panel == MapQuestInfoRewardsFrame and "SmallQuestInfoRewardReputationTemplate"
+                or "LargeQuestInfoRewardReputationTemplate"
+            row = CreateFrame("Button", nil, panel, template)
+            row:SetSize(panel.RewardButtons[1]:GetSize())
+            row.Icon:SetTexture(REP_ICON)
+            repRows[panel][i] = row
+        end
+        return row
+    end
+
+    -- `read` answers the rewards, asked only while the panel shows.
+    local function PlaceRewards(panel, template, read)
+        local shown = 0
+        local elements = read and panel:IsShown() and panel.activeRewardElements
+        if elements and #elements > 0 then
+            -- In the items' section, two to a row as the game's (beside a lone
+            -- item); after anything else, a section of its own. `left` starts
+            -- the last reward's row.
+            local last = elements[#elements]
+            local _, rowStart, relativePoint = last:GetPoint(1)
+            local inItems = last.type == "reward"
+            local left, free = last, inItems
+            if relativePoint == "TOPRIGHT" then left, free = rowStart, false end
+
+            local gap, height = template.horizontalRewardSeparation or 1, panel:GetHeight()
+            local spacing = inItems and ROW_OFFSET or SECTION_OFFSET
+            for _, reward in ipairs(read()) do
+                shown = shown + 1
+                local row = RepRow(panel, shown)
+                -- The fields the template's tooltip reads (QuestInfoReputationRewardButtonMixin).
+                row.factionID, row.factionName, row.rewardAmount = reward.factionID, reward.name, reward.amount
+                row.Name:SetText(QUEST_REPUTATION_REWARD_TITLE:format(reward.name))
+                row.RewardAmount:SetText(reward.amount)
+                row.RewardAmount:SetTextColor((reward.amount < 0 and RED_FONT_COLOR or HIGHLIGHT_FONT_COLOR):GetRGB())
+                row:ClearAllPoints()
+                if free then
+                    row:SetPoint("TOPLEFT", left, "TOPRIGHT", gap, 0)
+                else
+                    row:SetPoint("TOPLEFT", left, "BOTTOMLEFT", 0, -spacing)
+                    height = height + row:GetHeight() + spacing
+                    left, spacing = row, ROW_OFFSET
+                end
+                free = not free
+                row:Show()
+            end
+            if shown > 0 then panel:SetHeight(height) end
+        end
+        local made = repRows[panel] or NONE
+        for i = shown + 1, #made do made[i]:Hide() end
+    end
+
+    hooksecurefunc("QuestInfo_Display", function(template)
+        local read = template.questLog and Rewards or template == QUEST_TEMPLATE_REWARD and HandInRewards or nil
+        PlaceRewards(QuestInfoFrame.rewardsFrame, template, read)
     end)
 end

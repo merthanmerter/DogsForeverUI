@@ -1,4 +1,4 @@
--- The addon's own default layout (Core\DefaultPlaces.lua): the action bars,
+-- The addon's own default layout (Core\Defaults.lua): the action bars,
 -- the unit frames, the XP bar, the cooldowns and the castbar where the player
 -- asked for them (2026-10-03), once per character.
 local ADDON_PATH, TOC_TEXT = ...

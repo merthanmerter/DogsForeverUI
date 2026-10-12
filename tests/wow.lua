@@ -298,6 +298,7 @@ function CreateFont(name)
 end
 function Widget:Raise() end
 function Widget:GetStringWidth() return #(tostring(self.text or "")) * 6 end
+function Widget:GetUnboundedStringWidth() return self:GetStringWidth() end
 function Widget:SetScale(v) self.scale = v end
 function Widget:SetIgnoreParentScale(v) self.ignoreParentScale = v end
 function Widget:GetScale() return self.scale end
@@ -696,6 +697,23 @@ C_Texture = {
     end,
 }
 
+-- The game's nameplate driver (Blizzard_NamePlates, always loaded): no plates.
+NamePlateDriverFrame = { OnNamePlateAdded = function() end, UpdateNamePlateOptions = function() end }
+C_NamePlate = { GetNamePlateForUnit = function() end, GetNamePlates = function() return {} end }
+function CompactUnitFrame_UpdatePlayerLevelDiff() end
+function CompactUnitFrame_UpdateName() end
+-- SharedXML's TableUtil.
+function tContains(t, value)
+    for _, v in ipairs(t) do if v == value then return true end end
+    return false
+end
+-- The client's table.wipe and SharedXMLBase's Clamp (math.clamp).
+wipe = wipe or function(t)
+    for k in pairs(t) do t[k] = nil end
+    return t
+end
+Clamp = Clamp or function(value, low, high) return math.max(low, math.min(high, value)) end
+
 -- The setting the game keeps for the target of target, under Options > Combat.
 cvars = { showTargetOfTarget = true, showSwingTimer = true }
 function GetCVarBool(name) return cvars[name] and true or false end
@@ -714,6 +732,7 @@ C_CVar = {
         return true
     end,
 }
+C_DamageMeter = { IsDamageMeterAvailable = function() return true, "" end }
 
 -- Combat ----------------------------------------------------------------------
 inCombat = false
@@ -1255,6 +1274,8 @@ function Widget:SetPushedTexture(texture) self.pushedTexture = texture end
 function Widget:SetCheckedTexture(texture) self.checkedTexture = texture end
 function Widget:GetStringHeight() return 14 end
 function Widget:SetMotionScriptsWhileDisabled() end
+function Widget:SetSnapToPixelGrid(v) self.snapToPixelGrid = v end
+function Widget:SetTexelSnappingBias(v) self.texelSnappingBias = v end
 
 -- A ScrollingMessageFrame, as far as the chat copy window uses one.
 function Widget:SetIndentedWordWrap(v) self.indentedWordWrap = v end
@@ -1847,6 +1868,12 @@ function EditModeManagerFrame:HasActiveChanges() return self.hasActiveChanges en
 -- in only as it loads).
 ReloadCount = 0
 function ReloadUI() ReloadCount = ReloadCount + 1 end
+function HideUIPanel(frame) frame:Hide() end
+-- The game's addon list.
+C_AddOns = C_AddOns or {}
+function C_AddOns.GetAddOnMetadata() return nil end
+function C_AddOns.DisableAddOn() end
+function C_AddOns.SaveAddOns() end
 -- The game's descriptions of each system's settings, as its Edit Mode window
 -- shows them (EditModeSettingDisplayInfoManager); a test gives a system its
 -- list. And the one way the game applies a setting live, counted: the addon
@@ -2251,6 +2278,9 @@ C_Reputation = {
 }
 FACTION_STANDING_LABEL4 = "Neutral"
 FACTION_STANDING_LABEL5 = "Friendly"
+-- No friendship factions here; the player is female (UnitSex 3).
+C_GossipInfo = { GetFriendshipReputation = function() end }
+function UnitSex() return 3 end
 
 local function NewContainer(name, shown)
     local container = NewBlizzard(name)
@@ -2300,6 +2330,7 @@ function MainStatusTrackingBarContainer:GetEffectiveScale() return 1 end
 -------------------------------------------------------------------------------
 
 Enum.PowerType = Enum.PowerType or {}
+Enum.PowerType.Mana = 0
 Enum.PowerType.ComboPoints = 4
 
 combo = { points = 0, max = 5 }
@@ -2537,6 +2568,7 @@ function CreateKeyChordStringUsingMetaKeyState(key)
     return (ctrlDown and "CTRL-" or "") .. (shiftDown and "SHIFT-" or "") .. key
 end
 function GetBindingText(key) return key or "" end
+function GetBindingFromClick(key) return GetBindingAction(key) end
 RANGE_INDICATOR = "*"
 NUM_ACTIONBAR_PAGES = 6
 pages = {}
@@ -2613,6 +2645,11 @@ actionButtonTemplate = function(f)
     f.width, f.height = 45, 45
 end
 
+-- The game menu (Blizzard_GameMenu, loaded before any addon); tests/install.lua
+-- gives it buttons.
+GameMenuFrame = newWidget("Frame")
+function GameMenuFrame:Layout() end
+
 -- The .toc's own list, so the tests load exactly what the game loads.
 local function TocFiles()
     local files = {}
@@ -2658,6 +2695,13 @@ function Tick(seconds)
             frame.scripts.OnUpdate(frame, seconds)
         end
     end
+end
+
+-- The precise clock: the harness's time, a hundredth of a millisecond more each look.
+local preciseLooks = 0
+function GetTimePreciseSec()
+    preciseLooks = preciseLooks + 1
+    return now + preciseLooks * 1e-5
 end
 
 -- A new session: everything the last load made is forgotten, the saved file
@@ -2921,3 +2965,11 @@ function TotemFrame:Update()
     self:Layout()
     self:SetShown(active > 0)
 end
+
+-- Always there on this client; a test that needs other answers redefines them.
+function UnitInRange() return true, true end
+function UnitGroupRolesAssigned() return "NONE" end
+function IsResting() return false end
+C_ClassColor = { GetClassColor = function() end }
+C_GameRules = { IsGameRuleActive = function() return false end }
+Enum.GameRule = { UnitFramePvPContextualDisabled = 1 }

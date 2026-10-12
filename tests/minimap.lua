@@ -529,10 +529,9 @@ check("the group finder's eye: inside the map's bottom left corner, the coordina
 check("and smaller than the game draws it", eye.scale == NS.EYE_SCALE and NS.EYE_SCALE < 1, eye.scale)
 eye:UpdateDefaultAnchor()
 check("again after Edit Mode places it", InCorner())
-pendingTimer = nil
 EventRegistry:TriggerEvent("Minimap.OnScaleUpdated", 1)
 check("the game's rescale puts it back on the circle", Near(Anchor(eye, 1)[4], -68))
-if pendingTimer then pendingTimer() end
+Tick(0)
 check("and it goes to the corner a frame later", InCorner())
 eye:UpdateSystemSettingSize()
 check("Edit Mode setting its size: made small again", eye.scale == NS.EYE_SCALE, eye.scale)
@@ -547,13 +546,11 @@ check("at Edit Mode's size again", eye.scale == 1, eye.scale)
 
 Section("rotate minimap switched")
 Minimap.mask = "ui-hud-minimap-frame-generic-mask"     -- the game's callback
-pendingTimer = nil
 Fire("CVAR_UPDATE", "rotateMinimap", "1")
 check("square again at once", Minimap.mask == Style.FLAT_TEXTURE)
 Minimap.mask = "ui-hud-minimap-frame-generic-mask"     -- the game's ran after ours
-check("and again on the next frame", pendingTimer ~= nil)
-if pendingTimer then pendingTimer() end
-check("so it stays square whichever ran last", Minimap.mask == Style.FLAT_TEXTURE)
+Tick(0)
+check("and again on the next frame, so it stays square whichever ran last", Minimap.mask == Style.FLAT_TEXTURE)
 Minimap.mask = "kept"
 Fire("CVAR_UPDATE", "cameraDistanceMaxZoomFactor", "2")
 check("other settings left alone", Minimap.mask == "kept")

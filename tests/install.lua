@@ -1,6 +1,5 @@
--- The first start's question (Options\Install.lua), the game menu's button
--- (Options\GameMenu.lua) and the game's Quick Keybind Mode brought to the
--- addon's (Options\Keybinds.lua).
+-- The first start's question and the game menu's button (Options\Panel.lua),
+-- and the game's Quick Keybind Mode brought to the addon's (Options\Keybinds.lua).
 local ADDON_PATH, TOC_TEXT = ...
 assert(loadfile(ADDON_PATH .. "/tests/wow.lua"))(ADDON_PATH, TOC_TEXT)
 

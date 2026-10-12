@@ -1,111 +1,47 @@
--- THE LOOK
---
--- Every bar in the addon - unit frames, cast bars, swing bars, the five-second
--- countdown - is drawn from here, so they cannot drift apart:
---
---   * the fill: a flat colour with a soft sheen and shade, on every bar;
---   * behind it, a black tone, nearly opaque;
---   * round it, the tooltip's gold line, a soft bevel and a black line, the
---     corners rounded;
---   * labels in Media\Dog.ttf, outlined;
---   * the colours from one palette.
+-- Style: the one look every bar is drawn with (DogsForeverUI.Style).
+-- The palette, a flat fill with sheen and shade, rounded pixel-exact borders,
+-- fades, sparks, label fonts - and the game's text in the addon's font (DogsForeverUI.Fonts).
 
 local Style = {}
 DogsForeverUI.Style = Style
+local Fonts = {}
+DogsForeverUI.Fonts = Fonts
 
 do -- private scope
 
-    -- The fill, on every bar - unit frames, castbars, swing bars, the
-    -- countdown, combo points, XP: FLAT_TEXTURE, a plain colour with
-    -- AddSheen's soft shading on top. The player picked it for the frames from
-    -- a preview and then asked for it on every bar. The game's own art was
-    -- used before (the modern health bar, the cast bar and swing timer fills),
-    -- but each is drawn for its own bar's proportions and broke up stretched
-    -- into others; flat colour shaded only from top to bottom stretches any
-    -- way cleanly, and needs no art the client might not have.
+    -- A flat colour stretches any way cleanly; the game's bar art broke up stretched.
     Style.FLAT_TEXTURE = "Interface\\Buttons\\WHITE8X8"
+    Style.SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
+    Style.FONT = DogsForeverUI.MEDIA .. "Dog.ttf"
+    Style.BOLD_FONT = DogsForeverUI.MEDIA .. "Dog-Bold.ttf"
 
-    -- Behind every bar, for the part of it that is not filled: a plain black
-    -- tone, drawn as a colour rather than from a file. It used
-    -- to be a texture in Media\, and when that file went missing the game drew
-    -- its stand-in for a missing texture - solid green - behind every bar.
-    -- At half (the player, 2026-10-03: "our empty action bar background, xp
-    -- bar background (all backgrounds like this) should be same as chat and
-    -- damage meter. 50% opacity" - Core\Panel.lua's HOVER_ALPHA).
+    -- Behind every bar (a colour, not a file: a missing file draws solid green).
     Style.BACKGROUND_COLOR = { 0.05, 0.05, 0.05, 0.5 }
-
-    -- The addon's windows - the options, the placing dialog - in the same
-    -- tone, a touch more solid; and every piece being placed with them, so
-    -- placing the UI reads as one thing.
+    -- The addon's windows: the options, the placing dialog.
     Style.WINDOW_BACKGROUND = { 0.05, 0.05, 0.05, 0.96 }
 
-    -- Every label on every bar - unit frames, castbars, swing bars, the
-    -- countdown, combo points, XP - is white, as the player asked. GOLD, the
-    -- game's heading gold #ffbb20, is kept for the cast's fill and the
-    -- player's own level.
     Style.TEXT_COLOR = { 1, 1, 1 }
-    Style.GOLD = { 0xff / 255, 0xbb / 255, 0x20 / 255 }
+    Style.GOLD = { 0xff / 255, 0xbb / 255, 0x20 / 255 }      -- the game's heading gold
 
-    -- The border, three one-pixel lines with rounded corners, from the outside
-    -- in: the game's tooltip gold - its line, measured off a screenshot at
-    -- 178,142,97 - a darker gold under it as a soft bevel, and a black line
-    -- that the bar's colour stops against. The tooltip border itself was the
-    -- look wanted, but its gold line has a heavy dark band inside it baked into
-    -- the same art, which cannot be taken off; drawn, the shade inside is ours
-    -- to choose. BORDER_COLOR is the gold, for what is drawn to go with the
-    -- border (the badge rings); DIVIDER_COLOR the black, for the hairlines
-    -- between two bars, which continue the inner line.
+    -- The border's three lines, outside in: the tooltip's gold, a darker
+    -- bevel, black (also the hairline between two bars).
     Style.BORDER_COLOR = { 178 / 255, 142 / 255, 97 / 255, 1 }
     Style.BEVEL_COLOR = { 110 / 255, 88 / 255, 60 / 255, 1 }
     Style.DIVIDER_COLOR = { 0, 0, 0, 1 }
 
-    -- Every label on a bar, in the player's own font; a unit frame's name and
-    -- level in its bold cut.
-    Style.FONT = DogsForeverUI.MEDIA .. "Dog.ttf"
-    Style.BOLD_FONT = DogsForeverUI.MEDIA .. "Dog-Bold.ttf"
-
-    -- How far outside the bar the border reaches, for the spacing between
-    -- bars: its three lines, each snapped to one real pixel.
+    -- How far the border reaches outside its bar.
     Style.BORDER_INSET = 3
 
-    Style.SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
-
-    -- While a bar is being placed it says what it is - its name on the left -
-    -- on the options window's background (SetBackground). It used to say
-    -- "unlocked" on the right too; the player: "it's obvious they're
-    -- unlocked" (2026-09-29).
-
     ---------------------------------------------------------------------------
-    -- THE PALETTE
-    --
-    -- Two muted colours rather than the game's full-strength ones, and every
-    -- other colour pulled to the same two tones so the bars read as one set:
-    --
-    --   * health at the brightness of #43582f;
-    --   * resources, casts and swings at the brightness of #19366e.
-    --
-    -- Seen in game, the palette was then asked to be lighter and more vivid, so
-    -- every colour is adjusted twice on the way out; the hex stays as given so
-    -- the base is readable:
-    --
-    --   * LIGHTER scales it up, brightest channel and all;
-    --   * VIVID pushes the other channels further from the brightest, which is
-    --     saturation without a change of hue. A grey stays grey.
-    --
-    -- Tone takes one of the game's colours - a class, a reaction, a resource, a
-    -- cast state - keeps its hue, scales it so its brightest channel is that
-    -- tone's, and raises any channel below the mana colour's darkest share of
-    -- its tone up to it, so pure red becomes a deep red rather than red on black.
+    -- Palette: health at the brightness of #43582f, resources at #19366e,
+    -- each lifted by LIGHTER and saturated by VIVID (a grey stays grey).
     ---------------------------------------------------------------------------
 
-    -- Raised three times since (1.3/1.25, 1.7/1.4, 2.1/1.6): "these tones are
-    -- too dark", and again on the modern bar art.
     local LIGHTER = 2.5
     local VIVID = 2.0
     local function hex(value) return value / 255 * LIGHTER end
 
-    -- A tint cannot go past full, so no channel is left above 1: a lift that
-    -- would take one past it stops there.
+    -- Saturation without a change of hue; no channel past 1.
     local function Push(r, g, b, amount)
         local brightest = math.max(r, g, b)
         local function one(c)
@@ -114,27 +50,13 @@ do -- private scope
         return one(r), one(g), one(b)
     end
 
-    local function Vivid(r, g, b) return Push(r, g, b, VIVID) end
-
-    Style.HEALTH_COLOR = { Vivid(hex(0x43), hex(0x58), hex(0x2f)) }
+    Style.HEALTH_COLOR = { Push(hex(0x43), hex(0x58), hex(0x2f), VIVID) }
     Style.HEALTH_TONE = hex(0x58)
-    Style.POWER_TONE = math.min(1, hex(0x6e))
+    local POWER_TONE = math.min(1, hex(0x6e))
     local MIN_SHARE = 0x19 / 0x6e
 
-    -- Mana is the exception: #18376e, as the player picked it, meant as the
-    -- colour seen on screen rather than the tint. A tint multiplies with the
-    -- texture, and the classic status bar texture is a grey gradient averaging
-    -- roughly TEXTURE_SHADE, so the tint is divided by that to land on #18376e.
-    --
-    -- When the whole palette was then made lighter and more vivid again, mana
-    -- was lifted with it by the same step the others took - LIGHTER and VIVID
-    -- each over their previous 1.7 and 1.4 - rather than left behind as the one
-    -- dark bar.
-    --
-    -- Past LIGHTER 2.1 its blue is at full, and a harder push then only takes
-    -- green out of it, which reads darker, not more vivid. So from there it is
-    -- pushed a fixed, lighter amount: the blue stays full and the green left in
-    -- is what makes it lighter (#1a6fff; it was #165edc).
+    -- Mana: #18376e as seen on screen through a texture averaging
+    -- TEXTURE_SHADE, lifted with the palette; past full blue a fixed push.
     local TEXTURE_SHADE = 0.62
     local MANA_LIFT = LIGHTER / 1.7
     local MANA_PUSH = 1.15
@@ -144,11 +66,11 @@ do -- private scope
         0x6e / 255 / TEXTURE_SHADE * MANA_LIFT,
         MANA_PUSH) }
 
-    -- At a tone of full brightness the lift has nowhere left to go, and a
-    -- harder push only takes the other channels out, which reads darker: a
-    -- blue went from #0053e7 to #0033ff. Those colours keep the push they had.
+    -- At full tone a harder push only darkens: those keep a softer one.
     local FULL_VIVID = 1.6
 
+    -- A game colour at `tone`: its hue kept, its brightest channel at the
+    -- tone, no channel below the mana colour's darkest share.
     function Style.Tone(r, g, b, tone)
         local floor = tone * MIN_SHARE
         local brightest = math.max(r, g, b)
@@ -159,92 +81,42 @@ do -- private scope
             math.max(floor, b * scale), tone >= 1 and FULL_VIVID or VIVID)
     end
 
-    -- A colour at the resource bars' depth, as a table.
-    local function Toned(r, g, b)
-        return { Style.Tone(r, g, b, Style.POWER_TONE) }
-    end
-
-    -- One of the game's own colour objects, as a table, or the value it has
-    -- always had where the client does not define it.
+    -- A game colour object as a table, or the given values where it is missing.
     local function GameColour(colour, r, g, b)
-        if type(colour) == "table" and type(colour.GetRGB) == "function" then
-            return { colour:GetRGB() }
-        end
+        if type(colour) == "table" and colour.GetRGB then return { colour:GetRGB() } end
         return { r, g, b }
     end
 
-    -- A cast bar's colour per state: exactly the game's own classic castbar
-    -- colours, not toned - CastingBarTypeInfo's classicFillColor
-    -- (Blizzard_UIPanels_Game/Shared/CastingBarFrame.lua): yellow for a cast,
-    -- green for a channel, grey when it cannot be interrupted, red when it
-    -- failed or was interrupted.
-    --
-    -- Except the cast: the game's classic yellow (1, 0.7, 0) reads orange, and
-    -- the player asked for it to be the heading gold, #ffbb20. And the
-    -- channel: the game's pure green was too loud beside that gold, so it is
-    -- the player's softer green, #04b237.
+    -- Cast states: the game's classic castbar colours, but the cast in the
+    -- heading gold and the channel in a softer green (#04b237).
     Style.CAST_COLOR = {
         casting         = { Style.GOLD[1], Style.GOLD[2], Style.GOLD[3] },
         channel         = { 0x04 / 255, 0xb2 / 255, 0x37 / 255 },
         uninterruptible = GameColour(CASTBAR_CLASSIC_GRAY, 0.7, 0.7, 0.7),
         failed          = GameColour(CASTBAR_CLASSIC_RED, 1.0, 0.0, 0.0),
     }
-
-    -- The cooldown manager: a cooldown bar is gold, a buff's duration bar
-    -- green - the cast's and the channel's colours, so the two read apart.
     Style.COOLDOWN_COLOR = Style.CAST_COLOR.casting
     Style.DURATION_COLOR = Style.CAST_COLOR.channel
 
-    -- The swing bars: grey, as the game's own swing timer is. Its grey used to
-    -- come from the swing timer art, left untinted; on the flat fill the grey
-    -- has to be the colour itself. One colour for every hand; each bar is
-    -- labelled.
     local SWING_GREY = { 0.6, 0.6, 0.6 }
-    Style.SWING_COLOR = {
-        mainhand = SWING_GREY,
-        offhand  = SWING_GREY,
-        ranged   = SWING_GREY,
-    }
+    Style.SWING_COLOR = { mainhand = SWING_GREY, offhand = SWING_GREY, ranged = SWING_GREY }
 
-    -- The five-second countdown: the player's mana bar colour, since it is
-    -- mana it counts for.
     Style.COUNTDOWN_COLOR = Style.MANA_COLOR
+    Style.XP_COLOR = { 0.58, 0.0, 0.55 }                  -- the classic XP purple, untoned
+    Style.COMBO_COLOR = { Style.Tone(1.0, 0.15, 0.1, POWER_TONE) }
+    Style.RESTED_COLOR = { 0.0, 0.39, 0.88 }              -- the classic rested blue
+    Style.HONOR_COLOR = { 0.94, 0.33, 0.0 }               -- the game's honor fill
 
-    -- The XP bar: the game's classic experience purple, exactly - not toned
-    -- like the rest of the palette, which made it far brighter than the
-    -- original. The classic XP bar was this same texture tinted this same
-    -- colour, so it looks as it did.
-    Style.XP_COLOR = { 0.58, 0.0, 0.55 }
-
-    -- Combo points: the red of the game's own combo point gems, at the
-    -- resource bars' depth.
-    Style.COMBO_COLOR = Toned(1.0, 0.15, 0.1)
-
-    -- The rested XP still ahead of it, in the classic bar's own rested blue,
-    -- exactly, drawn solid so it reads as its own stretch of the bar.
-    Style.RESTED_COLOR = { 0.0, 0.39, 0.88 }
-
-    -- The honor bar over it: the orange-red of the game's own honor fill
-    -- (UI-HUD-ExperienceBar-Fill-Honor).
-    Style.HONOR_COLOR = { 0.94, 0.33, 0.0 }
-
-    -- Whether this client has a piece of the game's art, asked before it is
-    -- used: a missing atlas draws nothing at all.
+    -- A missing atlas draws nothing: ask first.
     function Style:HasAtlas(name)
-        if type(name) ~= "string" then return false end
-        if type(C_Texture) ~= "table" or type(C_Texture.GetAtlasInfo) ~= "function" then
-            return false
-        end
-        local ok, info = pcall(C_Texture.GetAtlasInfo, name)
-        return ok and info ~= nil
+        return type(name) == "string" and C_Texture.GetAtlasInfo(name) ~= nil
     end
 
     ---------------------------------------------------------------------------
-    -- Drawing.
+    -- Bars
     ---------------------------------------------------------------------------
 
-    -- A bar's fill, the flat colour, stretched along the bar rather than tiled.
-    -- The colour is the bar's own tint (SetStatusBarColor).
+    -- The flat fill, stretched rather than tiled; the colour is the bar's tint.
     function Style.SetBarFill(bar)
         bar:SetStatusBarTexture(Style.FLAT_TEXTURE)
         local fill = bar:GetStatusBarTexture()
@@ -253,26 +125,15 @@ do -- private scope
         return fill
     end
 
-    -- A bar in the addon's look: the flat fill in a colour from the palette,
-    -- with its sheen and shade.
     function Style.Paint(bar, colour)
         Style.SetBarFill(bar)
         Style.AddSheen(bar)
         bar:SetStatusBarColor(colour[1], colour[2], colour[3], 1)
     end
 
-    -- Soft shading over a flat fill, so it reads as a bar rather than a
-    -- sticker: a light sheen fading down over the top half, a slight shade
-    -- deepening over the bottom half. Both are pinned to the fill itself, so
-    -- they cover only what is filled and follow it as it grows - the value
-    -- is never read, so a secret one is fine. Shaded only across the bar, it
-    -- stretches any way without breaking up. A vertical bar (a party pet's
-    -- box, Frames\PartyPets.lua) has it turned with it: the sheen down its
-    -- left half, the shade its right.
-    --
-    -- MakeSheen hands the two textures back and writes nothing on the bar, for
-    -- a bar that is not the addon's own (the game's nameplates); AddSheen is
-    -- for the addon's bars, and keeps them on the bar so they are made once.
+    -- A sheen over the top half and a shade over the bottom, pinned to the
+    -- fill so the value is never read (a secret is fine). AddSheen keeps them
+    -- on the addon's own bar; MakeSheen writes nothing on it (game nameplates).
     local SHEEN, SHADE = 0.22, 0.25
 
     function Style.AddSheen(bar)
@@ -284,9 +145,8 @@ do -- private scope
         return Style.SheenOver(bar, bar:GetStatusBarTexture(), 1, bar:GetOrientation() == "VERTICAL")
     end
 
-    -- The same sheen and shade on `owner`, pinned to `region` (a fill, or a
-    -- flat texture standing in for one - a party frame's dispel wash,
-    -- Frames\UnitAuras.lua), at ARTWORK `sublevel`; turned for a `vertical` bar.
+    -- The sheen and shade on `owner`, pinned to `region`, at ARTWORK
+    -- `sublevel`; a `vertical` bar has them left and right.
     function Style.SheenOver(owner, region, sublevel, vertical)
         local sheen = owner:CreateTexture(nil, "ARTWORK", nil, sublevel)
         sheen:SetTexture(Style.FLAT_TEXTURE)
@@ -310,14 +170,9 @@ do -- private scope
         return sheen, shade
     end
 
-    -- IN EDIT MODE - the game's, or the addon's own in combat - every piece is
-    -- shown as it really looks, as the game's own frames are there, with the
-    -- game's blue box over it saying what it is (Core\Snap.lua). There is no
-    -- other "placing look" any more (the copper boxes with names went,
-    -- 2026-10-02).
+    -- Whether the pieces are being placed (Unlock Mode).
     function Style.Previewing()
-        local core = DogsForeverUI
-        return core and core.IsUnlocked and core.IsUnlocked() or false
+        return DogsForeverUI.IsUnlocked()
     end
 
     -- The part of a bar that is not filled.
@@ -329,64 +184,35 @@ do -- private scope
         return texture
     end
 
-    -- THE PIXEL GRID. A border is laid out in units - each line one unit wide,
-    -- the corners four units in radius - and a unit is about one UI unit,
-    -- which on a sharp screen is more than one real pixel: at 2560x1440 and a
-    -- UI scale of 1.2, two. So a border is drawn on the real pixels: each unit
-    -- is K whole pixels, and the curves are worked out pixel by pixel at that
-    -- resolution. An earlier version drew each unit as a single step, which
-    -- the screen showed as 2x2 blocks: the corners came out stepped.
-    --
-    -- Returns the size of one real pixel in `region`'s UI units, and K.
-    local function Grid(region)
-        if PixelUtil and PixelUtil.GetPixelToUIUnitFactor and region.GetEffectiveScale then
-            local scale = region:GetEffectiveScale()
-            if type(scale) == "number" and scale > 0 then
-                local px = PixelUtil.GetPixelToUIUnitFactor() / scale
-                return px, math.max(1, math.floor(1 / px + 0.5))
-            end
+    ---------------------------------------------------------------------------
+    -- Borders, drawn on real pixels: each unit is K whole pixels, the rounded
+    -- corners anti-aliased pixel by pixel (each pixel at the share of it a
+    -- true curve covers).
+    ---------------------------------------------------------------------------
+
+    -- One real pixel in `region`'s UI units (1 where the client says nothing).
+    function Style.PixelSize(region)
+        local scale = region:GetEffectiveScale()
+        if PixelUtil and type(scale) == "number" and scale > 0 then
+            return PixelUtil.GetPixelToUIUnitFactor() / scale
         end
-        return 1, 1
+        return 1
     end
 
-    -- THE ROUNDED CORNERS. WoW cannot round a texture, and a curve drawn from a
-    -- file would blur against a one-pixel line, so each corner is drawn pixel
-    -- by pixel - anti-aliased, the way a font draws a curve: every pixel of the
-    -- corner gets, as its opacity, the share of it a true curve would cover.
-    --
-    -- A border is one or more LINES, each a unit wide, the first outermost,
-    -- then an optional GAP filled with the bar's own background, then the bar.
-    -- Counted in real pixels from the border's outer corner (x along the edge,
-    -- y into the box), with W the pixels in a line and R the radius, in each
-    -- corner:
-    --
-    --   * line i's curve is a quarter ring W pixels wide, between radius
-    --     R - i*W and R - (i-1)*W, centred R pixels in, so every line meets its
-    --     straight stretch exactly where that stops;
-    --   * the gap curves with the innermost ring's inner edge.
-    --
-    -- The bar's square corner, lines + gap in, must lie wholly inside the
-    -- outer curve, or it pokes out past it: at a radius of 4 units that takes
-    -- two units of border (one line and a gap, or two lines).
-    --
-    -- Worked out once per shape by sampling each pixel on a fine grid. Pixels
-    -- with less than FAINTEST are left out. The default - gold, bevel and
-    -- black, no gap, radius 4 (the player tried 3, then 6, and settled here) -
-    -- at one pixel a unit:
-    --
-    --     gold                  bevel                 black
-    --     .    0.16 0.70 0.96   .    .    .    .      .    .    .    .
-    --     0.16 0.92 0.43 0.05   .    .    0.57 0.95   .    .    .    .
-    --     0.70 0.43 .    .      .    0.57 0.68 0.08   .    .    0.32 0.92
-    --     0.96 0.05 .    .      .    0.95 0.08 .      .    .    0.92 0.21
-    --
-    -- The bar starts three units in, under the black line's curve.
+    -- One real pixel in `region`'s units, and K: the whole pixels in a unit.
+    local function Grid(region)
+        local px = Style.PixelSize(region)
+        return px, math.max(1, math.floor(1 / px + 0.5))
+    end
+
+    -- Radius 4 units, three lines (gold, bevel, black), no gap.
     Style.DEFAULT_BORDER = {
         radius = 4, gap = 0,
         lines = { Style.BORDER_COLOR, Style.BEVEL_COLOR, Style.DIVIDER_COLOR },
     }
 
-    -- All in real pixels: `radius`, `width` (one line) and `gap`.
+    -- A corner's pixels per line (ring) and gap fill, in real pixels: each
+    -- { x, y, share } from the outer corner. Worked out once per shape.
     local shapes = {}
     local function Shape(radius, lines, width, gap)
         local key = radius .. ":" .. lines .. ":" .. width .. ":" .. gap
@@ -435,7 +261,7 @@ do -- private scope
         { "BOTTOMLEFT", 1, 1 }, { "BOTTOMRIGHT", -1, 1 },
     }
 
-    -- Every border made, so a change of UI scale can re-snap them all.
+    -- Every border made, re-snapped on a change of UI scale.
     local borders = setmetatable({}, { __mode = "k" })
 
     local function Span(texture, border, a, ax, ay, b, bx, by)
@@ -444,12 +270,8 @@ do -- private scope
         texture:SetPoint(b, border, b, bx, by)
     end
 
-    -- A bevelled band's colour at one corner pixel. The top and left sides
-    -- are lit, the bottom and right shaded (light from the top left): the top
-    -- left corner is all light, the bottom right all shade, and the other two
-    -- turn from one to the other round the curve - a pixel's share of each is
-    -- how far along the top (or left) edge it lies against how far down the
-    -- right (or bottom) one. `x`, `y`: the pixel's place from the corner.
+    -- A bevelled band's colour at one corner pixel: lit from the top left,
+    -- the top-right and bottom-left corners turning from light to shade.
     local function BevelColour(bevel, point, x, y)
         local lit
         if point == "TOPLEFT" then
@@ -457,18 +279,16 @@ do -- private scope
         elseif point == "BOTTOMRIGHT" then
             lit = 0
         elseif point == "TOPRIGHT" then
-            lit = (x + 0.5) / (x + y + 1)       -- far along the top: lit
+            lit = (x + 0.5) / (x + y + 1)
         else -- BOTTOMLEFT
-            lit = (y + 0.5) / (x + y + 1)       -- far up the left: lit
+            lit = (y + 0.5) / (x + y + 1)
         end
         local l, s = bevel.light, bevel.shade
         return l[1] * lit + s[1] * (1 - lit), l[2] * lit + s[2] * (1 - lit),
             l[3] * lit + s[3] * (1 - lit)
     end
 
-    -- The corner pixels of one band, made as they are needed - how many there
-    -- are depends on the screen - each at its share of the band's colour.
-    -- Pixels a finer grid no longer needs are hidden.
+    -- A band's corner pixels, made as needed; spares hidden.
     local function Dots(band, pixels, border, px)
         local colour = band.colour
         local alpha = colour[4] or 1
@@ -494,8 +314,7 @@ do -- private scope
         for spare = index + 1, #band.steps do band.steps[spare]:Hide() end
     end
 
-    -- One straight band, `at` pixels in from the border's edge and `thick`
-    -- pixels thick, on all four sides, stopping `cut` short of each corner.
+    -- One straight band `at` in from the edge, `thick`, stopping `cut` short of each corner.
     local function Band(band, border, at, thick, cut)
         Span(band.top, border, "TOPLEFT", cut, -at, "TOPRIGHT", -cut, -at)
         Span(band.bottom, border, "BOTTOMLEFT", cut, at, "BOTTOMRIGHT", -cut, at)
@@ -540,35 +359,19 @@ do -- private scope
         return texture
     end
 
-    -- A band's four straight pieces, its corner pixels (made by Dots), and
-    -- how to make one more of them.
+    -- A band's four straight pieces, its corner pixels, and how to make one more.
     local function Band4(make, colour)
         return { top = make(), bottom = make(), left = make(), right = make(),
                  steps = {}, make = make, colour = colour }
     end
 
-    -- The border a bar wears: its lines with rounded corners, on a frame just
-    -- outside the bar, above everything the bar holds; and the gap inside
-    -- them, in the background's colour, drawn on the bar itself under
-    -- everything it holds. `spec` is DEFAULT_BORDER unless another is given:
-    -- { radius =, lines = { colour, ... } outermost first, gap = pixels }.
-    -- The outermost line is also border.top/bottom/left/right and .steps.
-    --
-    -- `ownScale`: the border does not take its bar's scale. For a bar the game
-    -- scales on its own - a nameplate grows and shrinks with distance - the
-    -- one-pixel lines would land between pixels and draw blurred and two wide;
-    -- the game's own nameplate borders ignore their parent's scale for the same
-    -- reason (NamePlateFullBorderTemplate). The anchors still follow the bar.
-    --
-    -- `unitPixels`: how many real pixels a unit is, instead of about one UI
-    -- unit's worth. A nameplate is small, and the frames' border - two pixels a
-    -- line on a sharp screen - is heavy on it; at 1 it is the same three lines,
-    -- one pixel each.
-    --
-    -- `spec.bevel = { light =, shade = }`, optional: the outermost line drawn
-    -- as a bevel, a slight 3D edge at no extra thickness - its colour times
-    -- `light` on the top and left, times `shade` on the bottom and right, the
-    -- corners turning between the two (BevelColour).
+    -- The border a bar wears, on a frame just outside it; the gap (if any)
+    -- drawn on the bar under everything it holds. The outermost line is also
+    -- border.top/bottom/left/right and .steps.
+    --   spec       DEFAULT_BORDER or { radius =, lines = { colour, ... }, gap =,
+    --              bevel = { light =, shade = } (the outer line lit/shaded) }
+    --   ownScale   ignore the bar's scale (a nameplate's: lines would blur)
+    --   unitPixels real pixels per unit instead of about one UI unit's worth
     function Style.AddBorder(bar, spec, ownScale, unitPixels)
         spec = spec or Style.DEFAULT_BORDER
         local border = CreateFrame("Frame", nil, bar)
@@ -590,13 +393,10 @@ do -- private scope
             local function Times(k)
                 return { math.min(1, base[1] * k), math.min(1, base[2] * k), math.min(1, base[3] * k) }
             end
-            outer.bevel = { light = Times(spec.bevel.light), shade = Times(spec.bevel.shade) }
-            local light, shade = outer.bevel.light, outer.bevel.shade
-            for _, side in ipairs({ "top", "left" }) do
-                outer[side]:SetVertexColor(light[1], light[2], light[3], a)
-            end
-            for _, side in ipairs({ "bottom", "right" }) do
-                outer[side]:SetVertexColor(shade[1], shade[2], shade[3], a)
+            local light, shade = Times(spec.bevel.light), Times(spec.bevel.shade)
+            outer.bevel = { light = light, shade = shade }
+            for side, colour in pairs({ top = light, left = light, bottom = shade, right = shade }) do
+                outer[side]:SetVertexColor(colour[1], colour[2], colour[3], a)
             end
         end
         border.top, border.bottom, border.left, border.right = outer.top, outer.bottom, outer.left, outer.right
@@ -613,32 +413,18 @@ do -- private scope
         return border
     end
 
-    -- Lay a border out again on the real pixels, for a bar whose scale the
-    -- addon has just changed itself: the rescale below only follows the UI's
-    -- own scale, and may run before the addon has caught up with it.
+    -- Laid out again, for a bar the addon has just rescaled itself.
     function Style.Refit(border) pcall(Fit, border) end
 
-    -- One real pixel in `frame`'s units: a hairline drawn inside a bar (a
-    -- cooldown's icon edge, a won roll's row).
+    -- One whole real pixel in `frame`'s units (PixelUtil.GetNearestPixelSize(1, scale, 1)).
     function Style.OnePixel(frame)
-        if PixelUtil and PixelUtil.GetNearestPixelSize then
-            local ok, px = pcall(PixelUtil.GetNearestPixelSize, 1, frame:GetEffectiveScale(), 1)
-            if ok and type(px) == "number" and px > 0 then return px end
-        end
-        return 1
+        local px, k = Grid(frame)
+        return px * k
     end
 
-    -- A border's outer edges put on whole screen pixels, where its bar is
-    -- now. Every line is a whole number of pixels in from those edges, so
-    -- each lands exactly on the pixel grid. Without it, a thin border round a
-    -- box sitting between pixels (the options window's boxes, at any UI scale
-    -- that is not a whole number of pixels to the unit, and while its page
-    -- scrolls) drew some sides and lost others: a one-pixel line between two
-    -- pixels can round away to nothing.
-    --
-    -- It MEASURES the bar, so it is only for the addon's own frames - never a
-    -- nameplate's, which refuse to be measured - and it holds only until the
-    -- bar moves: call it again after.
+    -- A border's outer edges put on whole screen pixels where its bar is now,
+    -- or a one-pixel line between two pixels can round away. It measures the
+    -- bar: the addon's own frames only (never a nameplate), again after a move.
     function Style.SnapBorder(border)
         local bar, out = border:GetParent(), border.out
         if not (bar and out) then return end
@@ -655,21 +441,14 @@ do -- private scope
     rescale:RegisterEvent("UI_SCALE_CHANGED")
     rescale:RegisterEvent("DISPLAY_SIZE_CHANGED")
     rescale:SetScript("OnEvent", function()
-        -- Guarded one by one: a border on a frame the game has since closed to
-        -- addon code (an aura button while auras are secret) must not stop
-        -- the rest.
+        -- One by one: a frame the game has since closed to addons must not stop the rest.
         for border in pairs(borders) do pcall(Fit, border) end
     end)
 
     ---------------------------------------------------------------------------
-    -- FADING. A bar that comes and goes - the castbars - fades in and out
-    -- rather than appearing and vanishing. FadeIn shows a hidden frame from
-    -- nothing and brings it up; FadeOut takes it down and hides it at the end.
-    -- Either can be called every frame: it carries on from wherever the alpha
-    -- is, so a cast that starts while the last one is fading out simply fades
-    -- back in. ShowNow is for a bar that must be there at once (being placed).
-    -- One driver runs every fade, and only while something is fading. Alpha is
-    -- not a protected call, so this works in combat.
+    -- Fading: FadeIn/FadeOut carry on from the current alpha, so either may be
+    -- called every frame. One driver, only while something fades; alpha is
+    -- not protected, so this works in combat.
     ---------------------------------------------------------------------------
     Style.FADE_IN, Style.FADE_OUT = 0.15, 0.3      -- seconds, full to nothing
 
@@ -726,8 +505,9 @@ do -- private scope
         frame:Hide()
     end
 
-    -- The spark at a bar's leading edge: the castbar's, on every bar. It is
-    -- drawn under the bar's text, and as tall as the castbar draws it.
+    ---------------------------------------------------------------------------
+    -- Sparks: the castbar's, on every bar's leading edge, under its text.
+    ---------------------------------------------------------------------------
     Style.SPARK_HEIGHT = 2.2   -- times the bar's height
 
     function Style.AddSpark(bar)
@@ -739,61 +519,43 @@ do -- private scope
         return spark
     end
 
-    -- A spark pinned to the end of a bar's fill, so it follows the fill
-    -- wherever the value puts it - with nothing read or worked out, which is
-    -- what a secret value needs. The fill texture has to be set first.
+    -- Pinned to the fill's end: it follows a secret value with nothing read.
+    -- The fill texture has to be set first.
     function Style.PinSpark(spark, bar)
         spark:ClearAllPoints()
         spark:SetPoint("CENTER", bar:GetStatusBarTexture(), "RIGHT", 0, 0)
         spark:SetHeight((bar:GetHeight() or 0) * Style.SPARK_HEIGHT)
     end
 
-    -- Every bar has its spark on the leading edge, and every bar that counts
-    -- down shows the seconds left. They used to be two settings (Show spark,
-    -- Show time left); the player took them out - they are the look, not a
-    -- choice.
-
-    -- Whether a spark shows, for a bar whose value is plain: only strictly
-    -- between empty and full, where there is an edge to mark. At either end a
-    -- spark would only glow against the bar's own end.
+    -- Shown only strictly between empty and full, for a plain value.
     function Style.SparkAlpha(value, max)
         if type(value) ~= "number" or type(max) ~= "number" or max <= 0 then return 0 end
         return (value > 0 and value < max) and 1 or 0
     end
 
-    -- The same, for health and power, which are secret on this client. The
-    -- game evaluates the curve: it maps the unit's fraction to the spark's
-    -- alpha - nothing at empty or full, all of it in between - and the result
-    -- goes straight to SetAlpha, which takes a secret. The addon never sees
-    -- the fraction.
-    local sparkCurve
-    if type(C_CurveUtil) == "table" and type(C_CurveUtil.CreateCurve) == "function" then
-        sparkCurve = C_CurveUtil.CreateCurve()
-        if Enum.LuaCurveType then sparkCurve:SetType(Enum.LuaCurveType.Linear) end
-        sparkCurve:AddPoint(0, 0)
-        sparkCurve:AddPoint(0.001, 1)
-        sparkCurve:AddPoint(0.999, 1)
-        sparkCurve:AddPoint(1, 0)
-    end
+    -- The same for secret health and power: the game evaluates the curve and
+    -- SetAlpha takes the secret result.
+    local sparkCurve = C_CurveUtil.CreateCurve()
+    sparkCurve:SetType(Enum.LuaCurveType.Linear)
+    sparkCurve:AddPoint(0, 0)
+    sparkCurve:AddPoint(0.001, 1)
+    sparkCurve:AddPoint(0.999, 1)
+    sparkCurve:AddPoint(1, 0)
 
-    local function Evaluated(query, ...)
-        if not sparkCurve or type(query) ~= "function" then return 0 end
-        local ok, alpha = pcall(query, ...)
-        return ok and alpha or 0
+    local function Evaluated(ok, alpha)
+        if ok then return alpha end
+        return 0
     end
 
     function Style.HealthSparkAlpha(unit)
-        return Evaluated(UnitHealthPercent, unit, true, sparkCurve)
+        return Evaluated(pcall(UnitHealthPercent, unit, true, sparkCurve))
     end
 
     function Style.PowerSparkAlpha(unit)
-        return Evaluated(UnitPowerPercent, unit, nil, false, sparkCurve)
+        return Evaluated(pcall(UnitPowerPercent, unit, nil, false, sparkCurve))
     end
 
-    -- One line, always: a long label in a narrow bar is cut short with an
-    -- ellipsis rather than wrapped out of the bar. No drop shadow: the label's
-    -- OUTLINE already rings it in black, and a 1,-1 shadow on top drew a
-    -- second black edge that stair-stepped at bar text sizes.
+    -- One line, cut with an ellipsis; no shadow (the OUTLINE already rings it).
     function Style.SingleLine(label)
         label:SetShadowOffset(0, 0)
         label:SetWordWrap(false)
@@ -802,26 +564,13 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- Text size.
-    --
-    -- How much of a bar's height is left clear above and below its text, as a
-    -- fraction of that height: 0.15 leaves 15% at the top and 15% at the
-    -- bottom. Each module has its own `textPadding` setting.
+    -- Text size: a module's `textPadding` is the share of the bar's height
+    -- kept clear above and below its text.
     ---------------------------------------------------------------------------
 
     local DEFAULT_TEXT_PADDING = 0.15
     Style.MAX_TEXT_PADDING = 0.4
-
-    -- A bar shorter than this has no room for text at any size. Measured against
-    -- the bar rather than the font, so raising the padding thins the text
-    -- instead of making it vanish.
-    local MIN_BAR_HEIGHT = 8
-
-    -- The largest the text on any bar gets. Text follows the bar's height up
-    -- to here and no further: a 16-high health bar gets 10, a 20-high one 11,
-    -- and a taller bar only gains room round its text. Without the cap a
-    -- 20-high bar's text came out 14 and looked too large; 12 was still a
-    -- touch large.
+    local MIN_BAR_HEIGHT = 8        -- shorter bars have no room for text
     Style.MAX_FONT_SIZE = 11
 
     local function Padding(padding)
@@ -830,10 +579,8 @@ do -- private scope
         return math.min(padding, Style.MAX_TEXT_PADDING)
     end
 
-    -- Size a bar's label to the bar, leaving the padding clear, in the text
-    -- colour (or `colour`) - or transparent when the bar is too short for text
-    -- at all. `minimum` is a floor under the size, for bars that are thin by
-    -- design.
+    -- A bar's label sized to the bar, in the text colour (or `colour`), or
+    -- transparent on a bar too short for text. `minimum` floors the size.
     function Style.SetFont(bar, label, padding, minimum, colour)
         local height = bar:GetHeight() or 0
         local px = math.floor(height * (1 - 2 * Padding(padding)))
@@ -850,12 +597,165 @@ do -- private scope
         label:SetFont(Style.FONT, px, "OUTLINE")
     end
 
-    -- A label in the bold cut, at a fixed size. The game only finds a font
-    -- file that was in the folder when it started, so one just added may not
-    -- load until a restart: then the regular cut, rather than no text at all.
+    -- A bar's two labels: name on the left, cut short at the value on the right
+    -- (or `room` short of the bar's right, where the value's width isn't ours).
+    function Style.BarLabels(bar, name, value, padding, minimum, room)
+        for _, label in ipairs({ name, value }) do
+            label:ClearAllPoints()
+            Style.SingleLine(label)
+            Style.SetFont(bar, label, padding, minimum)
+        end
+        value:SetJustifyH("RIGHT")
+        value:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
+        name:SetJustifyH("LEFT")
+        name:SetPoint("LEFT", bar, "LEFT", 4, 0)
+        if room then
+            name:SetPoint("RIGHT", bar, "RIGHT", -room, 0)
+        else
+            name:SetPoint("RIGHT", value, "LEFT", -6, 0)
+        end
+    end
+
+    -- The bold cut, or the regular one where a font added mid-session won't load yet.
     function Style.SetBoldFont(label, px)
         if not label:SetFont(Style.BOLD_FONT, px, "OUTLINE") then
             label:SetFont(Style.FONT, px, "OUTLINE")
         end
     end
+
+    ---------------------------------------------------------------------------
+    -- Fonts: every shared font object in a game Latin face gets Dog.ttf
+    -- (display faces and headings Dog-Bold.ttf), size and outline kept; widget
+    -- calls only, no font variable written (taint). Other alphabets and the
+    -- combat text stay the game's.
+    ---------------------------------------------------------------------------
+
+    local REGULAR, BOLD = Style.FONT, Style.BOLD_FONT
+
+    -- The game's Latin faces, and whether each is a display face (bold cut).
+    local LATIN_FACES = {
+        ["frizqt__.ttf"] = false,
+        ["arialn.ttf"] = false,
+        ["morpheus.ttf"] = true,
+        ["skurri.ttf"] = true,
+    }
+
+    -- Font objects named as headings or titles take the bold cut too.
+    local HEADING_NAMES = { "header", "title", "huge" }
+
+    -- The combat text's fonts: 64px fonts shrunk with SetTextHeight, spaced
+    -- wrong after SetFont. The world fonts too: a change passes on to children.
+    local KEPT = {
+        SystemFont_World = true,
+        SystemFont_World_ThickOutline = true,
+        CombatTextFont = true,
+        CombatTextFontOutline = true,
+    }
+
+    local CHAT_SPACING = 3      -- a little more room between chat lines
+
+    local function Face(file)
+        if type(file) ~= "string" then return nil end
+        local name = file:match("([^\\/]+)$")
+        return name and name:lower()
+    end
+    local BOLD_FACE = Face(BOLD)
+
+    local function IsHeading(name)
+        local lower = name:lower()
+        for _, word in ipairs(HEADING_NAMES) do
+            if lower:find(word, 1, true) then return true end
+        end
+        return false
+    end
+
+    -- A font object's SetFont answers nothing (SimpleFontAPI): whether the
+    -- bold cut loaded (added mid-session it won't) is read back.
+    local function Replace(name, font)
+        local file, size, flags = font:GetFont()
+        local display = LATIN_FACES[Face(file)]
+        if display == nil or type(size) ~= "number" or size <= 0 then return end
+
+        local wanted = (display or IsHeading(name)) and BOLD or REGULAR
+        font:SetFont(wanted, size, flags or "")
+        if wanted == BOLD and Face(font:GetFont()) ~= BOLD_FACE then
+            font:SetFont(REGULAR, size, flags or "")
+        end
+    end
+
+    local function ApplyFonts()
+        if not GetFonts then return end
+        for _, name in ipairs(GetFonts() or {}) do
+            local font = _G[name]
+            if not KEPT[name] and type(font) == "table" and font.GetFont then Replace(name, font) end
+        end
+    end
+
+    -- The chat windows set their font file on themselves (UPDATE_CHAT_WINDOWS,
+    -- the Font Size menu), past the font object: each one, and its edit box,
+    -- given the player's font at the game's size. Other faces left alone.
+    local function ChatFont(frame)
+        if not (frame and frame.GetFont) then return end
+        local file, size, flags = frame:GetFont()
+        if type(size) == "number" and size > 0 and (LATIN_FACES[Face(file)] ~= nil or file == REGULAR) then
+            frame:SetFont(REGULAR, size, flags or "")
+        end
+    end
+
+    -- One message frame: a chat window, or the addon's copy of one.
+    function Fonts.Chat(frame)
+        ChatFont(frame)
+        if frame and frame.SetSpacing then frame:SetSpacing(CHAT_SPACING) end
+    end
+
+    -- Whether `frame` is back in a game Latin face (the game set its font).
+    local function GameFace(frame)
+        if not (frame and frame.GetFont) then return false end
+        local file = frame:GetFont()
+        return type(file) == "string" and file ~= REGULAR and LATIN_FACES[Face(file)] ~= nil
+    end
+
+    -- The game's CHAT_FRAMES, read only - or, while it has none, the numbered
+    -- windows. (Made once: KeepChat asks five times a second.)
+    local numbered
+    local function ChatNames()
+        if CHAT_FRAMES and CHAT_FRAMES[1] ~= nil then return CHAT_FRAMES end
+        if not numbered then
+            local max = Constants.ChatFrameConstants and Constants.ChatFrameConstants.MaxChatWindows or 10
+            numbered = {}
+            for i = 1, max do numbered[i] = "ChatFrame" .. i end
+        end
+        return numbered
+    end
+
+    -- Every chat window and its edit box in the player's font; `lostOnly`:
+    -- only those the game has set back to its own.
+    local function ChatFonts(lostOnly)
+        for _, name in ipairs(ChatNames()) do
+            local frame = _G[name]
+            if frame then
+                if not lostOnly or GameFace(frame) then Fonts.Chat(frame) end
+                local box = frame.editBox or _G[name .. "EditBox"]
+                if not lostOnly or GameFace(box) then ChatFont(box) end
+            end
+        end
+    end
+
+    function Fonts.ApplyChat() ChatFonts(false) end
+
+    -- Polled by Chat\ChatLook.lua, never a hook on FCF_SetChatWindowFontSize:
+    -- the game runs it while making a whisper window, and a hook broke it.
+    function Fonts.KeepChat() ChatFonts(true) end
+
+    -- The game's fonts now, each addon's as it loads; the chat after the game sets it.
+    ApplyFonts()
+    Fonts.ApplyChat()
+    local watcher = CreateFrame("Frame")
+    watcher:RegisterEvent("ADDON_LOADED")
+    watcher:RegisterEvent("UPDATE_CHAT_WINDOWS")
+    watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+    watcher:SetScript("OnEvent", function(_, event)
+        if event == "ADDON_LOADED" then ApplyFonts() end
+        Fonts.ApplyChat()
+    end)
 end

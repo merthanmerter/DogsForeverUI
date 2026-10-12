@@ -469,7 +469,7 @@ do
     check("with the off hand above the main hand",
         oh.points[1] == "BOTTOMLEFT" and oh.points[2] == mh and oh.points[3] == "TOPLEFT")
     check("the castbar's own daylight between them",
-        oh.points[5] == SB.STACK_GAP, tostring(oh.points[5]))
+        oh.points[5] == DogsForeverUI.Castbar.STACK_GAP, tostring(oh.points[5]))
     check("and the main hand at the bottom of the stack, nearest the castbar",
         mh.points[2] == SB.group)
 
@@ -479,7 +479,7 @@ do
     check("a ranged swing comes in at the top",
         ranged:IsShown() == true and ranged.points[2] == oh and mh.points[2] == SB.group)
     check("and the stack is tall enough for all three",
-        SB.group.height == 3 * DB.barHeight + 2 * SB.STACK_GAP, SB.group.height)
+        SB.group.height == 3 * DB.barHeight + 2 * DogsForeverUI.Castbar.STACK_GAP, SB.group.height)
 
     attackSpeed = { 2.6, nil, 3.0 }
     Fire("WEAPON_SLOT_CHANGED")
@@ -538,7 +538,7 @@ do
         and DB.swingLeft == DB.barLeft + (DB.barWidth - DB.swingWidth) / 2
         and SB.group.points[4] == DB.swingLeft and SB.group.points[5] == DB.swingBottom)
     check("over the countdown's row, for a class with mana",
-        SB.STACK_GAP == GAP and Above() == GAP + DB.barHeight + GAP, tostring(Above()))
+        DogsForeverUI.Castbar.STACK_GAP == GAP and Above() == GAP + DB.barHeight + GAP, tostring(Above()))
     local left, bottom = DB.swingLeft, DB.swingBottom
     DB.barLeft, DB.barTop = DB.barLeft + 50, DB.barTop - 30
     DogsForeverUI.Castbar.Refresh()
