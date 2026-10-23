@@ -13,6 +13,11 @@
 
 ADDON_PATH, TOC_TEXT = ...
 
+-- WoW Forever (Blizzard_ProjectConstants); a test may set WOW_PROJECT_ID to
+-- WOW_PROJECT_MAINLINE before loading the addon to play retail.
+WOW_PROJECT_MAINLINE, WOW_PROJECT_CAMELOT = 1, 18
+WOW_PROJECT_ID = WOW_PROJECT_ID or WOW_PROJECT_CAMELOT
+
 checksRun, checksFailed = 0, 0
 
 function check(label, condition, detail)
@@ -42,12 +47,15 @@ function newWidget(kind, parent)
 end
 
 -- As in game, a frame given a mouse script takes the mouse, whatever
--- EnableMouse said before.
+-- EnableMouse said before; given a key script, the keyboard; a wheel script, the wheel.
 local MOUSE_SCRIPTS = { OnMouseDown = true, OnMouseUp = true, OnEnter = true, OnLeave = true,
                         OnMouseWheel = true, OnDragStart = true }
+local KEY_SCRIPTS = { OnKeyDown = true, OnKeyUp = true }
 function Widget:SetScript(name, func)
     self.scripts[name] = func
     if func and MOUSE_SCRIPTS[name] and self.kind == "Frame" then self.mouseEnabled = true end
+    if func and KEY_SCRIPTS[name] then self.keyboardEnabled = true end
+    if func and name == "OnMouseWheel" then self.wheelEnabled = true end
 end
 function Widget:GetScript(name) return self.scripts[name] end
 function Widget:HasScript() return true end
@@ -70,7 +78,7 @@ function Widget:SetClampedToScreen(v) self.clamped = v end
 function Widget:EnableMouse(v) self.mouseEnabled = v end
 function Widget:IsMouseEnabled() return self.mouseEnabled and true or false end
 function Widget:SetHitRectInsets(l, r, t, b) self.hitInsets = { l, r, t, b } end
-function Widget:EnableMouseWheel() end
+function Widget:EnableMouseWheel(v) self.wheelEnabled = v and true or false end
 -- The keyboard: whether a frame takes keys, and whether the last one it was
 -- handed goes on to the game.
 function Widget:EnableKeyboard(v) self.keyboardEnabled = v and true or false end
@@ -90,8 +98,20 @@ function Widget:SetParent(p) self.parent = p end
 function Widget:SetWidth(v) self.width = v end
 function Widget:SetHeight(v) self.height = v end
 function Widget:SetSize(w, h) self.width, self.height = w, h end
-function Widget:GetWidth() return self.width end
-function Widget:GetHeight() return self.height end
+-- Hung off an add-on aura container with groups while auras are secret (`secretAnchoring`,
+-- a fight): its size comes back secret, as in game (SecretWhenAnchoringSecret).
+local function AnchoredSecret(self)
+    local to = secretAnchoring and self.points and self.points[2]
+    return type(to) == "table" and to.auraGroupOrder ~= nil and #to.auraGroupOrder > 0
+end
+function Widget:GetWidth()
+    if AnchoredSecret(self) then return Unreadable("the width of a frame hung off an aura container") end
+    return self.width
+end
+function Widget:GetHeight()
+    if AnchoredSecret(self) then return Unreadable("the height of a frame hung off an aura container") end
+    return self.height
+end
 function Widget:GetName() return self.name end
 -- WHAT THE GAME REFUSES. A secure button is protected, and so is the frame it
 -- is a child of or anchored to: that is how a plate becomes protected. In
@@ -118,7 +138,11 @@ function Widget:Show()
 end
 function Widget:Hide()
     if Refused(self, "Hide") then return end
+    local was = self.shown
     self.shown = false
+    if not was then return end
+    if self.scripts.OnHide then self.scripts.OnHide(self) end
+    for _, hook in ipairs(self.hooks.OnHide or {}) do hook(self) end
 end
 function Widget:IsShown() return self.shown end
 function Widget:Enable() self.enabled = true end
@@ -129,6 +153,8 @@ function Widget:SetEnabled(v) self.enabled = v and true or false end
 function Widget:SetClampRectInsets(l, r, t, b) self.clampInsets = { l, r, t, b } end
 function Widget:SetAllPoints(relative) self.allPointsTo = relative or self.parent end
 function Widget:ClearAllPoints() self.points = {}; self.anchors = {} end
+-- A frame the game forbids to add-ons (set `forbidden`): only this may be asked of it.
+function Widget:IsForbidden() return self.forbidden == true end
 function Widget:SetPoint(point, a, b, c, d)
     -- The game refuses to anchor to anything that is not a frame or region:
     -- "SetPoint(): Wrong object type for function". A plain Lua table (no
@@ -140,8 +166,11 @@ function Widget:SetPoint(point, a, b, c, d)
     -- Once an add-on aura container has a group it carries
     -- UntrustedLayoutScriptExecution, which reaches "anything anchored to
     -- this object" (ForbiddenAspectConstantsDocumentation): an add-on frame
-    -- may not be anchored to it (Blizzard_CustomAuraContainer.lua says so).
-    if type(a) == "table" and a.auraGroupOrder and #a.auraGroupOrder > 0 then
+    -- may not be anchored to it (Blizzard_CustomAuraContainer.lua says so) -
+    -- unless made with DisableUntrustedLayoutScriptsTemplate, opted in to that
+    -- aspect (set `refuseJoinable` to model a client that still refuses one).
+    if type(a) == "table" and a.auraGroupOrder and #a.auraGroupOrder > 0
+       and (self.template ~= "DisableUntrustedLayoutScriptsTemplate" or refuseJoinable) then
         error(tostring(self.kind) .. ":SetPoint(): may not anchor to an aura container with groups", 2)
     end
     if type(a) == "number" or a == nil then
@@ -246,8 +275,9 @@ function Widget:GetValue() return self.value end
 function Widget:SetBackdrop() end
 function Widget:SetBackdropColor(r, g, b, a) self.backdropColor = { r, g, b, a } end
 function Widget:SetBackdropBorderColor() end
-function Widget:SetTexture(v) self.texture = v end
-function Widget:GetTexture() return self.texture end
+function Widget:SetTexture(v) self.texture, self.atlas = v, nil end     -- an atlas replaced, as in game
+-- (An atlas answers its file, as in game.)
+function Widget:GetTexture() return self.texture or (self.atlas and "atlas file " .. self.atlas) end
 function Widget:SetColorTexture(r, g, b, a) self.colorTexture = { r, g, b, a } end
 function Widget:SetVertexColor(r, g, b, a) self.vertexColor = { r, g, b, a } end
 -- Picks one of two colours by a boolean that may be a secret, unlooked-at.
@@ -268,8 +298,22 @@ end
 function Widget:SetTexCoord(...) self.texCoord = { ... } end
 function Widget:SetBlendMode(mode) self.blendMode = mode end
 function Widget:SetDesaturated(v) self.desaturated = v and true or false end
-function Widget:SetHorizTile() end
-function Widget:SetVertTile() end
+-- Kept off the widget, as the game keeps them (no Lua field on a game texture).
+tiling = setmetatable({}, { __mode = "k" })     -- region -> { horiz =, vert =, modes = }
+local function Tiling(region)
+    tiling[region] = tiling[region] or {}
+    return tiling[region]
+end
+function Widget:SetHorizTile(v) Tiling(self).horiz = v end
+function Widget:SetVertTile(v) Tiling(self).vert = v end
+-- The game's (Blizzard_SharedXMLBase\TextureUtil.lua): an atlas, its address modes, tiled to match.
+TextureKitConstants = { IgnoreAtlasSize = false, AddressModeClamp = 1, AddressModeWrap = 2 }
+function SetTextureWithAddressModeOptions(region, asset, autoSize, addressModeU, addressModeV)
+    region:SetAtlas(asset, autoSize)
+    Tiling(region).modes = { addressModeU, addressModeV }
+    region:SetHorizTile(addressModeU == TextureKitConstants.AddressModeWrap)
+    region:SetVertTile(addressModeV == TextureKitConstants.AddressModeWrap)
+end
 function Widget:SetMultiLine() end
 function Widget:SetAutoFocus() end
 function Widget:SetMaxLetters() end
@@ -283,6 +327,7 @@ function Widget:HighlightText() self.highlighted = true end
 function Widget:SetTextInsets() end
 function Widget:SetRotation(radians) self.rotation = radians end
 function Widget:SetDrawLayer(layer, sublevel) self.layer, self.sublevel = layer, sublevel end
+function Widget:SetTextScale(scale) self.textScale = scale end
 function Widget:GetDrawLayer() return self.layer, self.sublevel end
 function Widget:SetThumbTexture(texture) self.thumb = texture end
 function Widget:GetThumbTexture() return self.thumb end
@@ -322,6 +367,14 @@ function Widget:SetEndPoint(point, relative, x, y) self.endPoint = { point, rela
 function Widget:SetThickness(v) self.thickness = v end
 -- A frame's own textures and font strings, not its child frames' - as in game.
 function Widget:GetRegions() return unpack(self.regions) end
+function Widget:IsObjectType(kind) return self.kind == kind end
+function Widget:GetChildren()
+    local children = {}
+    for _, frame in ipairs(allFrames) do
+        if frame.parent == self then children[#children + 1] = frame end
+    end
+    return unpack(children)
+end
 function Widget:CreateTexture(_, layer, _, sublevel)
     local tex = newWidget("Texture", self)
     tex.layer, tex.sublevel = layer, sublevel
@@ -439,8 +492,9 @@ function GetScreenHeight() return 1080 end
 -- 768 / 1080 of a UI unit per pixel at scale 1; the grid lays itself out in these.
 function GetPhysicalScreenSize() return 1920, 1080 end
 -- The keyboard and mouse, as far as a drag asks: set these in a test.
-shiftDown, leftButtonDown = false, true
+shiftDown, ctrlDown, leftButtonDown = false, false, true
 function IsShiftKeyDown() return shiftDown end
+function IsControlKeyDown() return ctrlDown end
 function IsMouseButtonDown(button) return button == "LeftButton" and leftButtonDown end
 
 -- Controlled time -------------------------------------------------------------
@@ -592,6 +646,7 @@ end
 function Widget:SetFrameLevel(v) self.frameLevel = v end
 function Widget:SetTexCoord(...) self.texCoord = { ... } end
 function Widget:SetDrawEdge(v) self.drawEdge = v end
+function Widget:SetDrawBling(v) self.drawBling = v end
 function Widget:SetReverse(v) self.reverse = v end
 function Widget:SetHideCountdownNumbers(v) self.hideNumbers = v end
 function Widget:SetCooldown(start, duration) self.cooldown = { start, duration } end
@@ -602,10 +657,12 @@ function Widget:GetFrameLevel() return self.frameLevel or 1 end
 -- `atlasRegions` gives the region for an atlas a test cares about.
 atlasRegions = {}
 function Widget:SetAtlas(v)
-    self.atlas = v
+    self.atlas, self.texture = v, nil       -- a texture replaced, as in game
     self.texCoord = nil
     self.atlasCoords = atlasRegions[v]
 end
+function Widget:GetAtlas() return self.atlas end
+function Widget:GetSize() return self.width, self.height end
 function Widget:GetTexCoord()
     if self.texCoord then
         local l, r, t, b = unpack(self.texCoord)
@@ -702,6 +759,9 @@ NamePlateDriverFrame = { OnNamePlateAdded = function() end, UpdateNamePlateOptio
 C_NamePlate = { GetNamePlateForUnit = function() end, GetNamePlates = function() return {} end }
 function CompactUnitFrame_UpdatePlayerLevelDiff() end
 function CompactUnitFrame_UpdateName() end
+function CompactUnitFrame_UpdateHealthColor() end
+tapDenied = {}            -- unit -> tapped by someone else
+function CompactUnitFrame_IsTapDenied(frame) return tapDenied[frame.unit] == true end
 -- SharedXML's TableUtil.
 function tContains(t, value)
     for _, v in ipairs(t) do if v == value then return true end end
@@ -789,15 +849,23 @@ lfgGroup = false
 function HasLFGRestrictions() return lfgGroup == true end
 
 function UnitExists(token) return Unit(token) ~= nil end
+-- Spells the player has: all, but those a test puts in `unknownSpells`.
+unknownSpells = {}
+function IsPlayerSpell(id) return not unknownSpells[id] end
 function UnitIsUnit(a, b)
     -- SecretWhenUnitComparisonRestricted: a restricted unit's answer is secret.
     local u = Unit(a)
     if u and u.comparisonSecret then return u.comparisonSecret end
-    return a == b
+    return a == b or (u ~= nil and u == Unit(b))
 end
 function UnitIsPlayer(token)
     local u = Unit(token)
     return u ~= nil and u.isPlayer == true
+end
+-- A follower dungeon's NPCs (set `asPlayer` on the unit).
+function UnitTreatAsPlayerForDisplay(token)
+    local u = Unit(token)
+    return u ~= nil and u.asPlayer == true
 end
 -- A test sets `offline` on a unit that has logged off, `dead` on one that died.
 function UnitIsConnected(token)
@@ -838,12 +906,17 @@ function UnitIsPVP(token)
     if not u then return false end
     return u.pvp
 end
--- The player's threat on a mob: a test sets `threat` (the scaled percentage,
--- maybe secret) on the unit; none = the player is not on its threat list.
+-- The player's threat on a mob: a test sets `threat` (the raw percentage,
+-- maybe secret) on the unit, `tanking` and `lead` (the percentage of the next's,
+-- UnitThreatPercentageOfLead) while holding it; none = not on its threat list.
 function UnitDetailedThreatSituation(token, mob)
     local u = Unit(mob)
     if not (u and u.threat) then return end
-    return false, 1, u.threat, u.threat, 0
+    return u.tanking or false, 1, u.scaledThreat or u.threat, u.threat, 0
+end
+function UnitThreatPercentageOfLead(token, mob)
+    local u = Unit(mob)
+    return u and u.lead
 end
 function UnitClassification(token)
     local u = Unit(token)
@@ -895,6 +968,11 @@ end
 function UnitReaction(token)
     local u = Unit(token)
     return u and u.reaction
+end
+-- Mana, unless the unit's powerToken says otherwise.
+function UnitHasPowerType(token, powerType)
+    local u = Unit(token)
+    return u ~= nil and powerType == Enum.PowerType.Mana and (u.powerToken or "MANA") == "MANA"
 end
 function UnitPowerType(token)
     local u = Unit(token)
@@ -1060,6 +1138,8 @@ PlayerFrame = newWidget("Button")
 PlayerFrame.name = "PlayerFrame"
 PlayerFrame.PlayerFrameContainer = newWidget("Frame", PlayerFrame)
 PlayerFrame.PlayerFrameContent = newWidget("Frame", PlayerFrame)
+-- Retail shadow's class bar: its Voidform art over the player frame's portrait and mana bar.
+InsanityBarFrame = newWidget("Frame", PlayerFrame)
 PetFrame = newWidget("Button", PlayerFrame)
 PetFrame.name = "PetFrame"
 -- Its aura row (buttons that take the mouse) and its happiness face, a frame
@@ -1206,6 +1286,8 @@ function CreateFrame(kind, name, parent, template)
     local f = newWidget(kind, parent)
     f.name, f.template = name, template
     if name then _G[name] = f end
+    -- As in game: one level over its parent.
+    if parent and parent.frameLevel then f.frameLevel = parent.frameLevel + 1 end
     -- A secure button is protected, and makes the frame it lives in protected.
     if template and template:find("Secure") then
         f.protected = true
@@ -1242,7 +1324,16 @@ end
 -- the one the options panel falls back from.
 missingTemplates = { TabSystemTemplate = true }
 
-function Widget:SetShown(v) if v then self:Show() else self:Hide() end end
+-- As the game: a secret only from untainted code - the game's own, not the addon's.
+function Widget:SetShown(v)
+    if secretValues[v] then
+        local source = debug.getinfo(2, "S").source
+        if source:find("DogsForeverUI", 1, true) and not source:find("tests", 1, true) then
+            error("bad argument #1 to 'SetShown' (Secret values are only allowed during untainted execution)", 2)
+        end
+    end
+    if v then self:Show() else self:Hide() end
+end
 function Widget:GetAlpha() return self.alpha or 1 end
 -- What is actually drawn: a frame and every parent above it.
 function Widget:IsVisible()
@@ -1661,6 +1752,7 @@ for _, method in ipairs(FORBIDDEN) do
 end
 function Blizzard:SetAlpha(a) self.alpha = a end
 function Blizzard:GetAlpha() return self.alpha end
+function Blizzard:SetIgnoreParentAlpha(v) self.ignoreParentAlpha = v end
 function Blizzard:EnableMouse(v) self.mouse = v and true or false end
 function Blizzard:IsMouseEnabled() return self.mouse end
 function Blizzard:IsShown() return self.shown end
@@ -1683,6 +1775,7 @@ function Blizzard:GetCenter()
     return c[1], c[2]
 end
 function Blizzard:GetEffectiveScale() return 1 end
+function Blizzard:GetScale() return self.scale or 1 end
 function Blizzard:IsProtected() return self.protected == true end
 -- Vertex colour, kept beside the object so it adds no field to it.
 vertexColors = setmetatable({}, { __mode = "k" })
@@ -1874,6 +1967,8 @@ C_AddOns = C_AddOns or {}
 function C_AddOns.GetAddOnMetadata() return nil end
 function C_AddOns.DisableAddOn() end
 function C_AddOns.SaveAddOns() end
+-- Forever's beta ships the Issue Reporter.
+function C_AddOns.DoesAddOnExist(name) return name == "Blizzard_PTRFeedback" end
 -- The game's descriptions of each system's settings, as its Edit Mode window
 -- shows them (EditModeSettingDisplayInfoManager); a test gives a system its
 -- list. And the one way the game applies a setting live, counted: the addon
@@ -2262,7 +2357,17 @@ function UnitXPMax() return xp.max end
 function GetXPExhaustion() return xp.rested end
 GameRulesUtil = { CanShowExperienceBar = function() return xp.canShow end }
 
-StatusTrackingBarInfo = { BarsEnum = { None = -1, Reputation = 1, Honor = 2, Artifact = 3, Experience = 4 } }
+StatusTrackingBarInfo = { BarsEnum = { None = -1, Reputation = 1, Honor = 2, Artifact = 3, Experience = 4, HouseFavor = 6 } }
+
+-- The house the player tracks ("Show as Experience Bar"), and the favor its
+-- levels need; a test sets them. Its favor only ever arrives by event.
+house = { tracked = nil, maxLevel = 10, requested = 0 }
+C_Housing = {
+    GetTrackedHouseGuid = function() return house.tracked end,
+    GetCurrentHouseLevelFavor = function() house.requested = house.requested + 1 end,
+    GetHouseLevelFavorForLevel = function(level) return (level - 1) * 1000 end,
+    GetMaxHouseLevel = function() return house.maxLevel end,
+}
 
 -- Honor, and whether the game would show its bar (a test sets it).
 honor = { current = 300, max = 1000, level = 4, canShow = false }
@@ -2289,6 +2394,7 @@ local function NewContainer(name, shown)
         [StatusTrackingBarInfo.BarsEnum.Honor] = NewBlizzard(name .. ".Honor"),
         [StatusTrackingBarInfo.BarsEnum.Artifact] = NewBlizzard(name .. ".Artifact"),
         [StatusTrackingBarInfo.BarsEnum.Experience] = NewBlizzard(name .. ".Experience"),
+        [StatusTrackingBarInfo.BarsEnum.HouseFavor] = NewBlizzard(name .. ".HouseFavor"),
     }
     container.BarFrameTexture = NewBlizzard(name .. ".BarFrameTexture")
     container.HorizontalDividersPool = NewPool(name .. ".Divider")
@@ -2416,6 +2522,7 @@ end
 -- The main bar's own art (Mainline MainActionBar.xml) and, on Camelot, its end
 -- caps: Edit Mode systems of their own (Camelot MainMenuBarEndCaps.xml).
 MainActionBar.BorderArt = NewBlizzard("MainActionBar.BorderArt")
+MainActionBar.VehicleLeaveButton = NewBlizzard("MainMenuBarVehicleLeaveButton")
 MainActionBar.EndCaps = NewBlizzard("MainActionBar.EndCaps")
 MainActionBar.EndCaps.LeftEndCap = NewBlizzard("MainActionBar.EndCaps.LeftEndCap")
 MainActionBar.EndCaps.RightEndCap = NewBlizzard("MainActionBar.EndCaps.RightEndCap")
@@ -2576,6 +2683,7 @@ function C_ActionBar.GetActionBarPage() return 1 end
 function C_ActionBar.SetActionBarPage(page) pages[#pages + 1] = page end
 function C_ActionBar.GetVehicleBarIndex() return 12 end
 function C_ActionBar.GetOverrideBarIndex() return 14 end
+function C_ActionBar.GetTempShapeshiftBarIndex() return 13 end
 shapeshiftForms = {}
 function GetNumShapeshiftForms() return #shapeshiftForms end
 function GetShapeshiftFormInfo(index)
@@ -2611,6 +2719,22 @@ function NewExtraAbilityContainer()
     function ExtraAbilityContainer:ApplySystemAnchor() end
 end
 NewExtraAbilityContainer()
+-- Its button on its bar (ExtraActionBar.xml): 52 across, its icon and texts, the wide skin art over it.
+ExtraActionBarFrame = newWidget("Frame")
+ExtraActionButton1 = newWidget("CheckButton", ExtraActionBarFrame)
+ExtraActionButton1.icon = ExtraActionButton1:CreateTexture(nil, "BACKGROUND")
+ExtraActionButton1.IconMask = ExtraActionButton1:CreateMaskTexture()
+ExtraActionButton1.icon:AddMaskTexture(ExtraActionButton1.IconMask)
+ExtraActionButton1.Flash = ExtraActionButton1:CreateTexture(nil, "OVERLAY")
+ExtraActionButton1.cooldown = newWidget("Cooldown", ExtraActionButton1)
+ExtraActionButton1.HighlightTexture = ExtraActionButton1:CreateTexture(nil, "HIGHLIGHT")
+ExtraActionButton1.PushedTexture = ExtraActionButton1:CreateTexture(nil, "ARTWORK")
+function ExtraActionButton1:GetHighlightTexture() return self.HighlightTexture end
+function ExtraActionButton1:GetPushedTexture() return self.PushedTexture end
+ExtraActionButton1.width, ExtraActionButton1.height = 52, 52
+ExtraActionButton1.HotKey = ExtraActionButton1:CreateFontString(nil, "ARTWORK", "NumberFontNormalGray")
+ExtraActionButton1.Count = ExtraActionButton1:CreateFontString(nil, "ARTWORK", "NumberFontNormal")
+ExtraActionButton1.style = ExtraActionButton1:CreateTexture(nil, "OVERLAY")
 for index, button in ipairs(StanceBar.actionButtons) do _G["StanceButton" .. index] = button end
 for index, button in ipairs(PetActionBar.actionButtons) do _G["PetActionButton" .. index] = button end
 
@@ -2628,6 +2752,7 @@ actionButtonTemplate = function(f)
     f.SlotBackground = Art("UI-HUD-ActionBar-IconFrame-Background")
     f.SlotArt = Art("ui-hud-actionbar-iconframe-slot")
     f.NormalTexture = Art("UI-HUD-ActionBar-IconFrame")
+    f.NormalTexture.width, f.NormalTexture.height = 46, 45
     f.PushedTexture = Art("UI-HUD-ActionBar-IconFrame-Down")
     f.HighlightTexture = Art("UI-HUD-ActionBar-IconFrame-Mouseover")
     f.CheckedTexture = Art("UI-HUD-ActionBar-IconFrame-Mouseover")
@@ -2691,8 +2816,9 @@ function Tick(seconds)
     now = now + seconds
     RunUnitWatch()
     for _, frame in ipairs(allFrames) do
-        if frame.shown and frame.scripts.OnUpdate then
-            frame.scripts.OnUpdate(frame, seconds)
+        if frame.shown then
+            if frame.scripts.OnUpdate then frame.scripts.OnUpdate(frame, seconds) end
+            for _, hook in ipairs(frame.hooks.OnUpdate or {}) do hook(frame, seconds) end    -- as the game's HookScript
         end
     end
 end
@@ -2745,6 +2871,28 @@ function Section(title)
     print("== " .. title .. " ==")
 end
 
+-- Frames pinned to UIParent by one point placed as the game would (the harness
+-- keeps no layout otherwise): for following anchors. Answers the undo.
+function PlaceByPoints()
+    local base = Widget.SetPoint
+    local function Share(point)
+        return point:find("LEFT") and 0 or point:find("RIGHT") and 1 or 0.5,
+            point:find("TOP") and 1 or point:find("BOTTOM") and 0 or 0.5
+    end
+    Widget.SetPoint = function(self, ...)
+        base(self, ...)
+        local p = self.points
+        if p[2] == UIParent and self.width and self.height then
+            local rx, ry = Share(p[3])
+            local fx, fy = Share(p[1])
+            self.left = rx * GetScreenWidth() + p[4] - fx * self.width
+            self.bottom = ry * GetScreenHeight() + p[5] - fy * self.height
+            self.top, self.right = self.bottom + self.height, nil
+        end
+    end
+    return function() Widget.SetPoint = base end
+end
+
 -- THE CLIENT'S AURA CONTAINER FOR ADD-ONS (CustomAuraContainerTemplate). The
 -- game fills it from the unit's auras itself; the harness records what the
 -- addon asked of it, and makes one sample button per group through the
@@ -2766,6 +2914,10 @@ do
                 function sample:SetIcon(icon) self.iconRegion = icon end
                 function sample:SetDurationCooldown(cd) self.cooldown = cd end
                 function sample:SetApplicationCount(fs) self.count = fs end
+                function sample:SetDurationText(fs, opts) self.durationText, self.durationTextOptions = fs, opts end
+                function sample:SetDurationBar(bar, opts) self.durationBar, self.durationBarOptions = bar, opts end
+                -- Played by the game each time it shows the frame for an aura.
+                function sample:AddAuraShownAnimation(group) self.shownAnimation = group end
                 -- Every dispel-type texture and its options, the first as `dispel`.
                 function sample:AddDispelTypeTexture(tex, opts)
                     self.dispel, self.dispelOptions = self.dispel or tex, self.dispelOptions or opts
@@ -2779,9 +2931,11 @@ do
                 local sample = Sample(self)
                 options.initializeFrame(sample)
                 self.auraSlots[key] = { filter = filter, options = options, sample = sample,
-                                        candidateFilters = options.candidateFilters }
+                                        candidateFilters = options.candidateFilters, enabled = true }
                 return sample
             end
+            function f:SetAuraSlotEnabled(key, enabled) self.auraSlots[key].enabled = enabled end
+            function f:SetAuraSlotCandidateFilters(key, filters) self.auraSlots[key].candidateFilters = filters end
             function f:AddAuraGroup(key, filter, options)
                 local sample = Sample(self)
                 function sample:SetDurationBar(bar, opts) self.durationBar, self.durationBarOptions = bar, opts end
@@ -2826,6 +2980,12 @@ AnchorUtil.FlowLayoutAxis = { Horizontal = 0, Vertical = 1 }
 -- Who is friendly: nobody, unless a test says so.
 friendlyUnits = {}
 function UnitIsFriend(_, unit) return friendlyUnits[unit] == true end
+function UnitCanAttack(_, unit) return not friendlyUnits[unit] end
+-- Hostile (red): a reaction under neutral's 4.
+function UnitIsEnemy(_, unit)
+    local u = Unit(unit)
+    return u ~= nil and not friendlyUnits[unit] and (u.reaction or 4) < 4
+end
 -- A player, or a unit a player controls (a pet: `playerControlled = true`).
 function UnitPlayerControlled(token)
     local u = Unit(token)

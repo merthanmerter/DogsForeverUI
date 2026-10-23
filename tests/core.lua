@@ -23,7 +23,7 @@ for _, key in ipairs(EXPECTED) do
 end
 check("each section has its defaults the moment it registers",
     Core.db.frames.barWidth == 150 and Core.db.castbar.barWidth == 130
-    and Core.db.chat.showButton == true and Core.db.menus.quietMicroMenu == true)
+    and Core.db.chat.chatDefaults ~= nil and Core.db.menus.quietMicroMenu == true)
 -- Everything the addon draws is always on: no switch for any part of it.
 check("no Enabled switch in any section, nor the always-on ones",
     Core.db.frames.enabled == nil and Core.db.castbar.enabled == nil and Core.db.fsr.enabled == nil
@@ -108,7 +108,7 @@ check("a switch a player once turned off is gone: everything is on now",
 check("into the same section tables, so every reference handed out still works",
     DogsForeverUI.Frames.db == db.frames and DogsForeverUI.Castbar.db == db.castbar)
 check("settings it did not have are filled in from the defaults",
-    db.frames.powerHeight == 10 and db.chat.showButton == true)
+    db.frames.powerHeight == 10 and db.chat.chatDefaults ~= nil)
 check("a setting an older version wrote is dropped",
     db.frames.holdTime == nil and db.frames.healthColor == nil
     and db.castbar.statusBarBackgroundColor == nil and db.fsr.statusBarColor == nil)
@@ -249,5 +249,22 @@ DogsForeverUIProfiles = untouchedProfiles
 Fire("ADDONS_UNLOADING")
 check("a profiles file that was never read is left where it was",
     DogsForeverUIProfiles == untouchedProfiles)
+
+Section("a resource's colour: the game's, whatever shape its table takes")
+do
+    local Style = DogsForeverUI.Style
+    local ORANGE = { 1, 0.5, 0.25 }
+    local function Is(want, r, g, b) return r == want[1] and g == want[2] and b == want[3] end
+    check("a hunter's focus: the game's orange", Is(ORANGE, Style.PowerColour(2, "FOCUS")))
+    local plain = PowerBarColor.FOCUS
+    PowerBarColor.FOCUS = CreateColor(1, 0.5, 0.25)
+    check("from a colour object too (retail)", Is(ORANGE, Style.PowerColour(2, "FOCUS")))
+    PowerBarColor.FOCUS = nil
+    PowerBarColor[2] = plain
+    check("or by its number where the token has none", Is(ORANGE, Style.PowerColour(2, "FOCUS")))
+    PowerBarColor.FOCUS, PowerBarColor[2] = plain, nil
+    check("mana: the addon's own blue", Is(Style.MANA_COLOR, Style.PowerColour(0, "MANA")))
+    check("a secret one: mana's, no error", Is(Style.MANA_COLOR, Style.PowerColour(SecretCastValue("power"), "RAGE")))
+end
 
 Summary()

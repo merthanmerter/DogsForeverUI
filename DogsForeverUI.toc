@@ -1,4 +1,4 @@
-## Interface: 16001
+## Interface: 16001, 120100, 120105
 ## Title: Dog's Forever UI
 ## Notes: Unit frames, a castbar with swing bars, the five-second rule, combo points, an XP bar, a breath bar, a flight path timer, cooldown bars, a threat bar, movable loot rolls, loot toasts, a chat copy window and quieter menus - one addon, one look. Options from its own button in the micro menu.
 ## Version: 1.0.0

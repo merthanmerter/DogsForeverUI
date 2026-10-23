@@ -10,8 +10,8 @@ do -- private scope
     local Core = DogsForeverUI
     local Style = Core.Style
     local BORDER = Style.BORDER_INSET
-    local KEYS = { "minimap", "chat", "extra", "bags", "tooltip" }
-    local EXTRA_SIZE = 64
+    local KEYS = { "minimap", "chat", "extra", "bags", "tooltip", "classpower" }
+    local EXTRA_BUTTON, EXTRA_SIZE = 52, 64     -- the game's extra action button; its frame included
     local CHAT_WINDOW_MIN = 40          -- the messages' own least size
     local RAID_SIZE = { 360, 180 }      -- before a raid was ever seen: 5 x 5 of the game's 72 x 36
     local TOOLTIPS = { "GameTooltip", "ItemRefTooltip", "ShoppingTooltip1", "ShoppingTooltip2" }
@@ -27,7 +27,7 @@ do -- private scope
         chatHeight = 0,
         minimapHeaderBelow = true,  -- Minimap\Minimap.lua
         minimapRotate = false,
-        bagsSize = 75,              -- percent
+        bagsSize = Core.RETAIL and 100 or 75,   -- percent; retail's as the game draws it
         raidWidth = 0,              -- what the raid frames took when last seen
         raidHeight = 0,
         -- Their box as the game's Edit Mode last showed it (width 0: never seen).
@@ -186,9 +186,10 @@ do -- private scope
             name = "Minimap",
             extra = function() return -BORDER, -BORDER, -BORDER, -BORDER end,   -- the area, border included
         })
-        -- Hung again as the title moves, and when the map is rescaled (after the minimap's own
-        -- callback refits its border and title); our size after the game's (a layout applied).
-        AfterAnchor(cluster, AttachMinimap, "SetHeaderUnderneath")
+        -- Hung again as the title moves, the cluster lays itself out or resizes the map's frame
+        -- (Rotate Minimap), and when the map is rescaled (after the minimap's own callback
+        -- refits its border and title); our size after the game's (a layout applied).
+        AfterAnchor(cluster, AttachMinimap, "SetHeaderUnderneath", "Layout", "UpdateMinimapConfig")
         EventRegistry:RegisterCallback("Minimap.OnScaleUpdated", AttachMinimap, GF)
         if cluster.UpdateSystemSettingSize then
             hooksecurefunc(cluster, "UpdateSystemSettingSize", function()
@@ -292,6 +293,12 @@ do -- private scope
     ---------------------------------------------------------------------------
 
     local extraPending = false
+    local scaler                -- a frame of ours in the holder, the container's parent: it sizes it
+
+    -- The button's whole scale on screen, of the game's: Action Bar 1's size.
+    local function ExtraScale()
+        return Core.ActionBars.ButtonSize("bar1") / EXTRA_BUTTON
+    end
 
     local function IntoHolder()
         local container, holder = ExtraAbilityContainer, GF.places.extra
@@ -304,16 +311,71 @@ do -- private scope
         -- (No field written on it - Edit Mode read those, tainted: the SetParent hook below
         -- brings it straight back out of the managed layout.)
         if container.SetIsLayoutFrame then pcall(container.SetIsLayoutFrame, container, false) end
-        if container:GetParent() ~= holder then container:SetParent(holder) end
-        Anchor(container, "CENTER", holder, 0, 0)
+        if container:GetParent() ~= scaler then container:SetParent(scaler) end
+        -- The game's own scale (its Edit Mode's size) left on it, undone by ours.
+        local game = container:GetScale()
+        scaler:SetScale(ExtraScale() / (game and game > 0 and game or 1))
+        Anchor(container, "CENTER", scaler, 0, 0)
+        local size = EXTRA_SIZE * ExtraScale()
+        holder:SetSize(size, size)
+    end
+
+    -- Its middle on Action Bar 1's bottom edge, centred under the bar.
+    function GF.PlaceExtra()
+        local place, db, snap = GF.places.extra, GF.db, Core.Snap
+        local entry = snap.EntryById("bar1")
+        local bar = entry and snap.Box(entry)
+        if not (place and db and bar) then return end
+        local w, h = place:GetWidth(), place:GetHeight()
+        db.extraLeft, db.extraTop, db.extraPlaced = bar.cx - w / 2, bar.b + h / 2 - GetScreenHeight(), true
+        Put("extra")
+    end
+
+    -- Square in our frames' border, the icon whole (its baked-in edge cropped, the game's mask
+    -- off), its hover and press the hotbars' flat washes (the game's are square rims), its flash
+    -- and cooldowns over the whole icon; the game's wide skin art - its effects - drawn behind it
+    -- from the bar under it (still centred on the button); its texts over the icon.
+    local function ExtraLook()
+        local button = ExtraActionButton1
+        if not button then return end
+        local Buttons, icon = Core.Menus.ActionButtons, button.icon
+        local crop = Buttons.ICON_CROP
+        if button.IconMask then icon:RemoveMaskTexture(button.IconMask) end
+        icon:SetTexCoord(crop, 1 - crop, crop, 1 - crop)
+        icon:ClearAllPoints()
+        icon:SetAllPoints(button)
+        Style.AddBorder(button)
+        Buttons.Flat(button:GetHighlightTexture(), icon, Buttons.HOVER, "ADD")
+        Buttons.Flat(button:GetPushedTexture(), icon, Buttons.PUSHED)
+        for _, key in ipairs({ "Flash", "cooldown", "chargeCooldown", "lossOfControlCooldown" }) do
+            local part = button[key]
+            if part then
+                part:ClearAllPoints()
+                part:SetAllPoints(icon)
+            end
+        end
+        button.style:SetParent(button:GetParent())
+        button.HotKey:SetDrawLayer("OVERLAY", 7)
+        button.Count:SetDrawLayer("OVERLAY", 7)
     end
 
     -- Its hotkey: the game's broadcaster no longer hands it the bindings (ActionBars.lua).
+    -- Written and drawn as Action Bar 1's: their font, corner and size on screen, whole; its
+    -- count at their size too.
     local function ExtraHotkey()
-        local hotkey = ExtraActionButton1 and ExtraActionButton1.HotKey
-        local key = GetBindingKey("EXTRAACTIONBUTTON1")
+        local button = ExtraActionButton1
+        if not button then return end
+        local bars = Core.ActionBars
+        local scale = bars.ButtonScale("bar1") / ExtraScale()
+        button.Count:SetTextScale(scale)
+        local hotkey, key = button.HotKey, GetBindingKey("EXTRAACTIONBUTTON1")
         if not (hotkey and key) then return end
-        hotkey:SetText(GetBindingText(key, 1))
+        hotkey:SetFontObject(NumberFontNormalSmallGray)
+        hotkey:SetTextScale(scale)
+        hotkey:SetWidth(0)
+        hotkey:ClearAllPoints()
+        hotkey:SetPoint("TOPRIGHT", button, "TOPRIGHT", -5, -5)
+        hotkey:SetText(bars.KeyText(key))
         hotkey:Show()
     end
 
@@ -321,6 +383,15 @@ do -- private scope
         local container = ExtraAbilityContainer
         if not container then return end
         local holder = NewPlace("extra", "ExtraAction", container, { name = "Extra Action Button" }, EXTRA_SIZE)
+        scaler = CreateFrame("Frame", nil, holder)
+        scaler:SetSize(1, 1)
+        scaler:SetPoint("CENTER")
+        ExtraLook()
+        -- Action Bar 1 resized: the button with it.
+        hooksecurefunc(Core.ActionBars, "LayOutAll", function()
+            IntoHolder()
+            ExtraHotkey()
+        end)
         if container.Selection then
             hooksecurefunc(container.Selection, "Show", function(self) self:SetAlpha(0) end)
         end
@@ -335,13 +406,70 @@ do -- private scope
         end
         AfterAnchor(container, IntoHolder)
         hooksecurefunc(container, "Show", function()
-            if container:GetParent() ~= holder then IntoHolder() end
+            if container:GetParent() ~= scaler then IntoHolder() end
             ExtraHotkey()
         end)
         hooksecurefunc(container, "SetParent", function(_, parent)
-            if parent ~= holder then IntoHolder() end
+            if parent ~= scaler then IntoHolder() end
         end)
         IntoHolder()
+    end
+
+    ---------------------------------------------------------------------------
+    -- The class resource (EllesmereUI's EUI_ResourceBars_BlizzClassArt): the game's own frame
+    -- for the class's points - runes, essence, arcane charges, chi, holy power, soul shards -
+    -- centred on a place of ours, on the secondary power's spot to start. The player frame's
+    -- managed layout takes it back on every show and as the UI shows again (UpdateFrame): put
+    -- back after each, post-hooks. No field is written on it (the game's player frame is live
+    -- and would read one tainted); it is never shown or hidden here - the game decides. Rogues'
+    -- and cat druids' combo points are the addon's own (Castbar\Rows.lua). Retail: Forever has
+    -- none of these frames.
+    ---------------------------------------------------------------------------
+
+    local CLASS_FRAMES = {
+        DEATHKNIGHT = "RuneFrame", EVOKER = "EssencePlayerFrame", MAGE = "MageArcaneChargesFrame",
+        MONK = "MonkHarmonyBarFrame", PALADIN = "PaladinPowerBarFrame", WARLOCK = "WarlockPowerFrame",
+    }
+    local classPower                -- the game's frame for this class's points, or nil
+
+    local function SeatClassPower()
+        local bar, place = classPower, GF.places.classpower
+        if not (bar and place) or (bar:IsProtected() and InCombatLockdown()) then return end
+        if bar:GetParent() ~= place then bar:SetParent(place) end
+        bar:ClearAllPoints()
+        bar:SetPoint("CENTER", place, "CENTER", 0, 0)
+        FitTo(place, bar)
+    end
+
+    -- Its middle on the secondary power's (from that bar's saved place: shown or not).
+    function GF.PlaceClassPower()
+        local place, db = GF.places.classpower, GF.db
+        if not (place and db) then return end
+        local castbar, row = Core.Castbar, Core.FiveSecondRule
+        local left, width, top = castbar.RowPlace(row)
+        local w, h = place:GetWidth(), place:GetHeight()
+        db.classpowerLeft = left + (width - w) / 2
+        db.classpowerTop = top - (row.db.barHeight - h) / 2
+        db.classpowerPlaced = true
+        Put("classpower")
+    end
+
+    local function SetUpClassPower()
+        local name = CLASS_FRAMES[select(2, UnitClass("player")) or ""]
+        classPower = name and _G[name]
+        local home = classPower and classPower.layoutParent
+        if not home then
+            classPower = nil
+            return
+        end
+        NewPlace("classpower", "ClassPower", classPower, { name = "Class Resource" })
+        classPower:HookScript("OnShow", SeatClassPower)
+        if home.UpdateFrame then
+            hooksecurefunc(home, "UpdateFrame", function(_, frame)
+                if frame == classPower then SeatClassPower() end
+            end)
+        end
+        SeatClassPower()
     end
 
     ---------------------------------------------------------------------------
@@ -577,7 +705,7 @@ do -- private scope
     end
 
     ---------------------------------------------------------------------------
-    -- First places: where the game has each now; the extra button above the action bars, the
+    -- First places: where the game has each now; the extra button on Action Bar 1's bottom, the
     -- bag bar in the bottom right corner (Core\Defaults.lua snaps it there).
     ---------------------------------------------------------------------------
 
@@ -597,8 +725,12 @@ do -- private scope
                 local place = GF.places.tooltip
                 l, t = GetScreenWidth() - (place:GetWidth() or 0) - BORDER, (place:GetHeight() or 0) + 85
             end
+        elseif key == "classpower" then
+            GF.PlaceClassPower()
+            return
         else
-            l, t = GetScreenWidth() / 2 - EXTRA_SIZE / 2, 260 + EXTRA_SIZE
+            GF.PlaceExtra()
+            return
         end
         if not l then return end
         db[key .. "Left"], db[key .. "Top"], db[key .. "Placed"] = l, t - GetScreenHeight(), true
@@ -636,12 +768,16 @@ do -- private scope
         AttachTooltip()
         Put("extra")
         if extraPending then IntoHolder() end
+        Put("classpower")
+        SeatClassPower()
     end
 
     -- Everything put back at the very end of leaving the game's Edit Mode, after every re-anchor
     -- on the way out (its listeners run through securecallfunction).
     local function Reattach()
-        for _, attach in ipairs({ AttachMinimap, GF.AttachChat, AttachBags, AttachTooltip, IntoHolder }) do Core.Safely(attach) end
+        for _, attach in ipairs({ AttachMinimap, GF.AttachChat, AttachBags, AttachTooltip, IntoHolder, SeatClassPower }) do
+            Core.Safely(attach)
+        end
     end
     EventRegistry:RegisterCallback("EditMode.Exit", function() NowAndNext(Reattach) end, Reattach)
 
@@ -653,6 +789,7 @@ do -- private scope
     SetUpMinimap()
     SetUpChat()
     SetUpExtra()
+    SetUpClassPower()
     SetUpBags()
     SetUpTooltip()
     SetUpRaid()

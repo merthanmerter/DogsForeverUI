@@ -34,6 +34,30 @@ check("the gold slightly darker than the frames'",
     math.abs(gold[1] - Style.BORDER_COLOR[1] * 0.32) < 1e-9 and math.abs(gold[3] - Style.BORDER_COLOR[3] * 0.32) < 1e-9)
 check("one real pixel a line", parts.border.unitPixels == 1)
 do
+    -- (The player, 2026-10-22: the pet bar's borders smeared once it was made smaller.)
+    local pet = Bars.buttons.pet[1]
+    local refit, snapped, Refit, SnapBorder = {}, {}, Style.Refit, Style.SnapBorder
+    Style.Refit = function(border)
+        refit[border] = true
+        Refit(border)
+    end
+    Style.SnapBorder = function(border)
+        snapped[border] = true
+        SnapBorder(border)
+    end
+    local border = Buttons.parts[pet].border
+    pet.GetEffectiveScale = function() return 0.5 end
+    Bars.db.petSize = 20
+    Bars.LayOutAll()
+    check("a button rescaled: its border drawn again for its new pixels, and put on whole ones",
+        refit[border] and snapped[border] and Buttons.parts[pet].scale == 0.5)
+    refit, snapped = {}, {}
+    Bars.LayOutAll()
+    check("laid out again at the same scale: not drawn again, put on whole pixels where it is",
+        not refit[border] and snapped[border])
+    Style.Refit, Style.SnapBorder, pet.GetEffectiveScale = Refit, SnapBorder, nil
+end
+do
     -- A slight 3D edge at the same width: the gold lit top and left, shaded
     -- bottom and right; the corners turn between the two round the curve.
     local outer = parts.border.lines[1]

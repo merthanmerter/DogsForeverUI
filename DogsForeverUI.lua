@@ -11,6 +11,9 @@ do -- private scope
     Core.ADDON_NAME = ADDON_NAME
     Core.TITLE = "Dog's Forever UI"
     Core.MEDIA = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\"
+    -- Retail (the game's "mainline"); otherwise WoW Forever ("camelot"), which
+    -- swaps parts of mainline's UI for its own.
+    Core.RETAIL = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
 
     Core.modules = {}       -- in .toc order
     Core.db = {}            -- [module key] = section; DogsForeverUIDB points here
@@ -87,10 +90,6 @@ do -- private scope
         return copy
     end
     Core.DeepCopy = DeepCopy
-
-    local function Wipe(tbl)
-        for key in pairs(tbl) do tbl[key] = nil end
-    end
 
     -- Replaced by the options panel once it is built.
     function Core.RefreshOptions() end
@@ -531,7 +530,7 @@ do -- private scope
             for _, module in ipairs(Core.modules) do
                 local from = DogsForeverUIDB[module.key]
                 if type(from) == "table" then
-                    Wipe(module.db)
+                    wipe(module.db)
                     for key, value in pairs(from) do module.db[key] = value end
                 end
             end
@@ -559,12 +558,13 @@ do -- private scope
 
         local kept = {}
         for name in pairs(module.keep or {}) do kept[name] = module.db[name] end
-        Wipe(module.db)
+        wipe(module.db)
         local source = type(from) == "table" and from or module.defaults or {}
         for name, value in pairs(source) do module.db[name] = DeepCopy(value) end
         for name in pairs(module.keep or {}) do module.db[name] = kept[name] end
         Normalise(module)
-        if module.Init then module.Init() end
+        -- (An error is reported, never left to stop a reset of every module.)
+        if module.Init then Core.Safely(module.Init) end
     end
 
     -- Every module at once: `settings` = { [module key] = section }, a missing

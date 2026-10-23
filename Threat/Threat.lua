@@ -1,6 +1,6 @@
 -- MODULE: Threat  (DogsForeverUI.Threat, settings section "threat")
--- The player's threat on the target (the game's scaled percentage, 100% holds
--- it), a bar over the target frame while on its threat list. Event-driven.
+-- The player's threat on the target as the game counts it (the top threat's share; holding
+-- it, the lead over the next), a bar over the target frame while on its threat list. Event-driven.
 -- Boss numbers are secret: handed to the bar and label unread, no spark.
 
 DogsForeverUI.Threat = CreateFrame("Frame")
@@ -55,7 +55,12 @@ do -- private scope
             Style.ShowNow(bar)
             return
         end
-        local _, _, percent = UnitDetailedThreatSituation("player", "target")
+        -- The game's own number (its target frame's, UnitFrame_UpdateThreatIndicator): the share
+        -- of the top threat, and while holding it, the lead over the next.
+        local tanking, _, _, percent = UnitDetailedThreatSituation("player", "target")
+        if not IsSecret(tanking) and tanking then
+            percent = UnitThreatPercentageOfLead("player", "target") or percent
+        end
         local secret = IsSecret(percent)
         if not secret and percent == nil then
             Style.FadeOut(bar)

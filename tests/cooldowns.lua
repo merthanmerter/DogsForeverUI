@@ -247,8 +247,7 @@ check("bars growing upward to start", DB.growDirection == "up")
 check("placed by the addon", DB.autoPlaced == true)
 check("nothing on screen with nothing to track", not holder:IsShown())
 check("no cooldown asked about with nothing to track", #askedIgnoreGCD == 0)
-check("nothing of the old ready icons left", NS.icons == nil and NS.MODES == nil
-    and NS.SetMode == nil and DB.iconSize == nil)
+check("nothing of the old per-entry modes left", NS.MODES == nil and NS.SetMode == nil)
 
 Section("in line with the castbar, over the player frame's health bar")
 do
@@ -307,6 +306,42 @@ Section("nothing cooling down, nothing shown")
 Tick(0.2)
 check("no bar", not NS.rows[1]:IsShown() and not NS.rows[2]:IsShown() and not NS.rows[3]:IsShown())
 
+-- (The player, 2026-10-17: Dash gone after a loading screen until a form change.)
+Section("after a loading screen: a cooldown never lost to a late or wrong answer, with no event")
+do
+    local plain = C_Spell.GetSpellCooldown
+    local function Answer(field, value)
+        C_Spell.GetSpellCooldown = function(id)
+            local info = plain(id)
+            if info then info[field] = value end
+            return info
+        end
+    end
+    local function Gone()
+        cooldowns[200] = nil
+        for _ = 1, 10 do Tick(0.1) end
+    end
+    Answer("isActive", false)
+    cooldowns[200] = { start = now, length = 30 }
+    Fire("PLAYER_ENTERING_WORLD")
+    Tick(0.2)
+    check("while the world loads the game says it is not cooling down: no bar", not NS.rows[3]:IsShown())
+    C_Spell.GetSpellCooldown = plain
+    Tick(0.2)
+    check("then it does, and no event comes: its bar all the same", NS.rows[3]:IsShown())
+    Gone()
+    Answer("isOnGCD", true)
+    cooldowns[200] = { start = now, length = 30 }
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.2)
+    check("taken for the global cooldown on the event: no bar", not NS.rows[3]:IsShown())
+    C_Spell.GetSpellCooldown = plain
+    Tick(1.4)
+    Tick(0.1)
+    check("never past a global cooldown's length, with no event: its bar", NS.rows[3]:IsShown())
+    Gone()
+end
+
 Section("a spell's cooldown starts")
 cooldowns[100] = { start = now, length = 12 }
 Fire("SPELL_UPDATE_COOLDOWN")
@@ -325,6 +360,38 @@ do
         and row.points[5] == 0)
 end
 
+-- (The player, 2026-10-22, in Shadow: Prayer of Mending, not had in that spec, showed a
+-- cooldown as Power Word: Shield was cast - the game answers a spell not learnt with
+-- some other cooldown.)
+Section("a spell not had now (another spec's, a talent not taken) shows no cooldown")
+do
+    unknownSpells[100] = true
+    NS.Durations.Refresh()
+    Tick(0.2)
+    Tick(Core.Style.FADE_OUT + 0.1)
+    check("its cooldown running by the game's word: no bar", not NS.rows[1]:IsShown())
+    unknownSpells[100] = nil
+    NS.Durations.Refresh()
+    Tick(0.2)
+    check("had again (the spec changed back): its bar", NS.rows[1]:IsShown())
+end
+
+-- (The player, 2026-10-22: reading C_Spell.GetOverrideSpell's ID instead made some cooldowns
+-- show late - its variant read as the global cooldown at first.)
+Section("a spell's own cooldown is read, never the ID GetOverrideSpell hands back")
+do
+    local asked = {}
+    local plain = C_Spell.GetSpellCooldown
+    C_Spell.GetSpellCooldown = function(id)
+        asked[id] = true
+        return plain(id)
+    end
+    C_Spell.GetOverrideSpell = function(id) return id == 100 and 101 or id end
+    Tick(0.2)
+    check("its own ID asked, the variant never", asked[100] and not asked[101] and NS.rows[1]:IsShown())
+    C_Spell.GetOverrideSpell, C_Spell.GetSpellCooldown = nil, plain
+end
+
 Section("the global cooldown alone shows nothing")
 gcdUntil = now + 1.5
 Fire("SPELL_UPDATE_COOLDOWN")
@@ -332,7 +399,70 @@ Tick(0.2)
 check("Mocking Blow, on the global cooldown only, has no bar", not NS.rows[3]:IsShown())
 Tick(0.2)
 check("nor while it lasts", not NS.rows[3]:IsShown())
+-- (The player, 2026-10-20: "0 s" icons as a cast ends.) The game says the
+-- spell is not on the global cooldown for the GCD's last moments.
+do
+    local plain = C_Spell.GetSpellCooldown
+    C_Spell.GetSpellCooldown = function(id)
+        local info = plain(id)
+        if info then info.isOnGCD = false end
+        return info
+    end
+    Tick(0.9)
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.1)
+    check("a cast ending in the GCD's last moments: still no bar", not NS.rows[3]:IsShown())
+    C_Spell.GetSpellCooldown = plain
+end
 gcdUntil = 0
+Tick(0.2)
+
+-- (The player, 2026-10-22: some cooldowns showed late - a spell cast right as another's
+-- global cooldown ended was kept hidden for the rest of 1.5 s.)
+Section("a cooldown cast within another's global cooldown shows at once")
+do
+    local id = DB.tracked[3].id
+    gcdUntil = now + 1.5
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.1)
+    cooldowns[id] = { start = now, length = 20 }
+    Cast(id)
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.01)
+    check("secret (a fight): its own cast clears the global cooldown's mark - at once", NS.rows[3]:IsShown())
+    cooldowns[id], gcdUntil = nil, 0
+    Tick(0.2)
+    Tick(Core.Style.FADE_OUT + 0.1)
+
+    -- Out of a fight (and on Forever) the game answers plainly whether anything of its own is left.
+    local plainDuration = C_Spell.GetSpellCooldownDuration
+    C_Spell.GetSpellCooldownDuration = function(spell, ignoreGCD)
+        local d = plainDuration(spell, ignoreGCD)
+        function d:IsZero() return self.remaining <= 0 end
+        return d
+    end
+    local plain = C_Spell.GetSpellCooldown
+    gcdUntil = now + 1.5
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.1)
+    check("plain: the global cooldown alone, no bar", not NS.rows[3]:IsShown())
+    C_Spell.GetSpellCooldown = function(spell)
+        local info = plain(spell)
+        if info then info.isOnGCD = false end
+        return info
+    end
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.1)
+    check("plain: a global cooldown's last moments told wrong - still no \"0 s\" bar", not NS.rows[3]:IsShown())
+    cooldowns[id] = { start = now, length = 20 }
+    Fire("SPELL_UPDATE_COOLDOWN")
+    Tick(0.01)
+    check("plain: its own cooldown at once, no cast event needed", NS.rows[3]:IsShown())
+    C_Spell.GetSpellCooldown, C_Spell.GetSpellCooldownDuration = plain, plainDuration
+    cooldowns[id], gcdUntil = nil, 0
+    Tick(0.2)
+    Tick(Core.Style.FADE_OUT + 0.1)
+end
 
 Section("the bars stack UP in the order added and close up")
 itemCooldowns[6948] = { start = now, length = 1800 }
@@ -428,6 +558,251 @@ check("the next bar UNDER the first",
 DB.growDirection = "up"
 NS.Refresh()
 
+Section("bar or icon, each entry its own: square icons in rows")
+do
+    local iconHolder, icons, rows = NS.iconHolder, NS.icons, NS.rows
+    local Style = Core.Style
+    local function At(frame) return frame.points[4], frame.points[5] end
+    local function Near(a, b) return math.abs(a - b) < 0.01 end
+    local function Spot(frame, x, y)
+        local fx, fy = At(frame)
+        return frame.points[2] == iconHolder and frame.points[1] == "CENTER" and Near(fx, x) and Near(fy, y)
+    end
+    -- (A buff button's pieces are a table of their own: its border found as its child.)
+    local function BorderOf(frame)
+        for _, f in ipairs(allFrames) do
+            if f.parent == frame and f.spec then return f end
+        end
+    end
+    local function Bordered(frame, colour)
+        local border = BorderOf(frame)
+        local spec = border and border.spec
+        local line = spec and spec.lines[1]
+        return spec ~= nil and spec.radius == Style.DEFAULT_BORDER.radius and #spec.lines == 1
+            and line[1] == colour[1] and line[2] == colour[2] and line[3] == colour[3]
+            and border.unitPixels == 1
+    end
+    -- (The player, 2026-10-22: both sides from the middle, by default.)
+    -- (The player, 2026-10-23: the default icon size 30; then 32.)
+    check("a bar to start; icons 32 across, 5 to a row, both sides, rows growing up",
+        NS.DisplayOf(DB.tracked[1]) == "bar" and DB.tracked[1].display == nil
+        and NS.defaults.iconSize == 32 and NS.defaults.iconsPerRow == 5
+        and NS.defaults.iconGrow == "center" and NS.defaults.iconRowsGrow == "up")
+    DB.iconGrow = "right"
+    cooldowns[100] = { start = now, length = 12 }
+    cooldowns[200] = { start = now, length = 90 }
+    itemCooldowns[6948] = { start = now, length = 1800 }
+    NS.SetDisplay(1, "icon")
+    NS.SetDisplay(3, "icon")
+    local size = DB.iconSize
+    local step = size + 6           -- an icon and the gap between two
+    check("bars and icons at once: the bars' holder and the icons' both shown",
+        holder:IsShown() and iconHolder:IsShown() and DB.tracked[1].display == "icon")
+    check("the item, still a bar, the first bar", rows[2]:IsShown() and rows[2].points[5] == 0
+        and not rows[1]:IsShown() and not rows[3]:IsShown())
+    check("the first icon's place an icon's size", iconHolder.width == size and iconHolder.height == size)
+    local charge = icons[1]
+    check("a square icon, the picture's baked edge cut off",
+        charge:IsShown() and charge.width == size and charge.icon.texture == "icon100"
+        and charge.icon.allPointsTo == charge and charge.icon.mask == nil)
+    check("the action buttons' corners, one line a real pixel wide, a cooldown's gold",
+        Bordered(charge, Style.COOLDOWN_COLOR))
+    local swipe = charge.swipe
+    check("its time a dark swipe over the picture, the part still to go",
+        swipe.allPointsTo == charge and not swipe.reverse and swipe.drawEdge == false
+        and swipe.durationObject ~= nil and swipe.durationObject.remaining > 11)
+    check("the time inside it, in one unit (the bars' two)",
+        charge.timeText.points[1] == "CENTER" and charge.timeText.points[2] == charge
+        and charge.timeText.text ~= "" and NS.iconFormatter.SetDesiredUnitCountValue == 1
+        and NS.formatter.SetDesiredUnitCountValue == 2)
+    check("the first on the first place, the next icon to its right (the bar between counts not)",
+        Spot(charge, 0, 0) and Spot(icons[3], step, 0))
+
+    -- Two to a row: the third starts the next row, above.
+    DB.iconsPerRow = 2
+    NS.Add("spell", 300)
+    cooldowns[300] = { start = now, length = 30 }
+    NS.SetDisplay(4, "icon")
+    check("so many to a row, the next row above", Spot(icons[4], 0, step))
+    DB.iconGrow, DB.iconRowsGrow = "left", "down"
+    NS.Refresh()
+    check("or leftward, the next row below", Spot(icons[3], -step, 0) and Spot(icons[4], 0, -step))
+    DB.iconGrow, DB.iconRowsGrow = "center", "up"
+    NS.Refresh()
+    check("or both sides: each row centred on the holder, a part-full one on what it holds",
+        Spot(charge, -step / 2, 0) and Spot(icons[3], step / 2, 0) and Spot(icons[4], 0, step))
+    DB.iconGrow = "right"
+    NS.Refresh()
+
+    -- Duration only (a spell with no cooldown): the game's group, which closes up
+    -- by itself over a buff not on you - whether one is up is secret.
+    NS.Add("spell", 20375)
+    NS.SetDisplay(5, "icon")
+    local group = NS.Durations.groups.icon
+    local tracked = group and group.auraGroups.tracked
+    check("a duration-only icon: the game's group on the icons' piece, every rank its filter",
+        tracked ~= nil and group.parent == iconHolder and group.unit == "player" and group.aurasEnabled == true
+        and tracked.candidateFilters.includeSpellIDs[20375] and tracked.candidateFilters.includeSpellIDs[20918])
+    local bars = NS.Durations.groups.bar
+    check("and not in the bars' group",
+        bars == nil or bars.aurasEnabled == false
+        or not bars.auraGroups.tracked.candidateFilters.includeSpellIDs[20375])
+    local anchor = NS.Durations.anchors.icon
+    -- (The player, 2026-10-17: a duration icon started a new row after a part-full one.)
+    check("laid out as the cooldown icons, rightward, up, carrying on their row: the spot after the third, one column left",
+        group.flowAxis == AnchorUtil.FlowLayoutAxis.Horizontal and group.flowPoint == "BOTTOMLEFT"
+        and group.flowH == AnchorUtil.FlowDirection.Right and group.flowV == AnchorUtil.FlowDirection.Up
+        and group.lineSize == size and tracked.layout.elementSpacing == 6
+        and group.points[2] == anchor and Spot(anchor, step, step))
+    DB.iconGrow = "center"
+    NS.Refresh()
+    -- (The player, 2026-10-22: "why some icons appear on 2nd row when there is room in 1st
+    -- row"; 2026-10-23: "it should be completely centered, not one side growing longer".)
+    check("both sides: the part-full last row shared, the game's group hung by its middle right of the row's",
+        group.flowPoint == "BOTTOMLEFT" and group.points[1] == "BOTTOM" and group.points[3] == "BOTTOM"
+        and group.lineSize == size and Spot(anchor, step / 2, step))
+    local last = icons[4]
+    check("that row's cooldown icon hung off the group's left edge, a gap clear: the whole row centred as one",
+        last.points[1] == "BOTTOMLEFT" and last.points[2] == group and last.points[3] == "BOTTOMLEFT"
+        and Near(last.points[4], -step) and Near(last.points[5], 0))
+    check("made to be allowed there (the game refuses any other add-on frame)",
+        last.template == "DisableUntrustedLayoutScriptsTemplate"
+        and last.swipe.template == "DisableUntrustedLayoutScriptsTemplate")
+    check("a full row before it: centred on the holder", Spot(charge, -step / 2, 0) and Spot(icons[3], step / 2, 0))
+    -- (The player, 2026-10-23: "Style.lua:619 attempt to perform arithmetic on 'height' (a
+    -- secret number)" - hung off the group, an icon's size is secret in a fight.)
+    secretAnchoring = true
+    check("laid out again in a fight: its size never read while hung there", pcall(NS.Refresh))
+    secretAnchoring = false
+    -- (The player, 2026-10-23: "icons sometimes jump to another position and come back ...
+    -- when a single row has max icons".) A cooldown over: two left, a full row - the buffs
+    -- a row of their own. Gliding there, the group dragged the icons hung off it along.
+    local saved = cooldowns[300]
+    cooldowns[300] = nil
+    Tick(0.2)
+    Tick(Core.Style.FADE_OUT + 0.1)
+    Tick(0.15)
+    check("the row's arrangement changed: the group's anchor there at once, never glided",
+        Spot(anchor, 0, step) and not icons[4]:IsShown())
+    cooldowns[300] = saved
+    Tick(0.15)
+    check("and back as the cooldown returns, at once too", Spot(anchor, step / 2, step) and icons[4].points[2] == group)
+    NS.Unlock()
+    check("placing: every icon on the holder, never on the group (Unlock Mode measures them)",
+        icons[4].points[2] == iconHolder)
+    NS.Lock()
+    DB.iconsPerRow = 3
+    NS.Refresh()
+    check("after a full row: a row of their own, the group hung by its middle (it sizes itself)",
+        group.points[1] == "BOTTOM" and group.points[3] == "BOTTOM" and group.lineSize == 3 * size + 12
+        and Spot(anchor, 0, step))
+    DB.iconsPerRow = 2
+    refuseJoinable = true
+    NS.Refresh()
+    check("a client refusing even those: no icon lost - it keeps its spot, the group carries on the row",
+        Spot(icons[4], 0, step) and group.points[1] == "BOTTOMLEFT" and Spot(anchor, step, step))
+    refuseJoinable = nil
+    DB.iconGrow = "right"
+    NS.Refresh()
+    local seal = tracked.sample
+    check("square, a duration's green border; the game runs its time, in one unit, and fades it in",
+        seal.iconRegion ~= nil and seal.iconRegion.allPointsTo == seal and Bordered(seal, Style.DURATION_COLOR)
+        and seal.durationTextOptions.textFormatter == NS.iconAuraFormatter
+        and seal.shownAnimation ~= nil and seal.shownAnimation.animations[1].kind == "Alpha")
+    check("its swipe run by the game, darkening the part gone (one that never ends stays clear)",
+        seal.cooldown ~= nil and seal.cooldown.reverse == true and seal.cooldown:GetParent() == seal)
+    check("taking no mouse: the world under the icons stays clickable", seal.mouseEnabled == false)
+
+    -- Both: the buff over the entry's own cooldown icon (or bar), shown first.
+    DB.tracked[1].buff, DB.tracked[3].buff = true, true
+    NS.SetTrack(1, "both")
+    NS.SetDisplay(3, "bar")
+    NS.SetTrack(3, "both")
+    local overlays
+    for _, f in ipairs(allFrames) do
+        if f.auraSlots and f.auraSlots.icon1 then overlays = f end
+    end
+    local over = overlays and overlays.auraSlots.icon1.sample
+    check("both, as an icon: one of the game's aura slots, the buff's ranks its filter",
+        over ~= nil and overlays.aurasEnabled == true
+        and overlays.auraSlots.icon1.candidateFilters.includeSpellIDs[100])
+    check("covering the cooldown icon exactly, over it: the duration first, the cooldown as it ends",
+        over.allPointsTo == charge and over:GetFrameLevel() > charge:GetFrameLevel()
+        and Bordered(over, Style.DURATION_COLOR))
+    local overBar = overlays.auraSlots.bar3 and overlays.auraSlots.bar3.sample
+    check("both, as a bar: a buff bar over its own cooldown bar",
+        overBar ~= nil and overBar.allPointsTo == rows[3] and overBar.durationBar ~= nil
+        and overBar:GetFrameLevel() > rows[3]:GetFrameLevel())
+    -- (The player, 2026-10-17: the buff bar over its cooldown bar came over the icons.)
+    check("the icons over the bars and whatever covers them",
+        iconHolder:GetFrameLevel() > overBar:GetFrameLevel() and charge:GetFrameLevel() > overBar:GetFrameLevel())
+    -- (The player, 2026-10-17: the cooldown showed for a moment before its buff.)
+    check("both: the cooldown unseen as it starts, its buff a moment behind the cast",
+        charge:IsShown() and charge:GetAlpha() == 0 and rows[3]:GetAlpha() == 0)
+    -- (The player, 2026-10-17: errors in combat - the game denies addons the
+    -- buff's frame while auras are secret.)
+    over.IsShown = function() error("denied while auras are secret") end
+    Tick(0.5)
+    check("then under its buff, hidden by it whole (time and count too), the buff never read",
+        charge:IsShown() and charge:GetAlpha() == 1
+        and over:GetFrameLevel() > charge.front:GetFrameLevel())
+    over.IsShown = nil
+    check("neither in a group: one spot each, not a second bar or icon",
+        not group.auraGroups.tracked.candidateFilters.includeSpellIDs[100]
+        and (bars == nil or bars.aurasEnabled == false
+            or not bars.auraGroups.tracked.candidateFilters.includeSpellIDs[200]))
+    check("a Both bar's spark hidden: taller than the bar, it poked out round its buff's",
+        rows[3].spark:GetAlpha() == 0)
+    -- (The player, 2026-10-22: Both entries' spots kept for good left gaps all through the
+    -- bars - "all over the place, not stacking".)
+    cooldowns[100] = nil
+    Tick(0.2)
+    Tick(Core.Style.FADE_OUT + 0.1)
+    for _ = 1, 20 do Tick(0.05) end
+    check("a Both entry's cooldown over: no gap left, the rest close up as ever",
+        not charge:IsShown() and Spot(icons[4], 0, 0))
+    cooldowns[100] = { start = now, length = 12 }
+    NS.SetTrack(1, "cooldown")
+    check("back to its cooldown only: its slot let go", overlays.auraSlots.icon1.enabled == false)
+    NS.SetTrack(3, "cooldown")
+    NS.SetDisplay(3, "icon")
+    DB.tracked[1].buff, DB.tracked[3].buff = nil, nil
+
+    cooldowns[100] = nil
+    Tick(0.2)
+    Tick(0.05)
+    check("a finished one fades out in its place, with no event",
+        charge:IsShown() and charge:GetAlpha() < 1 and Spot(charge, 0, 0))
+    Tick(Core.Style.FADE_OUT + 0.1)
+    for _ = 1, 20 do Tick(0.05) end
+    check("gone; the next glides onto its place, the rest closing up behind it (the bars' glide)",
+        not charge:IsShown() and Spot(icons[3], 0, 0) and Spot(icons[4], step, 0))
+    check("the duration-only group following: the spot after theirs, a whole row wide",
+        Spot(anchor, 0, step) and group.lineSize == 2 * size + 6)
+
+    NS.Unlock()
+    check("unlocked: each entry on its own piece, bars and icons",
+        icons[1]:IsShown() and icons[5]:IsShown() and icons[1].icon.texture == "icon100"
+        and rows[2]:IsShown() and not rows[1]:IsShown() and holder:IsShown() and iconHolder:IsShown())
+    NS.Lock()
+
+    local entry = Core.Snap.EntryById("cooldownicons")
+    check("the icons their own piece in Unlock Mode, the bars' named Cooldown Bars",
+        entry ~= nil and entry.frame == iconHolder and Core.Snap.NameOf(entry) == "Cooldown Icons"
+        and Core.Snap.NameOf(Core.Snap.EntryById("cooldowns")) == "Cooldown Bars")
+
+    NS.Remove(5)
+    NS.Remove(4)
+    check("no duration-only icon left: their group off", group.aurasEnabled == false)
+    cooldowns[200], cooldowns[300], itemCooldowns[6948] = nil, nil, nil
+    DB.iconsPerRow = NS.defaults.iconsPerRow
+    NS.SetDisplay(1, "bar")
+    NS.SetDisplay(3, "bar")
+    check("no icon entry left: the icons away", holder:IsShown() and not iconHolder:IsShown()
+        and DB.tracked[1].display == nil)
+    Tick(Core.Style.FADE_OUT + 0.3)
+end
+
 Section("in combat: the numbers are secret, the bars carry on")
 inCombat = true
 cooldowns[100] = { start = now, length = 12 }
@@ -501,13 +876,17 @@ do
     spells[450] = { name = "Frost Nova" }
     spells[451] = { name = "Frost Nova" }
     local plainInfo = C_Spell.GetSpellInfo
+    local loaded = false                     -- the spellbook, empty as the world loads
     C_Spell.GetSpellInfo = function(spell)
-        if spell == "Frost Nova" then return { name = spell, spellID = 451 } end
+        if spell == "Frost Nova" and loaded then return { name = spell, spellID = 451 } end
         return plainInfo(spell)
     end
-    C_SpellBook.IsSpellInSpellBook = function(id) return id ~= 450 end
+    C_SpellBook.IsSpellInSpellBook = function(id) return loaded and id ~= 450 end
     NS.Add("spell", 450)                     -- index 5
-    check("asked of the rank you know", NS.CooldownID(DB.tracked[5]) == 451)
+    NS.CooldownID(DB.tracked[5])
+    loaded = true
+    check("asked of the rank you know (an answer from before the spellbook loaded not kept)",
+        NS.CooldownID(DB.tracked[5]) == 451)
     check("a rank you know is asked as added", NS.CooldownID(DB.tracked[1]) == 100)
     cooldowns[451] = { start = now, length = 25 }
     Fire("SPELL_UPDATE_COOLDOWN")
@@ -527,7 +906,8 @@ end
 Section("a spell with no cooldown tracks its buff instead")
 do
     local Durations = NS.Durations
-    check("no container for buffs while nothing tracked needs one", Durations.container == nil)
+    check("no container for buffs on while nothing tracked needs one",
+        Durations.groups.bar == nil or Durations.groups.bar.aurasEnabled == false)
     NS.Add("spell", 20375)                   -- Seal of Command, index 5
     local entry = DB.tracked[5]
     check("Seal of Command: no cooldown of its own, so a duration bar and nothing else",
@@ -537,56 +917,149 @@ do
         and not NS.ShowsBuff(DB.tracked[1]))
     check("an item only ever its cooldown",
         NS.ShowsCooldown(DB.tracked[2]) and not NS.ShowsBuff(DB.tracked[2]))
-    -- Whether a spell leaves a buff on you is learned from casting it - the
-    -- same for every spell; nothing about any spell is written down.
+    -- (The player, 2026-10-21, of Swiftmend on Forever: "are we sure there are durations?
+    -- this seems wrong" - no list says so there; a buff seen after their cast does.)
     local mocking = DB.tracked[3]
-    check("Mocking Blow: a cooldown, no buff seen - its cooldown, no choice",
+    check("a spell with a cooldown, its buff never seen: its cooldown only",
         not NS.HasChoice(mocking) and NS.TrackOf(mocking) == "cooldown" and mocking.buff == nil)
-    NS.SetTrack(3, "both")
-    check("and setting it to anything else changes nothing", NS.TrackOf(mocking) == "cooldown"
-        and not NS.ShowsBuff(mocking))
-    mocking.track = nil
+    mocking.buff = true
+    check("its buff seen on the player after their cast: the choice, its cooldown to start",
+        NS.HasChoice(mocking) and NS.TrackOf(mocking) == "cooldown")
+    mocking.buff = nil
+    check("an item: no choice", not NS.HasChoice(DB.tracked[2]))
 
-    aurasSecret = true
-    Cast(200)
-    check("cast in combat with no buff to be seen: nothing learned (a missing buff proves nothing then)",
-        mocking.buff == nil)
-    aurasSecret = false
-    Cast(200)
-    check("cast out of combat, no buff on you: learned it leaves none", mocking.buff == false
-        and not NS.HasChoice(mocking))
+    -- (The player, 2026-10-20, after every guess failed - Mass Dispel, Prayer of Mending,
+    -- Apotheosis, Voidform flickering, Shadowform's icon on it: "use the game's way".)
+    -- Blizzard_CooldownViewer's own: a spell's aura is one of ITS OWN Cooldown Manager
+    -- entry's spells (linked, tooltip override, override, spell), cast by the player.
+    spells[228260] = { name = "Voidform" }              -- the spell cast
+    spells[194249] = { name = "Voidform" }              -- its aura, another spell
+    spells[232698] = { name = "Shadowform" }
+    spells[33076] = { name = "Prayer of Mending" }
+    spells[200183] = { name = "Apotheosis" }
+    spells[47585] = { name = "Dispersion" }
+    local wasViewer, wasCategories = C_CooldownViewer, Enum.CooldownViewerCategory
+    Enum.CooldownViewerCategory = { Essential = 0, Utility = 1, TrackedBuff = 2, TrackedBar = 3, GroupBuff = 4 }
+    local viewer = {
+        [1] = { spellID = 228260, selfAura = true, linkedSpellIDs = { 194249 } },          -- Voidform, its aura linked
+        -- Shadowform's, its aura overridden by Voidform's while in it: not Voidform's.
+        [2] = { spellID = 232698, selfAura = true, overrideSpellID = 194249, linkedSpellIDs = {} },
+        [3] = { spellID = 33076, selfAura = false, linkedSpellIDs = { 41635 } },           -- Prayer of Mending: on others
+        [4] = { spellID = 47585, selfAura = false, linkedSpellIDs = {} },                  -- Dispersion, a tracked bar
+        [5] = { spellID = 200183, selfAura = true, linkedSpellIDs = {} },                  -- Apotheosis
+    }
+    local spec                                          -- nil: not loaded yet
+    local SETS = {
+        shadow = { [0] = { 1 }, [2] = { 2 }, [3] = { 4 } },
+        holy = { [0] = { 3, 5 } },
+    }
+    C_CooldownViewer = {
+        GetCooldownViewerCategorySet = function(category) return spec and SETS[spec][category] or {} end,
+        GetCooldownViewerCooldownInfo = function(id) return viewer[id] end,
+    }
+    local voidform, mending = { kind = "spell", id = 228260 }, { kind = "spell", id = 33076 }
+    local dispersion, apotheosis = { kind = "spell", id = 47585 }, { kind = "spell", id = 200183 }
+    local mine = { voidform, mending, dispersion, apotheosis }
+    for _, entry in ipairs(mine) do DB.tracked[#DB.tracked + 1] = entry end
+    Core.RETAIL = true
+    NS.Durations.Refresh()
+    check("retail, its list not loaded yet: no choice", not NS.HasChoice(voidform))
+    spec = "holy"
+    NS.Durations.Refresh()
+    check("its own entry with its aura on its caster: the choice (Apotheosis)", NS.HasChoice(apotheosis))
+    check("its own entry with its aura on others: its cooldown only (Prayer of Mending)",
+        not NS.HasChoice(mending) and NS.TrackOf(mending) == "cooldown")
+    spec = "shadow"
+    NS.Durations.Refresh()
+    check("Voidform: the choice", NS.HasChoice(voidform))
+    check("Dispersion, its own entry in the Tracked Bars: the choice", NS.HasChoice(dispersion))
+    check("another spec's spells keep their answers (Apotheosis, Prayer of Mending as Shadow)",
+        NS.HasChoice(apotheosis) and not NS.HasChoice(mending))
+    -- (The player, 2026-10-20: Apotheosis as Shadow, nothing saved: "how come it has no
+    -- duration?") The spec now's Cooldown Manager lacks it: its own buff seen on the player
+    -- after their cast decides.
+    local holyApotheosis = { kind = "spell", id = 200183, buff = true }
+    local holyMending = { kind = "spell", id = 33076, buff = false }
+    DB.tracked[#DB.tracked + 1] = holyApotheosis
+    DB.tracked[#DB.tracked + 1] = holyMending
+    NS.Durations.Refresh()
+    check("another spec's spell, nothing saved: its own buff seen after its cast, the choice (Apotheosis)",
+        NS.HasChoice(holyApotheosis))
+    check("and never seen (Prayer of Mending's is another spell on others): its cooldown only",
+        not NS.HasChoice(holyMending))
+    voidform.buff = false
+    NS.Durations.Refresh()
+    check("the spec now's Cooldown Manager answers before what was seen", NS.HasChoice(voidform))
+    voidform.buff = nil
+    table.remove(DB.tracked)
+    table.remove(DB.tracked)
+    voidform.track = "buff"
+    NS.Durations.Refresh()
+    local filters = NS.Durations.groups.bar.auraGroups.tracked.candidateFilters
+    check("Voidform's Duration follows its own entry's aura, never Shadowform's (its icon on it, a flicker)",
+        filters.includeSpellIDs[194249] == true and not filters.includeSpellIDs[232698])
+    -- (isFromPlayerOrPlayerPet is true for ANY player's aura: the filter token decides.)
+    check("the player's own auras only, as the game's (HELPFUL|PLAYER)",
+        NS.Durations.groups.bar.auraGroups.tracked.filter == "HELPFUL|PLAYER")
+    voidform.track = nil
+    local saved = { buffIDsMatch = 1, tracked = { { kind = "spell", id = 228260, buffIDs = { 194249, "x", -1 } } } }
+    NS.Normalise(saved)
+    check("its aura's IDs saved with it, whole numbers only",
+        saved.tracked[1].buffIDs and #saved.tracked[1].buffIDs == 1 and saved.tracked[1].buffIDs[1] == 194249)
+    -- (The core drops a saved key that is no default: the flag a default, or the old
+    -- lists went on every load.)
+    saved = { tracked = { { kind = "spell", id = 228260, buffIDs = { 232698, 194249 } } } }
+    NS.Normalise(saved)
+    check("those found another way dropped once, to be found again; the flag a default the core keeps",
+        saved.tracked[1].buffIDs == nil and saved.buffIDsMatch == 1 and NS.defaults.buffIDsMatch ~= nil)
+    Core.RETAIL = false
+    -- (Forever's lists are empty: the same rule, the cast deciding.)
+    check("Forever, never cast or its buff never seen (a Swiftmend): its cooldown only",
+        not NS.HasChoice({ kind = "spell", id = 99999 }) and not NS.HasChoice({ kind = "spell", id = 99999, buff = false }))
+    check("Forever, its buff seen on the player after their cast (an Enrage): the choice",
+        NS.HasChoice({ kind = "spell", id = 99999, buff = true }))
+    for _ = 1, #mine do table.remove(DB.tracked) end
+    C_CooldownViewer, Enum.CooldownViewerCategory = wasViewer, wasCategories
+    NS.Durations.Refresh()
 
-    auras[100] = { name = "Charge" }
-    Cast(100)
-    auras[100] = nil
-    check("cast and its buff seen on you: learned it leaves one - and now the choice",
-        DB.tracked[1].buff == true and NS.HasChoice(DB.tracked[1])
-        and NS.TrackOf(DB.tracked[1]) == "cooldown")
-
+    -- Whether a spell with no cooldown leaves a buff on you is learned from
+    -- casting it - the same for every spell; nothing is written down.
     check("Seal of Command: no cooldown, its duration", not NS.HasChoice(entry) and NS.TrackOf(entry) == "buff")
     NS.Add("spell", 800)
     local holy = DB.tracked[#DB.tracked]
     check("a spell with no cooldown tracks its duration until seen otherwise", NS.TrackOf(holy) == "buff")
+    aurasSecret = true
+    Cast(800)
+    check("cast in combat with no buff to be seen: nothing learned (a missing buff proves nothing then)",
+        holy.buff == nil)
+    aurasSecret = false
     Cast(800)
     check("cast and no buff: nothing to track", holy.buff == false and NS.TrackOf(holy) == nil
         and not NS.ShowsBuff(holy))
     NS.Remove(#DB.tracked)
 
-    auras[20375] = { name = "Seal of Command" }
+    -- (Another priest's Renew on you is no proof yours leaves one.)
+    auras[20375] = { name = "Seal of Command", sourceUnit = "party1" }
     NS.Refresh()
-    check("a buff already on you is noticed when the list refreshes", entry.buff == true)
+    check("another player's of it on you: nothing learned", entry.buff == nil)
+    auras[20375] = { name = "Seal of Command", sourceUnit = "player" }
+    NS.Refresh()
+    check("a buff of yours already on you is noticed when the list refreshes", entry.buff == true)
     auras[20375] = nil
     check("a cast of another spell teaches this one nothing", (function()
         Cast(7620)
         return entry.buff == true
     end)())
+    Cast(20375)
+    check("cast and its buff not seen (on someone else, already gone): still has one",
+        entry.buff == true and NS.TrackOf(entry) == "buff")
 
-    local c = Durations.container
+    local c = Durations.groups.bar
     check("the game's aura container for add-ons, on you",
         c ~= nil and c.template == "CustomAuraContainerTemplate" and c.unit == "player"
         and c.parent == holder and c.editModePreview == false)
     local group = c.auraGroups.tracked
-    check("your helpful auras only", group and group.filter == "HELPFUL")
+    check("your helpful auras only", group and group.filter == "HELPFUL|PLAYER")
     local ids = group.candidateFilters.includeSpellIDs
     check("filtered to every rank: the ID added, the spellbook's, the game's highest",
         ids[20375] and ids[20915] and ids[20918] and not ids[100])
@@ -615,7 +1088,7 @@ do
 
     check("stacked in one column, growing up",
         c.flowAxis == AnchorUtil.FlowLayoutAxis.Vertical and c.flowV == AnchorUtil.FlowDirection.Up
-        and c.flowPoint == "BOTTOMLEFT" and c.points[2] == Durations.anchor)
+        and c.flowPoint == "BOTTOMLEFT" and c.points[2] == Durations.anchors.bar)
 
     -- On top of the cooldown bars: two up, the buff stack starts above them.
     cooldowns[100] = { start = now, length = 12 }
@@ -623,7 +1096,7 @@ do
     Fire("SPELL_UPDATE_COOLDOWN")
     Tick(0.2)
     Tick(0.5)
-    local a = Durations.anchor.points
+    local a = Durations.anchors.bar.points
     check("on top of the cooldown bars showing", a[1] == "BOTTOMLEFT" and a[2] == holder
         and a[5] == 2 * step, tostring(a[5]))
     check("and never a cooldown bar of its own", not (NS.rows[5] and NS.rows[5]:IsShown()))
@@ -631,8 +1104,8 @@ do
     Tick(0.2)
     Tick(Core.Style.FADE_OUT + 0.1)
     Tick(0.2)
-    check("moving down as they end", Durations.anchor.points[5] == step,
-        tostring(Durations.anchor.points[5]))
+    check("moving down as they end", Durations.anchors.bar.points[5] == step,
+        tostring(Durations.anchors.bar.points[5]))
     cooldowns = {}
     Tick(0.2)
     Tick(Core.Style.FADE_OUT + 0.1)
@@ -641,15 +1114,30 @@ do
     DB.growDirection = "down"
     NS.Refresh()
     check("growing down: under the cooldown bars, stacking down",
-        Durations.anchor.points[1] == "TOPLEFT" and c.flowV == AnchorUtil.FlowDirection.Down
+        Durations.anchors.bar.points[1] == "TOPLEFT" and c.flowV == AnchorUtil.FlowDirection.Down
         and c.flowPoint == "TOPLEFT")
     DB.growDirection = "up"
     NS.Refresh()
 
     spellbook[#spellbook + 1] = { spellID = 20919, name = "Seal of Command" }
+    -- (A shapeshift fires a burst of them: worked out once, a frame later.)
+    local sets = 0
+    local Set = c.SetAuraGroupCandidateFilters
+    c.SetAuraGroupCandidateFilters = function(...)
+        sets = sets + 1
+        return Set(...)
+    end
     Fire("SPELLS_CHANGED")
-    check("a rank learned is added to the filter",
-        c.auraGroups.tracked.candidateFilters.includeSpellIDs[20919] == true)
+    Fire("SPELLS_CHANGED")
+    Fire("SPELLS_CHANGED")
+    check("a burst of spell changes: nothing yet", not c.auraGroups.tracked.candidateFilters.includeSpellIDs[20919])
+    Tick(0.01)
+    check("a rank learned is added to the filter, once",
+        c.auraGroups.tracked.candidateFilters.includeSpellIDs[20919] == true and sets == 1)
+    Fire("SPELLS_CHANGED")
+    Tick(0.01)
+    check("nothing new: the game not handed the same filter again (it would drop and look again)", sets == 1)
+    c.SetAuraGroupCandidateFilters = Set
 
     local width = DB.barWidth
     DB.barWidth = width + 20
@@ -657,8 +1145,9 @@ do
     NS.Refresh()
     check("a new size waits while the game keeps the bars from the addon", b.width == width)
     aurasSecret = false
-    NS.Refresh()
-    check("and reaches them once it does not", b.width == width + 20)
+    Tick(0.2)
+    check("and reaches them once it does not, with nothing else changed (a size set in a fight)",
+        b.width == width + 20)
     check("without touching the name or the time, which the game owns: both keep their anchors",
         #b.spellName.anchors == 2 and b.spellName.anchors[1][2] == b.durationBar
         and #b.durationText.anchors == 1)
@@ -680,13 +1169,14 @@ do
         NS.TRACK[1].label == "Cooldown" and NS.TRACK[2].label == "Duration" and NS.TRACK[3].label == "Both")
     check("Cooldown to start, stored as nothing", NS.TrackOf(charge) == "cooldown" and charge.track == nil)
 
+    charge.buff = true                       -- its buff seen after a cast: the choice
     NS.SetTrack(1, "both")
-    check("Both: a cooldown bar and a duration bar",
+    check("Both: its cooldown and its buff",
         NS.ShowsCooldown(charge) and NS.ShowsBuff(charge) and charge.track == "both")
     NS.Add("spell", 20375)                   -- so the duration container exists
-    local c = Durations.container
-    check("its buff joins the duration filter",
-        c.auraGroups.tracked.candidateFilters.includeSpellIDs[100] == true)
+    local c = Durations.groups.bar
+    check("its buff not a second bar in the duration group: it covers its own cooldown bar (see icons)",
+        not c.auraGroups.tracked.candidateFilters.includeSpellIDs[100])
     cooldowns[100] = { start = now, length = 12 }
     Fire("SPELL_UPDATE_COOLDOWN")
     Tick(0.2)
@@ -768,7 +1258,7 @@ do
         tracked[4].track == "both" and tracked[5].track == nil)
     check("an old tracked spell is kept, as a bar like the rest",
         tracked[2].mode == nil and tracked[3].mode == nil)
-    check("the old icon size is dropped", db.iconSize == nil)
+    check("an icon size an older version saved is the ring icons' now", db.iconSize == 26)
     check("a width an older version defaulted to becomes the player frame's", db.barWidth == 150, db.barWidth)
     check("a direction that is not one goes back to upward", db.growDirection == "up")
 end
@@ -795,6 +1285,17 @@ do
     check("an aura's", tip.pool[tip.count].text == "Spell ID 774")
     Hover({ type = kinds.Mount, id = 77 })
     check("a mount's spell, not its mount ID", tip.pool[tip.count].text == "Spell ID 458")
+    -- (The player, 2026-10-22: a UI widget's spell tooltip, forbidden to add-ons, raised
+    -- "Attempt to access forbidden object" on the hook.)
+    tip:ClearLines()
+    tip.forbidden = true
+    local HookScript, AddLine = tip.HookScript, tip.AddLine
+    local function Forbidden() error("Attempt to access forbidden object from code tainted by an AddOn") end
+    tip.HookScript, tip.AddLine = Forbidden, Forbidden
+    -- (The game's own post-call, with the tooltip it built.)
+    local ok, err = pcall(postCalls.ALL[1], tip, { type = kinds.Spell, id = 1215386 })
+    check("a tooltip the game forbids to add-ons: left alone, no error", ok, err)
+    tip.forbidden, tip.HookScript, tip.AddLine = nil, HookScript, AddLine
 
     Hover({ type = kinds.PetAction }, { getterName = "GetPetAction", getterArgs = { 4 } })
     check("a pet ability, from the pet bar button", tip.pool[tip.count].text == "Spell ID 17253",

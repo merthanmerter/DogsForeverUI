@@ -234,4 +234,41 @@ DogsForeverUIFlights = untouched
 Fire("ADDONS_UNLOADING")
 check("left exactly where it is", DogsForeverUIFlights == untouched)
 
+Section("retail")
+-- Retail's paths and taxi speed are not WoW Forever's: no length is known, so
+-- every route is timed as it is first flown. No Frequent Flier there. Its
+-- times are its own install's file: they never meet Forever's.
+do
+    WOW_PROJECT_ID = WOW_PROJECT_MAINLINE
+    local askedTree = false
+    C_Traits.GetConfigIDByTreeID = function() askedTree = true end
+    -- A new session's game functions: the last load's hooks gone with it.
+    function TaxiNodeOnButtonEnter(button)
+        GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+        GameTooltip.lines = { TaxiNodeName(button:GetID()) }
+    end
+    function TakeTaxiNode(slot) taken[#taken + 1] = slot end
+    function TaxiRequestEarlyLanding() earlyLandings = earlyLandings + 1 end
+    local ok, err = pcall(function()
+        Reload(nil)
+        DogsForeverUIFlights = nil
+        Login()
+    end)
+    check("the addon loads and logs in with no error", ok, tostring(err))
+    NS = DogsForeverUI.FlightTimer
+    bar, holder = NS.bar, NS.holder
+    check("Forever's route lengths are not used", next(DogsForeverUI.FlightRoutes) == nil)
+    check("a route with a Forever length: nothing in its tooltip", Hover(4) == nil)
+    Fly(4, 0)
+    check("on the taxi: collecting its time", holder.shown == true and bar.timeText.text == "Collecting time",
+        bar.timeText.text)
+    for _ = 1, 60 do Tick(1) end
+    Arrive()
+    local time = NS.saved.routes["Stormwind, Elwynn > Lakeshire, Redridge"]
+    check("learned as flown, with no Frequent Flier asked about",
+        time and math.abs(time - 60.1) < 0.2 and not askedTree, tostring(time))
+    check("and no speed fitted", NS.saved.speed == nil)
+    check("its time in the tooltip from then on", Hover(4) == Clock(time), tostring(GameTooltip.lines[2]))
+end
+
 Summary()

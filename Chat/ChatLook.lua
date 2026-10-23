@@ -591,12 +591,15 @@ do -- private scope
     side:Hide()
     Look.sidebar, Look.rows = side, rows
 
+    local seen = {}             -- the undocked windows UpdateTabs met
+    local function SeeFloat(frame)
+        if not frame.isDocked and Shown(frame) then UpdateFloat(frame, seen) end
+    end
+
     local function UpdateTabs()
         UpdateSide()
-        local seen = {}
-        EachWindow(function(frame)
-            if not frame.isDocked and Shown(frame) then UpdateFloat(frame, seen) end
-        end)
+        wipe(seen)
+        EachWindow(SeeFloat)
         for frame, ghost in pairs(floats) do
             if not seen[frame] then ghost:Hide() end
         end
@@ -733,7 +736,6 @@ do -- private scope
         Try(LayHeader, host, skin)
         styling = false
     end
-    Look.Layout = StyleHeaderButtons
 
     -- Which header buttons show, a bit each in ORDER: nothing built to compare.
     local function HeaderState()
@@ -826,7 +828,7 @@ do -- private scope
         if not (IsWidget(list) and list:IsShown() and list.parent == box) then return end
         local button = _G.AutoCompleteButton1
         local info = button and button.nameInfo
-        if type(info) ~= "table" or type(info.name) ~= "string" then return end
+        if type(info) ~= "table" or type(info.name) ~= "string" or Secret(info.name) then return end
         local text = box:GetText()
         if type(text) ~= "string" or Secret(text) then return end
         local command = text:match("^(/[^%s]+%s+)")

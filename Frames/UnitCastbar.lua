@@ -1,8 +1,9 @@
 -- A thin casting bar for the target's and focus's plates: under the plate, or
 -- over it when the unit's auras are below. Polled every frame while shown
--- (Frames.lua); only the interrupt comes as an event. A unit whose casting is
--- secret is drawn without being read: SetTimerDuration runs the bar, the name
--- goes to the label untouched, SetVertexColorFromBoolean picks the grey.
+-- (Frames.lua); only the interrupt comes as an event (an empowered cast's as
+-- its stop, incomplete). A unit whose casting is secret is drawn without
+-- being read: SetTimerDuration runs the bar, the name goes to the label
+-- untouched, SetVertexColorFromBoolean picks the grey.
 
 local UnitCastbar = {}
 DogsForeverUI.Frames.UnitCastbar = UnitCastbar
@@ -26,7 +27,18 @@ do -- private scope
         channel         = Style.CAST_COLOR.channel,
         uninterruptible = Style.CAST_COLOR.uninterruptible,
         interrupted     = Style.CAST_COLOR.failed,
+        -- A secret cast: its own colour under the grey the secret picks
+        -- (ShowSecretCast), told apart so a plain cast paints over it.
+        secretcasting   = Style.CAST_COLOR.casting,
+        secretchannel   = Style.CAST_COLOR.channel,
     }
+    -- The colours the secret picks between, made once.
+    local function Colour(key)
+        local c = STATE_COLOR[key]
+        return CreateColor(c[1], c[2], c[3], 1)
+    end
+    local GREY = Colour("uninterruptible")
+    local OWN = { casting = Colour("casting"), channel = Colour("channel") }
 
     local IMMEDIATE = Enum.StatusBarInterpolation.Immediate
     local ELAPSED = Enum.StatusBarTimerDirection.ElapsedTime
@@ -42,15 +54,24 @@ do -- private scope
     end
 
     -- name, start, end, not interruptible, channel, display text. The text is
-    -- what the game's castbar shows: some spells' names are "No Text".
+    -- what the game's castbar shows: some spells' names are "No Text". An
+    -- empowered cast (retail) comes as a channel but fills like a cast, held
+    -- at its last stage a while, as the game's bar draws it.
     local function ReadCast(unit)
         local name, text, _, startMS, endMS, _, _, notInterruptible = UnitCastingInfo(unit)
         if name then return name, startMS, endMS, notInterruptible, false, text end
-        local cname, ctext, _, cstartMS, cendMS, _, cnotInterruptible = UnitChannelInfo(unit)
-        if cname then return cname, cstartMS, cendMS, cnotInterruptible, true, ctext end
+        local cname, ctext, _, cstartMS, cendMS, _, cnotInterruptible, _, _, stages = UnitChannelInfo(unit)
+        if not cname then return end
+        if (stages or 0) > 0 then
+            local hold = GetUnitEmpowerHoldAtMaxTime(unit)
+            if not (IsSecret(cendMS) or IsSecret(hold)) then cendMS = cendMS + hold end
+            return cname, cstartMS, cendMS, cnotInterruptible, false, ctext
+        end
+        return cname, cstartMS, cendMS, cnotInterruptible, true, ctext
     end
 
-    -- duration object, text, not interruptible, channel - none of it read.
+    -- duration object, text, not interruptible, channel - none of it read
+    -- (whether a channel is empowered is never secret).
     local function ReadSecretCast(unit)
         local duration = UnitCastingDuration(unit)
         if Present(duration) then
@@ -59,8 +80,8 @@ do -- private scope
         end
         duration = UnitChannelDuration(unit)
         if Present(duration) then
-            local _, text, _, _, _, _, notInterruptible = UnitChannelInfo(unit)
-            return duration, text, notInterruptible, true
+            local _, text, _, _, _, _, notInterruptible, _, empowered = UnitChannelInfo(unit)
+            return duration, text, notInterruptible, not empowered
         end
     end
 
@@ -143,11 +164,8 @@ do -- private scope
 
         local state = channel and "channel" or "casting"
         if IsSecret(notInterruptible) then
-            self:Paint(state)
-            local grey, own = STATE_COLOR.uninterruptible, STATE_COLOR[state]
-            bar:GetStatusBarTexture():SetVertexColorFromBoolean(notInterruptible,
-                CreateColor(grey[1], grey[2], grey[3], 1), CreateColor(own[1], own[2], own[3], 1))
-            self.painted = nil
+            self:Paint(channel and "secretchannel" or "secretcasting")
+            bar:GetStatusBarTexture():SetVertexColorFromBoolean(notInterruptible, GREY, OWN[state])
         else
             self:Paint(notInterruptible == true and "uninterruptible" or state)
         end

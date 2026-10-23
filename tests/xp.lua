@@ -33,6 +33,7 @@ local main, second = MainStatusTrackingBarContainer, SecondaryStatusTrackingBarC
 local XP, REP = StatusTrackingBarInfo.BarsEnum.Experience, StatusTrackingBarInfo.BarsEnum.Reputation
 local HONOR = StatusTrackingBarInfo.BarsEnum.Honor
 local ARTIFACT = StatusTrackingBarInfo.BarsEnum.Artifact
+local HOUSE = StatusTrackingBarInfo.BarsEnum.HouseFavor
 local honorBar = NS.honor
 
 local function MainFaded()
@@ -200,6 +201,45 @@ watchedFaction = nil
 Fire("UPDATE_FACTION")
 check("unwatched, the bar is the XP bar again, in its purple",
     bar:GetValue() == xp.current and Near(bar.statusColor, { 0.58, 0.0, 0.55 }), bar:GetValue())
+main.pendingBarToShowIndex = XP
+main:ApplyPendingBarToShow()
+
+-- "Show as Experience Bar" ticked on the housing dashboard: the game shows the
+-- house's favor in its own bar, first of all; this bar shows it instead.
+house.tracked = "Housing-1"
+Fire("TRACKED_HOUSE_CHANGED", "Housing-1")
+check("tracking a house asks the game for its favor", house.requested > 0)
+check("which is not here yet: still the XP", bar:GetValue() == xp.current)
+Fire("HOUSE_LEVEL_FAVOR_UPDATED", { houseGUID = "Housing-2", houseLevel = 5, houseFavor = 4100 })
+check("another house's favor (the dashboard browsing) is not shown", bar:GetValue() == xp.current)
+Fire("HOUSE_LEVEL_FAVOR_UPDATED", { houseGUID = "Housing-1", houseLevel = 3, houseFavor = 2450 })
+check("the tracked house's favor within its level is shown instead of the XP",
+    select(2, bar:GetMinMaxValues()) == 1000 and bar:GetValue() == 450, bar:GetValue())
+check("in the gold of the game's house bar, with no rested XP",
+    Near(bar.statusColor, { 0.9, 0.8, 0.6 }) and rested:GetValue() == 0)
+watchedFaction = { factionID = 530, name = "Darkspear Trolls", reaction = 5,
+                   currentReactionThreshold = 3000, nextReactionThreshold = 9000,
+                   currentStanding = 3592 }
+Fire("UPDATE_FACTION")
+check("before a watched reputation, as in the game", bar:GetValue() == 450)
+bar.scripts.OnEnter(bar)
+check("the numbers and the level in the tooltip",
+    GameTooltip:GetLines():find("450 / 1000", 1, true) ~= nil
+    and GameTooltip:GetLines():find("Level 3", 1, true) ~= nil, GameTooltip:GetLines())
+bar.scripts.OnLeave(bar)
+house.maxLevel = 3
+Fire("HOUSE_LEVEL_FAVOR_UPDATED", { houseGUID = "Housing-1", houseLevel = 3, houseFavor = 2450 })
+check("full at the top level", bar:GetValue() == select(2, bar:GetMinMaxValues()))
+main.pendingBarToShowIndex = HOUSE
+main:ApplyPendingBarToShow()
+check("and the game's house bar faded out like its XP bar",
+    main.bars[HOUSE].alpha == 0 and main.BarFrameTexture.alpha == 0)
+house.tracked, house.maxLevel = nil, 10
+Fire("TRACKED_HOUSE_CHANGED")
+check("untracked, the watched reputation is back", bar:GetValue() == 592, bar:GetValue())
+watchedFaction = nil
+Fire("UPDATE_FACTION")
+check("and with neither, the XP", bar:GetValue() == xp.current)
 main.pendingBarToShowIndex = XP
 main:ApplyPendingBarToShow()
 

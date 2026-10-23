@@ -1,8 +1,10 @@
 -- Flight routes (DogsForeverUI.FlightRoutes): every direct hop's flown length in
 -- yards, keyed fromNodeID * 10000 + toNodeID (C_TaxiMap node IDs). TaxiPath data
--- of build 1.60.1.69913, as EllesmereUI's flight timer ships it.
+-- of build 1.60.1.69913, as EllesmereUI's flight timer ships it. WoW Forever's
+-- alone: retail's paths and taxi speed differ, so there every route is timed
+-- the first time it is flown.
 
-DogsForeverUI.FlightRoutes = {
+DogsForeverUI.FlightRoutes = not DogsForeverUI.RETAIL and {
     [20004] = 2347,
     [20005] = 3395,
     [20006] = 7828,
@@ -306,4 +308,4 @@ DogsForeverUI.FlightRoutes = {
     [32760008] = 5246,
     [32760071] = 3720,
     [32763275] = 2049,
-}
+} or {}

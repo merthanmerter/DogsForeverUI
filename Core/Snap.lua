@@ -26,6 +26,7 @@ do -- private scope
 
     local drag                      -- the drag under way
     local selected, keys, guides
+    local together = {}             -- entry -> true: Ctrl+clicked, selected with `selected`, moved as one
     local picking                   -- { entry, axis } while a match or anchor waits for its piece
     local previewing = false
     local hiddenForNow = setmetatable({}, { __mode = "k" })
@@ -37,7 +38,9 @@ do -- private scope
     -- opts: save(), name (or a function), id (saved; the party's four share one),
     -- group (never snaps within), extra() -> l, r, t, b reach past the frame,
     -- parts() -> regions shown with it, moveWith() -> frames dragged along,
-    -- fixedEdge() -> "LEFT", "RIGHT" or "" (the edge it grows from).
+    -- fixedEdge() -> "LEFT", "RIGHT" or "" (the edge it grows from),
+    -- reach() -> up, down: how far past its frame's top and bottom it may show at most (a
+    -- stack that grows); what hangs from it hangs from there, whatever shows now.
     function Snap.Register(frame, opts)
         if byFrame[frame] then return byFrame[frame] end
         local entry = { frame = frame, opts = opts }
@@ -156,16 +159,27 @@ do -- private scope
         return NewBox(box.l + dx, box.r + dx, box.t + dy, box.b + dy)
     end
 
+    -- Each of the nine SetPoint points' side across and up (nil: the middle), read once:
+    -- anchored pieces are placed every frame.
+    local ACROSS, UP = {}, {}
+    for _, point in ipairs({ "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT",
+                             "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }) do
+        ACROSS[point] = point:match("LEFT") or point:match("RIGHT")
+        UP[point] = point:match("TOP") or point:match("BOTTOM")
+    end
+
     -- One of the nine SetPoint points of the edges `l`, `r`, `t`, `b`.
     local function PointAt(point, l, r, t, b)
-        local x = point:find("LEFT") and l or point:find("RIGHT") and r or (l + r) / 2
-        local y = point:find("TOP") and t or point:find("BOTTOM") and b or (t + b) / 2
+        local across, up = ACROSS[point], UP[point]
+        local x = across == "LEFT" and l or across == "RIGHT" and r or (l + r) / 2
+        local y = up == "TOP" and t or up == "BOTTOM" and b or (t + b) / 2
         return x, y
     end
 
     -- What shows of a piece, as edges (asked every frame): frame, shown parts, extra (a unit
-    -- frame's name row) and border. `bare`: no parts, which come and go (anchors are measured so).
-    local function Edges(entry, bare)
+    -- frame's name row) and border. `bare`: no parts, which come and go (anchors are measured
+    -- so); `asParent`: as what hangs from it measures it, its whole reach too.
+    local function Edges(entry, bare, asParent)
         local l, r, t, b = Rect(entry.frame)
         if not l then return end
         if entry.opts.parts and not bare then
@@ -179,25 +193,34 @@ do -- private scope
                 end
             end
         end
-        local extra = entry.opts.extra
-        if extra then
+        local extra, reach = entry.opts.extra, asParent and entry.opts.reach
+        if extra or reach then
             local k = entry.frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
-            local el, er, et, eb = extra()
-            l, r = l - (el or 0) * k, r + (er or 0) * k
-            t, b = t + (et or 0) * k, b - (eb or 0) * k
+            if extra then
+                local el, er, et, eb = extra()
+                l, r = l - (el or 0) * k, r + (er or 0) * k
+                t, b = t + (et or 0) * k, b - (eb or 0) * k
+            end
+            if reach then
+                local up, down = reach()
+                t, b = t + up * k, b - down * k
+            end
         end
         if r - l <= 0 or t - b <= 0 then return end
         return l - BORDER, r + BORDER, t + BORDER, b - BORDER
     end
 
-    local function Box(entry, bare)
-        local l, r, t, b = Edges(entry, bare)
+    local function Box(entry, bare, asParent)
+        local l, r, t, b = Edges(entry, bare, asParent)
         if l then return NewBox(l, r, t, b) end
     end
     Snap.Box = Box
 
     local function AnchorBox(entry) return Box(entry, true) end
     Snap.AnchorBox = AnchorBox
+
+    -- As what hangs from it measures it.
+    local function ParentBox(entry) return Box(entry, true, true) end
 
     -- A piece, or a screen edge: a strip one unit wide just outside the screen.
     local function ParentEdges(to)
@@ -209,7 +232,7 @@ do -- private scope
             return 0, width, 0, -1
         end
         local entry = byId[to]
-        if entry then return Edges(entry, true) end
+        if entry then return Edges(entry, true, true) end
     end
 
     ---------------------------------------------------------------------------
@@ -290,14 +313,24 @@ do -- private scope
     -- The game's own Edit Mode systems on screen (read only), for Options\Unlock.lua's handover boxes
     ---------------------------------------------------------------------------
 
+    local function MeasuredBox(region) return SizedBox(Rect(region)) end
+
+    -- Measured and sized inside the pcall: a game frame's edges may be secret.
     local function RegionBox(region)
-        local ok, l, r, t, b = pcall(Rect, region)
-        if ok then return SizedBox(l, r, t, b) end
+        local ok, box = pcall(MeasuredBox, region)
+        if ok then return box end
     end
 
+    -- Shown, as far as can be known (a secret answer counts as hidden).
     local function Visible(system)
         local ok, shown = pcall(system.IsVisible, system)
-        return ok and shown
+        return ok and not issecretvalue(shown) and shown
+    end
+
+    -- Not faded out (an alpha that can't be read counts as seen).
+    local function Opaque(system)
+        local ok, alpha = pcall(system.GetEffectiveAlpha, system)
+        return not ok or type(alpha) ~= "number" or issecretvalue(alpha) or alpha > 0.01
     end
 
     -- No raid up: boxed all the same, at the size last seen (ActionBars\GameFrames.lua).
@@ -317,18 +350,17 @@ do -- private scope
         if system.Selection then return RegionBox(system.Selection) or RegionBox(system) end
     end
 
+    -- Asked every frame while Unlock Mode is open: one list, filled again each time.
+    local systems = {}
     function Snap.GameSystems()
-        local list = {}
+        for index = #systems, 1, -1 do systems[index] = nil end
         for _, system in ipairs(EditModeManagerFrame.registeredSystemFrames) do
-            if not Core.IsHeld(system) then
-                local seen, alpha = pcall(system.GetEffectiveAlpha, system)
-                if (Visible(system) and (not seen or type(alpha) ~= "number" or alpha > 0.01))
-                   or ((RaidResting(system) or MeterResting(system)) and Snap.SystemBox(system)) then
-                    list[#list + 1] = system
-                end
+            if not Core.IsHeld(system) and ((Visible(system) and Opaque(system))
+               or ((RaidResting(system) or MeterResting(system)) and Snap.SystemBox(system))) then
+                systems[#systems + 1] = system
             end
         end
-        return list
+        return systems
     end
 
     function Snap.SystemName(system)
@@ -360,12 +392,13 @@ do -- private scope
         return entry.frame:IsVisible() and not hiddenForNow[entry]
     end
 
-    -- Never itself, what hangs from it or beside it, its own group, or one hidden for now.
-    local function SnapTarget(entry, box)
+    -- Never itself, what hangs from it or beside it, its own group, one hidden for now,
+    -- or one of `along` (what moves with it).
+    local function SnapTarget(entry, box, along)
         local below, siblings = Followers(entry), Siblings(entry)
         local best, bestD
         for _, other in ipairs(entries) do
-            if not below[other] and not siblings[other] and Shown(other)
+            if not below[other] and not siblings[other] and not (along and along[other]) and Shown(other)
                and (entry.opts.group == nil or other.opts.group ~= entry.opts.group) then
                 local oL, oR, oT, oB = Edges(other)
                 if oL then
@@ -393,11 +426,11 @@ do -- private scope
     end
 
     -- { dx, dy, x, y = the lines met, target = the piece snapped to, screenX/Y = by the screen's middle }
-    local function SnapPosition(entry, box)
+    local function SnapPosition(entry, box, along)
         local result = { dx = 0, dy = 0 }
         if not Snap.Rules() then return result end
         local ddx, x, ddy, y
-        local target = SnapTarget(entry, box)
+        local target = SnapTarget(entry, box, along)
         result.target = target
         local o = target and Box(target)
         if o then
@@ -594,8 +627,8 @@ do -- private scope
         return x / scale, y / scale
     end
 
-    -- The frame and whatever moves with it, each with where it started.
-    local function Moving(entry)
+    -- The frames of `group` (pieces) and whatever moves with each, each with where it is.
+    local function Moving(group)
         local list, seen = {}, {}
         local function Add(frame)
             if seen[frame] then return end
@@ -603,11 +636,26 @@ do -- private scope
             local left, _, _, bottom = Rect(frame)
             if left then list[#list + 1] = { frame = frame, left = left, bottom = bottom } end
         end
-        Add(entry.frame)
-        if entry.opts.moveWith then
-            for _, frame in ipairs(entry.opts.moveWith() or {}) do Add(frame) end
+        for _, entry in ipairs(group) do
+            Add(entry.frame)
+            if entry.opts.moveWith then
+                for _, frame in ipairs(entry.opts.moveWith() or {}) do Add(frame) end
+            end
         end
         return list
+    end
+
+    local function IsSelected(entry) return entry == selected or together[entry] == true end
+
+    -- What moves when `entry` is moved: it, and the rest selected with it if it is one of them.
+    local function Group(entry)
+        local group = { entry }
+        if not IsSelected(entry) then return group end
+        if entry ~= selected then group[#group + 1] = selected end
+        for other in pairs(together) do
+            if other ~= entry then group[#group + 1] = other end
+        end
+        return group
     end
 
     -- In combat a protected piece stays put.
@@ -628,6 +676,19 @@ do -- private scope
             frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", (mover.left + dx) * k, (mover.bottom + dy) * k)
         end
         return true
+    end
+
+    -- The box round every piece of `group`.
+    local function Around(group)
+        local l, r, t, b
+        for _, entry in ipairs(group) do
+            local box = Box(entry)
+            if box then
+                l, r = math.min(l or box.l, box.l), math.max(r or box.r, box.r)
+                t, b = math.max(t or box.t, box.t), math.min(b or box.b, box.b)
+            end
+        end
+        if l then return NewBox(l, r, t, b) end
     end
 
     -- Kept on screen whole, border and all.
@@ -655,7 +716,7 @@ do -- private scope
     local function Place(entry)
         local id = entry.opts.id
         local to, link = LinkOf(id)
-        if not to or (drag and drag.entry.opts.id == id) then return false end
+        if not to or (drag and drag.members[entry]) then return false end
         local ml, mr, mt, mb = Edges(entry, true)
         local pl, pr, pt, pb = ParentEdges(to)
         if not (ml and pl) then return false end
@@ -667,7 +728,7 @@ do -- private scope
         local mx, my = PointAt(link.point, ml, mr, mt, mb)
         local dx, dy = px + (link.x or 0) - mx, py + (link.y or 0) - my
         if math.abs(dx) < SETTLED and math.abs(dy) < SETTLED then return false end
-        if not MoveAll(Moving(entry), dx, dy) then return false end
+        if not MoveAll(Moving({ entry }), dx, dy) then return false end
         unsaved[entry] = true
         return true
     end
@@ -687,13 +748,30 @@ do -- private scope
         return moved
     end
 
+    -- The highest piece up `entry`'s chain still waiting to be saved.
+    local function Uppermost(entry)
+        for _ = 1, 6 do
+            local parent = byId[LinkOf(entry.opts.id) or false]
+            if not (parent and unsaved[parent]) then break end
+            entry = parent
+        end
+        return entry
+    end
+
+    -- Anchors first, their followers put back in place before their own save:
+    -- a save redraws its module, which may put the module's other pieces back
+    -- where they were saved (the cooldown icons' redraw the cooldown bars').
+    -- Following is not an edit of the player's: nothing for Unlock Mode to ask.
     local function SaveFollowed()
-        if drag or next(unsaved) == nil then return end
-        for entry in pairs(unsaved) do
+        if drag then return end
+        for _ = 1, 12 do
+            local entry = next(unsaved)
+            if not entry then return end
+            entry = Uppermost(entry)
             unsaved[entry] = nil
             if entry.opts.save then entry.opts.save() end
+            FollowAll()
         end
-        Core.EditModeMoved()
     end
 
     -- A revert put every place back: nothing to keep.
@@ -706,6 +784,20 @@ do -- private scope
         if next(Snaps()) == nil then return end
         if not FollowAll() then SaveFollowed() end
     end)
+
+    -- Moved by hand, each of `group` saved where it is now (anchored: at the new offset).
+    -- Each put back first: a save redraws its module, which may put the module's other
+    -- pieces back where they were saved.
+    local function SaveAll(group)
+        local at = {}
+        for _, entry in ipairs(group) do at[entry] = Moving({ entry }) end
+        for _, entry in ipairs(group) do
+            MoveAll(at[entry], 0, 0)
+            MovedByHand(entry)
+            if entry.opts.save then entry.opts.save() end
+        end
+        FollowAll()
+    end
 
     ---------------------------------------------------------------------------
     -- Dragging (in place of StartMoving): Shift keeps it to one line
@@ -724,7 +816,7 @@ do -- private scope
             local reach = THRESHOLD / UIParent:GetEffectiveScale()
             if dx * dx + dy * dy < reach * reach then return end
             drag.moved = true
-            Snap.Select(drag.entry)
+            if not drag.group[2] then Snap.Select(drag.entry) end
         end
         if IsShiftKeyDown() then
             if not drag.axis and (math.abs(dx) > 3 or math.abs(dy) > 3) then
@@ -735,10 +827,10 @@ do -- private scope
             drag.axis = nil
         end
 
-        local box = Shifted(drag.box, dx, dy)
-        local snap = SnapPosition(drag.entry, box)
-        box = OnScreen(Shifted(box, snap.dx, snap.dy))
-        MoveAll(drag.moving, box.l - drag.box.l, box.b - drag.box.b)
+        local snap = SnapPosition(drag.entry, Shifted(drag.box, dx, dy), drag.along)
+        -- (The whole group kept on screen.)
+        local span = OnScreen(Shifted(drag.span, dx + snap.dx, dy + snap.dy))
+        MoveAll(drag.moving, span.l - drag.span.l, span.b - drag.span.b)
         drag.snap = snap
         local g = Guides()
         ShowLine(g.x, true, snap.x)
@@ -779,13 +871,21 @@ do -- private scope
             frame:StartMoving()
             return
         end
-        local moving = Moving(entry)
+        -- The rest selected with it go along, never snapped to, nor what hangs from them.
+        local group = Group(entry)
+        local moving = Moving(group)
         if Blocked(moving) then
             Refuse(entry, IN_COMBAT)
             return
         end
+        local members, along = {}, {}
+        for _, member in ipairs(group) do
+            members[member] = true
+            for follower in pairs(Followers(member)) do along[follower] = true end
+        end
         local x, y = Cursor()
-        drag = { entry = entry, frame = frame, box = box, moving = moving, x = x, y = y, moved = false }
+        drag = { entry = entry, frame = frame, box = box, span = Around(group), group = group, members = members,
+                 along = along, moving = moving, x = x, y = y, moved = false }
         local g = Guides()
         g:SetScript("OnUpdate", Follow)
         g:Show()
@@ -798,21 +898,26 @@ do -- private scope
             return false
         end
         Follow()                -- the last movement before the button rose
-        local moved, entry = drag.moved, drag.entry
-        if moved then
-            MovedByHand(entry)
-            Core.EditModeMoved()
-        end
+        local moved, group = drag.moved, drag.group
         EndDrag()
-        if moved then FollowAll() end
+        if moved then
+            Core.EditModeMoved()
+            -- (A group: every piece saved here; one alone is saved by the caller.)
+            if group[2] then
+                SaveAll(group)
+            else
+                MovedByHand(group[1])
+                FollowAll()
+            end
+        end
         return moved
     end
 
     function Snap.IsDragging() return drag ~= nil end
 
     ---------------------------------------------------------------------------
-    -- The selected piece: arrow keys move it a pixel, Shift 100; other keys
-    -- go on to the game (none can be kept in combat)
+    -- The selected piece (and those Ctrl+clicked with it): arrow keys move them a
+    -- pixel, Shift 100; other keys go on to the game (none can be kept in combat)
     ---------------------------------------------------------------------------
 
     local NUDGE = { UP = { 0, 1 }, DOWN = { 0, -1 }, LEFT = { -1, 0 }, RIGHT = { 1, 0 } }
@@ -856,9 +961,11 @@ do -- private scope
     end
     Snap.Whole = Whole
 
+    -- That one alone.
     function Snap.Select(entry)
         Keys()
         selected = entry
+        wipe(together)
         KeysOn()
         Snap.SelectionChanged()
     end
@@ -866,26 +973,43 @@ do -- private scope
     function Snap.Deselect()
         local was = selected
         selected = nil
+        wipe(together)
         if keys then KeysOn() end
         if was then Snap.SelectionChanged() end
     end
 
+    -- Ctrl+click: one more selected, or one of them let go of (the next leads, if any).
+    function Snap.SelectAlso(entry)
+        if entry == selected then
+            selected = next(together)
+            if selected then together[selected] = nil end
+        elseif together[entry] then
+            together[entry] = nil
+        elseif selected then
+            together[entry] = true
+        else
+            selected = entry
+        end
+        Keys()
+        KeysOn()
+        Snap.SelectionChanged()
+    end
+
     function Snap.Selected() return selected and selected.frame end
     function Snap.SelectedEntry() return selected end
+    function Snap.SelectedMany() return next(together) ~= nil end
 
-    -- Moved and saved there (anchored: at the new offset).
-    local function MoveBy(entry, dx, dy)
-        local box = Box(entry)
+    -- Moved and saved there (anchored: at the new offset); a group as one, kept on screen whole.
+    local function MoveBy(group, dx, dy)
+        local box = Around(group)
         if not box then return false end
         local placed = OnScreen(Shifted(box, dx, dy))
-        if not MoveAll(Moving(entry), placed.l - box.l, placed.b - box.b) then
-            Refuse(entry, IN_COMBAT)
+        if not MoveAll(Moving(group), placed.l - box.l, placed.b - box.b) then
+            Refuse(group[1], IN_COMBAT)
             return false
         end
-        MovedByHand(entry)
         Core.EditModeMoved()
-        if entry.opts.save then entry.opts.save() end
-        FollowAll()
+        SaveAll(group)
         return true
     end
 
@@ -893,30 +1017,31 @@ do -- private scope
     function Snap.Shift(entry, dx, dy)
         if not entry or drag then return false end
         if math.abs(dx) < 0.01 and math.abs(dy) < 0.01 then return true end
-        return MoveBy(entry, dx, dy)
+        return MoveBy({ entry }, dx, dy)
     end
 
     function Snap.FrameRect(entry)
         if entry then return Rect(entry.frame) end
     end
 
+    -- The arrow keys: everything selected.
     function Snap.Nudge(dx, dy)
         if not selected or drag then return false end
-        return MoveBy(selected, dx, dy)
+        return MoveBy(Group(selected), dx, dy)
     end
 
     -- Its top left to `x`, `y` (Snap.PositionOf's numbers; nil keeps that one).
     function Snap.MoveTo(entry, x, y)
         local left, top = Snap.PositionOf(entry)
         if not left or drag then return false end
-        return MoveBy(entry, (x or left) - left, (y or top) - top)
+        return MoveBy({ entry }, (x or left) - left, (y or top) - top)
     end
 
     -- Its middle on the screen's, both ways.
     function Snap.CentreOnScreen(entry)
         local box = Box(entry)
         if not box or drag then return false end
-        return MoveBy(entry, GetScreenWidth() / 2 - box.cx, GetScreenHeight() / 2 - box.cy)
+        return MoveBy({ entry }, GetScreenWidth() / 2 - box.cx, GetScreenHeight() / 2 - box.cy)
     end
 
     -- Unlock Mode closed: a drag stays where it is, nothing selected or picking.
@@ -978,15 +1103,15 @@ do -- private scope
 
     -- Every size setting of one module's pieces: reverted with the places (DogsForeverUI.lua).
     function Snap.SizeKeys(module)
-        local keys = {}
+        local sizeKeys = {}
         for _, spec in pairs(Specs()) do
             if spec.module == module then
                 for _, axis in ipairs(AXES) do
-                    if spec[axis] then keys[spec[axis].key] = true end
+                    if spec[axis] then sizeKeys[spec[axis].key] = true end
                 end
             end
         end
-        return keys
+        return sizeKeys
     end
 
     local function SizeOf(entry, axis)
@@ -1138,6 +1263,7 @@ do -- private scope
         combo     = { "ComboPoints", "placed" },
         xp        = { "XPBar", "barLeft", "barTop", "autoPlaced" },
         cooldowns = { "Cooldowns", "barLeft", "barTop", "autoPlaced" },
+        cooldownicons = { "Cooldowns", "iconX", "iconY" },
         threat    = { "Threat", "barLeft", "barTop", "autoPlaced" },
         loot      = { "LootRolls", "barLeft", "barTop", "autoPlaced" },
         toasts    = { "LootToasts", "barLeft", "barTop", "autoPlaced" },
@@ -1227,7 +1353,7 @@ do -- private scope
 
     -- Anchored on the side it is on, from where it is. Answers whether both are laid out.
     local function HangBeside(entry, target)
-        local box, parent = AnchorBox(entry), AnchorBox(target)
+        local box, parent = AnchorBox(entry), ParentBox(target)
         if not (box and parent) then return false end
         local spec = SIDES[SideOf(box, parent)]
         HangFrom(entry, target.opts.id, spec.point, spec.rel, box)
@@ -1300,7 +1426,7 @@ do -- private scope
         { "focus", "player" }, { "pet", "player" }, { "cooldowns", "player" },
         { "targettarget", "target" }, { "threat", "target" },
         { "fsr", "castbar" }, { "swing", "fsr" },
-        { "petbar", "bar2" }, { "stance", "bar1" },
+        { "petbar", "pet" }, { "stance", "bar1" },
     }
 
     local function MadeByDefault() return Saved("anchoredByDefault") end
@@ -1422,7 +1548,7 @@ do -- private scope
                 if IsShiftKeyDown() then
                     -- Hidden, and not snapped to, until Unlock Mode closes.
                     hiddenForNow[entry] = true
-                    if selected == entry then Snap.Deselect() end
+                    if IsSelected(entry) then Snap.SelectAlso(entry) end
                     self.hovered, self.pressed = false, false
                     self:Hide()
                 else
@@ -1436,6 +1562,8 @@ do -- private scope
             local wasDragging = drag ~= nil and drag.entry == entry
             if Snap.Stop(entry.frame) then
                 if entry.opts.save then entry.opts.save() end
+            elseif wasDragging and IsControlKeyDown() then
+                Snap.SelectAlso(entry)                      -- Ctrl+click: one more, moved as one
             elseif wasDragging then
                 Snap.Clicked(entry, self.wasSelected)       -- a click, not a drag
             end
@@ -1450,15 +1578,19 @@ do -- private scope
     local function LayOutMover(entry, l, r, t, b)
         local w = W()
         local mover = movers[entry] or NewMover(entry)
-        local isSelected = selected == entry
+        local isSelected = IsSelected(entry)
         local picker = picking ~= nil and picking.entry == entry
         local width, height = r - l, t - b
 
         mover.label:SetText(NameOf(entry))
         w.SetTextColour(mover.label, Anchor(entry) and LABEL_ANCHORED or LABEL_PLAIN)
-        mover:ClearAllPoints()
-        mover:SetPoint("CENTER", UIParent, "BOTTOMLEFT", (l + r) / 2, (t + b) / 2)
-        mover:SetSize(width, height)
+        -- (Every frame: placed again only when it moved or resized.)
+        if mover.atL ~= l or mover.atB ~= b or mover.atW ~= width or mover.atH ~= height then
+            mover.atL, mover.atB, mover.atW, mover.atH = l, b, width, height
+            mover:ClearAllPoints()
+            mover:SetPoint("CENTER", UIParent, "BOTTOMLEFT", (l + r) / 2, (t + b) / 2)
+            mover:SetSize(width, height)
+        end
         if picker then
             mover.pick:SetWidth(math.max(60, width - 8))
             mover.pick:SetText(PICK_TEXT[picking.axis])
@@ -1489,7 +1621,7 @@ do -- private scope
         if not entry then return false end
         local mover = movers[entry]
         if mover and mover:IsShown() and (mover.hovered or mover:IsMouseOver()) then return true end
-        return selected == entry or (drag ~= nil and drag.moved and drag.entry == entry)
+        return IsSelected(entry) or (drag ~= nil and drag.moved and drag.entry == entry)
     end
 
     local function DrawLines()
@@ -1569,11 +1701,11 @@ do -- private scope
                 movers[entry]:Hide()
             end
         end
-        -- Smaller over bigger; the selected or dragged one over all.
+        -- Smaller over bigger; the selected or dragged ones over all.
         table.sort(shown, Bigger)
         local count = #shown
         for index, item in ipairs(shown) do
-            local raised = item.entry == selected or (drag and drag.entry == item.entry)
+            local raised = IsSelected(item.entry) or (drag and drag.entry == item.entry)
             local level = Snap.MOVER_LEVEL + index + (raised and count + 5 or 0)
             if item.frame:GetFrameLevel() ~= level then item.frame:SetFrameLevel(level) end
         end

@@ -671,7 +671,7 @@ check("on its own background, as it really looks",
     not PlacingLook(bar.bg) and DogsForeverUI.Style.StripesOf == nil
     and (function()
         for _, region in ipairs(bar.regions) do
-            if region.texture == "Interface\\RaidFrame\\Shield-Overlay" then return false end
+            if region.atlas == "RaidFrame-Shield-Overlay" then return false end
         end
         return true
     end)())
@@ -838,5 +838,82 @@ print("== no switch ==")
 PlayerCastingBarFrame:Show()
 check("the game's castbar is always held down", PlayerCastingBarFrame:IsShown() == false)
 check("with no command anywhere", SlashCmdList.DCB == nil)
+
+print("== retail ==")
+-- Retail has no swing timer at all: no API, no frames, no strings, no switch
+-- (Blizzard_SwingTimer is WoW Forever's). The castbar carries on without it.
+do
+    WOW_PROJECT_ID = WOW_PROJECT_MAINLINE
+    C_SwingTimer, Enum.PlayerSwingType = nil, nil
+    SwingTimerMainHandFrame, SwingTimerOffHandFrame, SwingTimerRangedFrame = nil, nil, nil
+    SWING_TIMER_MAIN_HAND, SWING_TIMER_OFF_HAND, SWING_TIMER_RANGED = nil, nil, nil
+    castingInfo, channelInfo = nil, nil
+    local ok, err = pcall(function()
+        Reload(nil)
+        Login()
+    end)
+    check("the addon loads and logs in with no error", ok, tostring(err))
+    Style = DogsForeverUI.Style
+    local Castbar = DogsForeverUI.Castbar
+    local rbar = Castbar.CastBar.castbar
+    check("no swing bars are made, so none is placed",
+        Castbar.SwingBars.group == nil and DogsForeverUI.Snap.EntryById("swing") == nil)
+    check("their saved sizes are kept all the same",
+        Castbar.db.swingWidth == 130 and Castbar.db.swingHeight == 20)
+
+    ok, err = pcall(DogsForeverUI.SetUnlocked, true)
+    check("Unlock Mode opens with no error", ok, tostring(err))
+    check("with the castbar there to place", rbar:IsShown() == true)
+    DogsForeverUI.SetUnlocked(false)
+
+    -- An empowered cast (Evoker) comes as a channel with stages: it fills like
+    -- a cast, to the end of its hold at the last stage, and ends on its own stop.
+    local plainChannelInfo = UnitChannelInfo
+    function UnitChannelInfo(token)
+        local c = channelInfo
+        if token ~= "player" or not c then return plainChannelInfo(token) end
+        return c[1], c[2], c[3], c[4], c[5], c[6], c[7], 357208, c.stages ~= nil, c.stages
+    end
+    function GetUnitEmpowerHoldAtMaxTime() return 1000 end
+    channelInfo = { "Fire Breath", "Fire Breath", "icon", now * 1000, (now + 2) * 1000, false, false, stages = 3 }
+    ok, err = pcall(Fire, "UNIT_SPELLCAST_EMPOWER_START", "player", "guid-1", 357208)
+    check("an empowered cast starts with no error", ok, tostring(err))
+    Tick(Style.FADE_IN)
+    check("and shows, held to the end of the last stage's hold",
+        rbar:IsShown() == true and math.abs(select(2, rbar:GetMinMaxValues()) - 3) < 1e-6,
+        select(2, rbar:GetMinMaxValues()))
+    Tick(1)
+    check("filling like a cast, not draining like a channel",
+        math.abs(rbar:GetValue() - (1 + Style.FADE_IN)) < 1e-6 and Wears(rbar, "casting"), rbar:GetValue())
+    Fire("UNIT_SPELLCAST_EMPOWER_UPDATE", "player", "guid-1", 357208)
+    check("a stage reached changes nothing", rbar:IsShown() == true and Wears(rbar, "casting"))
+    channelInfo = nil
+    Fire("UNIT_SPELLCAST_EMPOWER_STOP", "player", "guid-1", 357208, true, nil)
+    Tick(Style.FADE_OUT + 0.05)
+    check("released, it goes as a finished cast", rbar:IsShown() == false)
+
+    channelInfo = { "Fire Breath", "Fire Breath", "icon", now * 1000, (now + 2) * 1000, false, false, stages = 3 }
+    Fire("UNIT_SPELLCAST_EMPOWER_START", "player", "guid-2", 357208)
+    Tick(0.5)
+    channelInfo = nil
+    Fire("UNIT_SPELLCAST_EMPOWER_STOP", "player", "guid-2", 357208, false, nil)
+    check("cut short, it says so in the failed colour", rbar:IsShown() == true and Wears(rbar, "failed"))
+    Tick(Castbar.FAILED_HOLD + 0.01)
+    Tick(Style.FADE_OUT + 0.05)
+    check("and then goes", rbar:IsShown() == false)
+
+    -- Secret times and a secret `complete`: handed on, never compared.
+    local secretEnd, secretComplete = {}, {}
+    secretValues[secretEnd], secretValues[secretComplete] = true, true
+    channelInfo = { "Fire Breath", "Fire Breath", "icon", now * 1000, secretEnd, false, false, stages = 3 }
+    ok, err = pcall(Fire, "UNIT_SPELLCAST_EMPOWER_START", "player", "guid-3", 357208)
+    check("a secret end time does not throw", ok, tostring(err))
+    channelInfo = nil
+    ok, err = pcall(Fire, "UNIT_SPELLCAST_EMPOWER_STOP", "player", "guid-3", 357208, secretComplete, nil)
+    check("nor does a secret stop", ok, tostring(err))
+    Tick(Style.FADE_OUT + 0.05)
+    check("which ends it", rbar:IsShown() == false)
+    UnitChannelInfo = plainChannelInfo
+end
 
 Summary()

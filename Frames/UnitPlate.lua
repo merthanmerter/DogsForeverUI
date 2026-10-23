@@ -19,14 +19,11 @@ do -- private scope
     local Call = DogsForeverUI.Call
     local IsSecret = issecretvalue
 
-    local HEALTH_COLOR, MANA_COLOR = Style.HEALTH_COLOR, Style.MANA_COLOR
+    local HEALTH_COLOR = Style.HEALTH_COLOR
     local HEAL_COLOR = { 0.5, 0.9, 0.6, 0.45 }          -- incoming heals over the missing health
     local HEAL_ABSORB_COLOR = { 0.15, 0, 0, 0.6 }       -- the health a heal absorb will eat
     UnitPlate.HEAL_COLOR = HEAL_COLOR
     UnitPlate.HEAL_ABSORB_COLOR = HEAL_ABSORB_COLOR
-    -- A shield in the game's look: its fill, its stripes tiled over it.
-    local SHIELD_FILL = "Interface\\RaidFrame\\Shield-Fill"
-    local SHIELD_LINES = "Interface\\RaidFrame\\Shield-Overlay"
     local OFFLINE_COLOR = { 0.5, 0.5, 0.5 }
 
     local DIVIDER = 1                 -- the hairline, in the border's inner black
@@ -55,6 +52,11 @@ do -- private scope
     -- over the outer `fade` at both ends (three pieces each). It reaches
     -- NAME_BAND_EXTRA over the text, whose letters sit in its top.
     local NAME_BAND = { alpha = 0.55, lineAlpha = 0.9, fade = 0.35 }
+    -- The targeted party member's: the frames' border in white.
+    local TARGET_BORDER = {
+        radius = Style.DEFAULT_BORDER.radius, gap = 0,
+        lines = { { 1, 1, 1, 1 }, { 0.6, 0.6, 0.6, 1 }, Style.DIVIDER_COLOR },
+    }
     local NAME_BAND_EXTRA = 3
     UnitPlate.NAME_BAND = NAME_BAND
 
@@ -65,14 +67,15 @@ do -- private scope
 
     -- The band's look and height, for the titles that wear it (minimap, quests).
     function UnitPlate.NameBand()
-        return UnitPlate.NAME_BAND, UnitPlate.TopRoom()
+        return NAME_BAND, UnitPlate.TopRoom()
     end
 
     UnitPlate.SMALL_SCALE = 0.6       -- the target's target and the pet
 
-    -- THE PARTY: four frames in a column, party1 on top, placed and dragged as
-    -- one; the name inside the health bar (over its value on a tall bar, beside
-    -- it on a short one), the role and crown in its corners.
+    -- THE PARTY: four frames in a column, party1 on top - or a row, party1 at
+    -- the left (Layout) - placed and dragged as one; the name inside the health
+    -- bar (over its value on a tall bar, beside it on a short one), the role
+    -- and crown in its corners.
     UnitPlate.PARTY_SCALE = 0.8       -- their text, of the unit frames'
     UnitPlate.PARTY_GAP = 2           -- between two frames' borders
     UnitPlate.PARTY_SIZE = 5          -- four members and the player's own
@@ -111,10 +114,21 @@ do -- private scope
     -- What a party frame shows above its bars: nothing (its name is inside).
     function UnitPlate.PartyTopRoom() return 0 end
 
-    -- One party frame's top to the next one's.
+    local ANY_PARTY = { partyIndex = 1 }    -- any party frame, for its sizes
+
+    UnitPlate.LAYOUTS = {
+        { value = "column", label = "Column" },
+        { value = "row", label = "Row" },
+    }
+
+    -- The party side by side: its pets over each frame, its auras under it.
+    function UnitPlate.InRow(db) return db.partyLayout == "row" end
+
+    -- One party frame's top to the next one's, or its left in a row.
     function UnitPlate.PartyStep(db)
-        local _, health, power = UnitPlate.Size(db, { partyIndex = 1 })
-        return health + 1 + power + UnitPlate.PartyTopRoom() + 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP
+        local width, health, power = UnitPlate.Size(db, ANY_PARTY)
+        local across = UnitPlate.InRow(db) and width or health + 1 + power + UnitPlate.PartyTopRoom()
+        return across + 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP
     end
 
     ---------------------------------------------------------------------------
@@ -179,12 +193,13 @@ do -- private scope
     local COLUMN_STATE = "[group:raid] 0; [@party4,exists] 4; [@party3,exists] 3; "
         .. "[@party2,exists] 2; [@party1,exists] 1; 0"
     -- (Run with the member count; "plate1".."plate5" the frames, "order1".."order5"
-    -- their column order.)
+    -- their column order; "across": a row, each a step right of the last.)
     UnitPlate.COLUMN_LAYOUT = [[
         local count = tonumber(...) or 0
         local left, top, step = self:GetAttribute("left"), self:GetAttribute("top"), self:GetAttribute("step")
         if not (left and top and step) then return end
         local showSelf, unlocked = self:GetAttribute("showself"), self:GetAttribute("unlocked")
+        local across = self:GetAttribute("across")
         local slot = 0
         for pass = 1, 2 do
             for index = 1, 5 do
@@ -198,29 +213,102 @@ do -- private scope
                         here = id <= count
                     end
                     if (pass == 1) == (here and true or false) then
+                        local along = slot * step
                         slot = slot + 1
                         plate:ClearAllPoints()
-                        plate:SetPoint("TOPLEFT", "$parent", "TOPLEFT", left, top - (slot - 1) * step)
+                        if across then
+                            plate:SetPoint("TOPLEFT", "$parent", "TOPLEFT", left + along, top)
+                        else
+                            plate:SetPoint("TOPLEFT", "$parent", "TOPLEFT", left, top - along)
+                        end
                     end
                 end
             end
         end
     ]]
 
+    -- Who is offline, for the party cycle to pass over (the secure side cannot
+    -- ask). Out of combat only, so a change in a fight counts as it ends.
+    local function SyncOffline()
+        local column = UnitPlate.column
+        if not column or InCombatLockdown() then return end
+        for index = 1, 4 do
+            column:SetAttribute("offline" .. index, Plain(UnitIsConnected("party" .. index)) == false)
+        end
+    end
+
     -- What the secure layout needs, out of combat (a protected frame's
     -- attributes), laid out at once so it never disagrees with SortParty.
     local function SyncColumn(db)
         local column = UnitPlate.column
         if InCombatLockdown() then return end
+        SyncOffline()
         local order = PartyPlates()
         table.sort(order, function(a, b) return a.partySlot < b.partySlot end)
         for index, plate in ipairs(order) do column:SetAttribute("order" .. index, PartyId(plate)) end
         column:SetAttribute("left", db.partyLeft or 0)
         column:SetAttribute("top", db.partyTop or 0)
         column:SetAttribute("step", UnitPlate.PartyStep(db))
+        column:SetAttribute("across", UnitPlate.InRow(db))
         column:SetAttribute("showself", db.partyShowSelf and true or false)
         column:SetAttribute("unlocked", db.unlocked and true or false)
         column:Execute([[ self:RunAttribute("_layout", self:GetAttribute("state-roster")) ]])
+    end
+
+    -- CYCLING THE PARTY: a key bound in the options clicks one of these, which
+    -- targets the next or previous member down the column as shown. Wrapped
+    -- by the column, so it reads its order and member count in combat too;
+    -- "cycled" is the id last targeted. The dead and offline are passed over.
+    UnitPlate.CYCLE = {
+        { name = "DogsForeverUIPartyNext", step = 1, label = "Next party member" },
+        { name = "DogsForeverUIPartyPrevious", step = -1, label = "Previous party member" },
+    }
+    for _, entry in ipairs(UnitPlate.CYCLE) do entry.command = "CLICK " .. entry.name .. ":LeftButton" end
+    UnitPlate.CYCLE_SNIPPET = [[
+        local count = tonumber(owner:GetAttribute("state-roster")) or 0
+        local showSelf, last, step = owner:GetAttribute("showself"), owner:GetAttribute("cycled"), self:GetAttribute("step")
+        local first, final, pick, seen
+        for index = 1, 5 do
+            local id = owner:GetAttribute("order" .. index)
+            if id and (id <= count or id == 5 and showSelf and count > 0) then
+                local unit = id == 5 and "player" or "party" .. id
+                if step < 0 and id == last then pick = final end
+                if not (UnitIsDead(unit) or UnitIsGhost(unit) or owner:GetAttribute("offline" .. id)) then
+                    first = first or id
+                    if step > 0 and seen and not pick then pick = id end
+                    final = id
+                end
+                seen = seen or id == last
+            end
+        end
+        if not first then return false end
+        pick = pick or (step > 0 and first or final)
+        owner:SetAttribute("cycled", pick)
+        self:SetAttribute("unit", pick == 5 and "player" or "party" .. pick)
+    ]]
+
+    local function BuildCycle(column)
+        for _, entry in ipairs(UnitPlate.CYCLE) do
+            local button = CreateFrame("Button", entry.name, UIParent, "SecureActionButtonTemplate")
+            button:RegisterForClicks("AnyDown")
+            button:SetAttribute("useOnKeyDown", true)
+            button:SetAttribute("type", "target")
+            button:SetAttribute("step", entry.step)
+            column:WrapScript(button, "OnClick", UnitPlate.CYCLE_SNIPPET)
+        end
+    end
+
+    -- The targeted member's frame in its white border, in combat too; out of
+    -- combat the cycle goes on from whoever is targeted now.
+    function UnitPlate.FollowTarget()
+        local cycled
+        for _, plate in ipairs(PartyPlates()) do
+            local targeted = Plain(UnitIsUnit(plate.unit, "target")) == true
+            if plate.targetBorder then plate.targetBorder:SetShown(targeted) end
+            if targeted then cycled = PartyId(plate) end
+        end
+        local column = UnitPlate.column
+        if column and not InCombatLockdown() then column:SetAttribute("cycled", cycled) end
     end
 
     -- Once, out of combat, as the plates are built (Frames.lua).
@@ -231,6 +319,7 @@ do -- private scope
         column:SetAttribute("_onstate-roster", [[ self:RunAttribute("_layout", newstate) ]])
         UnitPlate.column = column
         RegisterStateDriver(column, "roster", COLUMN_STATE)
+        BuildCycle(column)
         SyncColumn(NS.db)
     end
 
@@ -271,10 +360,13 @@ do -- private scope
         return CIRCLE_GAP + Diameter(db.barHeight + DIVIDER + db.powerHeight)
     end
 
-    -- The PvP badge, the game's art and rule (Camelot TargetFrameMixin:
-    -- ShowPvPIcon): free-for-all over the unit's faction.
+    -- The PvP badge, the game's art and rule (TargetFrameMixin:ShowPvPIcon,
+    -- each client's UnitFramePvPIndicatorStyle): free-for-all over the unit's faction.
     local FFA_ATLAS = "UI-HUD-UnitFrame-Player-PVP-FFAIcon"
-    local FACTION_ATLAS = {
+    local FACTION_ATLAS = DogsForeverUI.RETAIL and {
+        Horde = "UI-HUD-UnitFrame-Player-PVP-HordeIcon",
+        Alliance = "UI-HUD-UnitFrame-Player-PVP-AllianceIcon",
+    } or {
         Horde = "UI-HUD-UnitFrame-SmallCircle-Horde",
         Alliance = "UI-HUD-UnitFrame-SmallCircle-Alliance",
     }
@@ -315,11 +407,19 @@ do -- private scope
         party1 = "Party 1", party2 = "Party 2", party3 = "Party 3", party4 = "Party 4",
     }
 
+    -- Shown as a player: a follower dungeon's NPCs too, as the game's raid frames
+    -- class-colour them (CompactUnitFrame_UpdateHealthColor).
+    local function AsPlayer(unit)
+        if UnitIsPlayer(unit) then return true end
+        local treated = UnitTreatAsPlayerForDisplay and UnitTreatAsPlayerForDisplay(unit)
+        return not IsSecret(treated) and treated == true
+    end
+
     -- A player wears its class (a secret one through C_ClassColor, never
     -- read), never a reaction; a friendly pet the plain colour; anything else
     -- the game's selection colour. The class flag says "do not tone".
     local function GameHealthColour(unit)
-        if UnitIsPlayer(unit) then
+        if AsPlayer(unit) then
             local _, class = UnitClass(unit)
             if IsSecret(class) then
                 local ok, colour = pcall(C_ClassColor.GetClassColor, class)
@@ -364,14 +464,21 @@ do -- private scope
         return unpack(HEALTH_COLOR)
     end
 
+    -- Retail: a spec whose own power is not mana (shadow, balance, elemental)
+    -- keeps its mana under the player's health, the game's second bar; its own
+    -- power has the castbar group's row (Castbar\Rows.lua). Nil: the unit's power.
+    local SecondaryPower = DogsForeverUI.RETAIL and GetUnitSecondaryPowerInfo
+    local function ShownPower(unit)
+        if SecondaryPower and unit == "player" then return SecondaryPower(unit) end
+    end
+
     -- Mana in MANA_COLOR, every other resource exactly the game's
-    -- PowerBarColor (toned, focus read as rage).
+    -- PowerBarColor, untoned (toning read focus as rage).
     local function PowerColour(unit)
         if Offline(unit) then return unpack(OFFLINE_COLOR) end
-        local _, token = UnitPowerType(unit)
-        local info = not IsSecret(token) and token ~= nil and token ~= "MANA" and PowerBarColor[token]
-        if type(info) ~= "table" or type(info.r) ~= "number" then return unpack(MANA_COLOR) end
-        return info.r, info.g, info.b
+        local powerType, token = ShownPower(unit)
+        if powerType then return Style.PowerColour(powerType, token) end
+        return Style.PowerColour(UnitPowerType(unit))
     end
 
     -- "??" where the game will not put a number on it; a secret level is
@@ -412,11 +519,10 @@ do -- private scope
     -- Building one.
     ---------------------------------------------------------------------------
 
-    -- A bar in the flat fill; `sheen` adds the soft shading, `vertical` fills it upwards.
-    local function NewBar(parent, level, sheen, vertical)
+    -- A bar in the flat fill; `sheen` adds the soft shading.
+    local function NewBar(parent, level, sheen)
         local bar = CreateFrame("StatusBar", nil, parent)
         bar:SetFrameLevel(level)
-        if vertical then bar:SetOrientation("VERTICAL") end
         Style.SetBarFill(bar)
         if sheen then Style.AddSheen(bar) end
         bar:SetMinMaxValues(0, 1)
@@ -424,46 +530,58 @@ do -- private scope
         return bar
     end
 
-    -- Round `frame.health` (a plate's or a pet box's; `vertical`: it grows up):
-    -- incoming heals past the fill (at `level`), heal absorbs back over it, and
-    -- EllesmereUI's two health-sized shield bars - one on from the fill inside
-    -- the heal box, one back from the far end inside the heal absorb's.
-    local function AddHeals(frame, level, vertical)
+    -- Round `frame.health` (a plate's or a pet box's): incoming heals past the
+    -- fill (at `level`), heal absorbs back over it, and EllesmereUI's two
+    -- health-sized shield bars - one on from the fill inside the heal box, one
+    -- back from the far end inside the heal absorb's. Laid out by TurnHeals.
+    local function AddHeals(frame, level)
         local health = frame.health
-        local fill = health:GetStatusBarTexture()
-        local start = vertical and "BOTTOMLEFT" or "TOPLEFT"
-        local finish = vertical and "TOPRIGHT" or "BOTTOMRIGHT"
+        frame.prediction = NewBar(frame, level, false)
+        frame.prediction:SetStatusBarColor(unpack(HEAL_COLOR))
+        frame.healAbsorb = NewBar(frame, health:GetFrameLevel() + 1, false)
+        frame.healAbsorb:SetReverseFill(true)
+        frame.healAbsorb:SetStatusBarColor(unpack(HEAL_ABSORB_COLOR))
 
-        local prediction = NewBar(frame, level, false, vertical)
-        prediction:SetStatusBarColor(unpack(HEAL_COLOR))
-        prediction:SetPoint(start, fill, vertical and "TOPLEFT" or "TOPRIGHT")
-        prediction:SetPoint(finish, health, finish)
-        local healAbsorb = NewBar(frame, health:GetFrameLevel() + 1, false, vertical)
-        healAbsorb:SetReverseFill(true)
-        healAbsorb:SetStatusBarColor(unpack(HEAL_ABSORB_COLOR))
-        healAbsorb:SetPoint(start, health, start)
-        healAbsorb:SetPoint(finish, fill, finish)
-        frame.prediction, frame.healAbsorb = prediction, healAbsorb
-
-        local function Shield(box, from, corner, reverse)
+        local function Shield(box, reverse)
             box:SetClipsChildren(true)
-            local bar = NewBar(box, box:GetFrameLevel() + 1, false, vertical)
-            bar:SetStatusBarTexture(SHIELD_FILL)
+            local bar = NewBar(box, box:GetFrameLevel() + 1, false)
+            Style.ShieldArt(bar:GetStatusBarTexture(), Style.SHIELD_FILL)
             bar:SetReverseFill(reverse)
-            bar:SetPoint(corner, from, corner)
             local lines = bar:CreateTexture(nil, "OVERLAY")
-            lines:SetTexture(SHIELD_LINES, "REPEAT", "REPEAT")
-            lines:SetHorizTile(true)
-            lines:SetVertTile(true)
+            Style.ShieldArt(lines, Style.SHIELD_LINES)
             lines:SetAllPoints(bar:GetStatusBarTexture())
             return bar
         end
-        frame.shield = Shield(prediction, prediction, start, false)
-        frame.overShield = Shield(healAbsorb, health, vertical and "TOPLEFT" or "TOPRIGHT", true)
+        frame.shield = Shield(frame.prediction, false)
+        frame.overShield = Shield(frame.healAbsorb, true)
         health:SetScript("OnSizeChanged", function(_, width, height)
             frame.shield:SetSize(width, height)
             frame.overShield:SetSize(width, height)
         end)
+    end
+
+    -- `frame`'s health and heals filling upwards (`vertical`) or rightwards,
+    -- the health's sheen and shade turned with them.
+    local function TurnHeals(frame, vertical)
+        local health = frame.health
+        local fill = health:GetStatusBarTexture()
+        local start = vertical and "BOTTOMLEFT" or "TOPLEFT"
+        local finish = vertical and "TOPRIGHT" or "BOTTOMRIGHT"
+        local edge = vertical and "TOPLEFT" or "TOPRIGHT"      -- the fill's far end
+        for _, bar in ipairs({ health, frame.prediction, frame.healAbsorb, frame.shield, frame.overShield }) do
+            bar:SetOrientation(vertical and "VERTICAL" or "HORIZONTAL")
+        end
+        if health.sheen then Style.TurnSheen(health.sheen, health.shade, fill, vertical) end
+        frame.prediction:ClearAllPoints()
+        frame.prediction:SetPoint(start, fill, edge)
+        frame.prediction:SetPoint(finish, health, finish)
+        frame.healAbsorb:ClearAllPoints()
+        frame.healAbsorb:SetPoint(start, health, start)
+        frame.healAbsorb:SetPoint(finish, fill, finish)
+        frame.shield:ClearAllPoints()
+        frame.shield:SetPoint(start, frame.prediction, start)
+        frame.overShield:ClearAllPoints()
+        frame.overShield:SetPoint(edge, health, edge)
     end
 
     -- A secure unit button over `owner` with the game's own attributes
@@ -676,6 +794,7 @@ do -- private scope
         plate.health = NewBar(plate, base + 2, true)
         plate.power = NewBar(plate, base + 2, true)
         AddHeals(plate, base + 1)
+        TurnHeals(plate, false)
         plate.healthBG = Style.SetBackground(plate:CreateTexture(nil, "BACKGROUND"))
         plate.healthBG:SetAllPoints(plate.health)
         plate.powerBG = Style.SetBackground(plate:CreateTexture(nil, "BACKGROUND"))
@@ -686,6 +805,12 @@ do -- private scope
         plate.divider = plate:CreateTexture(nil, "OVERLAY")
         plate.divider:SetColorTexture(unpack(Style.DIVIDER_COLOR))
         plate.border = Style.AddBorder(plate)
+        -- A party member targeted: a white border over the gold (FollowTarget).
+        if party then
+            plate.targetBorder = Style.AddBorder(plate, TARGET_BORDER)
+            plate.targetBorder:SetFrameLevel(plate.border:GetFrameLevel() + 1)
+            plate.targetBorder:Hide()
+        end
 
         -- The words and icons on a frame of their own, over the bars and a
         -- party frame's dispel wash (UnitAuras.lua). Takes no mouse.
@@ -718,8 +843,8 @@ do -- private scope
         end
 
         -- The pet's happiness: the game's own indicator, with its tooltip,
-        -- events and rule (hunters' pets only). Not secure.
-        if unit == "pet" then
+        -- events and rule (hunters' pets only; Classic's, none on retail). Not secure.
+        if unit == "pet" and not DogsForeverUI.RETAIL then
             plate.happiness = CreateFrame("Frame", nil, plate, "PetFrameHappinessTemplate")
             plate.happiness:SetFrameLevel(base + 4)
         end
@@ -757,11 +882,20 @@ do -- private scope
     -- What a plate can do.
     ---------------------------------------------------------------------------
 
-    -- Its own saved top, or the column's a step down per slot above it.
-    function methods:TopOf(db)
-        local top = db[self.key .. "Top"] or 0
-        if self.partyIndex then top = top - (self.partySlot - 1) * UnitPlate.PartyStep(db) end
-        return top
+    -- How far a party frame's slot is from party1's: down the column, or
+    -- right along the row.
+    function methods:SlotOffset(db)
+        local along = (self.partySlot - 1) * UnitPlate.PartyStep(db)
+        if UnitPlate.InRow(db) then return along, 0 end
+        return 0, -along
+    end
+
+    -- Its own saved place, or the party's moved on to its slot.
+    function methods:PlaceOf(db)
+        local left, top = db[self.key .. "Left"] or 0, db[self.key .. "Top"] or 0
+        if not self.partyIndex then return left, top end
+        local x, y = self:SlotOffset(db)
+        return left + x, top + y
     end
 
     -- THE ROW ABOVE: the level, the name centred between equal margins, the
@@ -810,7 +944,19 @@ do -- private scope
         self.healthText:SetPoint("CENTER", self.health, "CENTER", 0, 0)
     end
 
-    -- A party frame: no row above, the name inside the health bar.
+    -- Text measured off screen in a label's font: the labels' own texts are secret.
+    local measure = UIParent:CreateFontString(nil, "OVERLAY")
+    measure:Hide()
+    local function TextWidth(label, text)
+        measure:SetFont(label:GetFont())
+        measure:SetText(text)
+        return measure:GetUnboundedStringWidth()
+    end
+    local NAME_LEAST = "W..."           -- the least name worth drawing: a letter and the dots
+    local VALUE_MOST = "888K | 100%"    -- the widest value (ShowValue)
+
+    -- A party frame: no row above, the name inside the health bar - none at
+    -- all where not even a letter of it fits (the game would draw "..").
     function methods:LayoutParty(db, healthHeight, Sized)
         local inset = PARTY_INSET
         -- "Offline" or "Dead" takes the value's place even with the value off.
@@ -822,6 +968,11 @@ do -- private scope
         -- The role in the bar's top left corner (its left end on a short
         -- bar), the crown its mirror on the right.
         local side, y = tall and "TOP" or "", tall and -2 or 0
+        local room = self.health:GetWidth() - 2 * (inset + role)
+        if valued and not tall then
+            room = room - inset - TextWidth(self.healthText, self.status or VALUE_MOST)
+        end
+        self.nameText:SetShown(room >= TextWidth(self.nameText, NAME_LEAST))
         self.roleIcon:ClearAllPoints()
         self.roleIcon:SetSize(role, role)
         self.roleIcon:SetPoint(side .. "LEFT", self.health, side .. "LEFT", 2, y)
@@ -858,10 +1009,15 @@ do -- private scope
             self:SetFrameStrata((self.partyIndex and db.partyStrata or db.frameStrata) or "MEDIUM")
             self:SetWidth(width)
             self:SetHeight(healthHeight + DIVIDER + powerHeight)
-            self:SetPoint("TOPLEFT", db[self.key .. "Left"] or 0, self:TopOf(db))
-            -- The column keeps its pets' room clear of the screen's edge.
+            self:SetPoint("TOPLEFT", self:PlaceOf(db))
+            -- The party keeps its pets' room clear of the screen's edge.
             if self.partyIndex then
-                self:SetClampRectInsets(db.partyShowPets and -NS.PartyPets.Room(db) or 0, 0, 0, 0)
+                local room = db.partyShowPets and NS.PartyPets.Room(db) or 0
+                if UnitPlate.InRow(db) then
+                    self:SetClampRectInsets(0, 0, room, 0)
+                else
+                    self:SetClampRectInsets(-room, 0, 0, 0)
+                end
             end
             -- No click actions while placing, so a drag does not target.
             self.click:SetAttribute("*type1", not db.unlocked and "target" or nil)
@@ -895,13 +1051,14 @@ do -- private scope
         self.leader:SetSize(crown, crown)
         self.powerText:SetJustifyH("CENTER")
         self.powerText:SetPoint("CENTER", self.power, "CENTER", 0, 0)
+        -- (The value's font first: a party frame's name room is measured with it.)
+        Style.SetFont(self.health, self.healthText, db.textPadding)
+        Style.SetFont(self.power, self.powerText, db.textPadding, POWER_TEXT_MIN)
         if self.partyIndex then
             self:LayoutParty(db, healthHeight, Sized)
         else
             self:LayoutRow(width, Sized)
         end
-        Style.SetFont(self.health, self.healthText, db.textPadding)
-        Style.SetFont(self.power, self.powerText, db.textPadding, POWER_TEXT_MIN)
 
         -- A little shorter than the bars: as tall, it reads as a third bar.
         self.badgeDiameter = Diameter(healthHeight + DIVIDER + powerHeight)
@@ -1101,13 +1258,14 @@ do -- private scope
         local status = Status(unit)
         if status ~= self.status then
             self.status = status
+            if self.partyIndex then SyncOffline() end
             self:Refresh()
             return
         end
         -- Offline both bars full (grey), dead both empty - a ghost still
         -- reports health.
         if status then
-            local fill = Offline(unit) and 1 or 0
+            local fill = status == PLAYER_OFFLINE and 1 or 0
             self.health:SetMinMaxValues(0, 1)
             self.health:SetValue(fill)
             self.power:SetMinMaxValues(0, 1)
@@ -1122,11 +1280,12 @@ do -- private scope
         end
         -- The predicted health, as the game's frames read it: the confirmed
         -- one trailed every heal.
-        local health, most, power = UnitHealth(unit, true), UnitHealthMax(unit), UnitPower(unit)
+        local shown = ShownPower(unit)
+        local health, most, power = UnitHealth(unit, true), UnitHealthMax(unit), UnitPower(unit, shown)
         self.health:SetMinMaxValues(0, most)
         self.health:SetValue(health)
         ShowHeals(self, unit, health, most)
-        self.power:SetMinMaxValues(0, UnitPowerMax(unit))
+        self.power:SetMinMaxValues(0, UnitPowerMax(unit, shown))
         self.power:SetValue(power)
         self.healthSpark:SetAlpha(Style.HealthSparkAlpha(unit))
         self.powerSpark:SetAlpha(Style.PowerSparkAlpha(unit))
@@ -1138,20 +1297,23 @@ do -- private scope
             self.healthText:SetText("")
         end
         if db.showPowerText then
-            ShowValue(self.powerText, power, UnitPowerPercent(unit, nil, false, scaleTo100))
+            ShowValue(self.powerText, power, UnitPowerPercent(unit, shown, false, scaleTo100))
         else
             self.powerText:SetText("")
         end
     end
 
     -- A drag's place is the player's. Only the place is written (reading the
-    -- size back would round it); a party frame's moves the column.
+    -- size back would round it); a party frame's moves the party.
     function methods:SavePosition()
         local db = NS.db
-        local top = self:GetTop() - GetScreenHeight()
-        if self.partyIndex then top = top + (self.partySlot - 1) * UnitPlate.PartyStep(db) end
+        local left, top = self:GetLeft(), self:GetTop() - GetScreenHeight()
+        if self.partyIndex then
+            local x, y = self:SlotOffset(db)
+            left, top = left - x, top - y
+        end
         db[self.key .. "Placed"] = true
-        db[self.key .. "Left"] = self:GetLeft()
+        db[self.key .. "Left"] = left
         db[self.key .. "Top"] = top
         NS.Refresh()
         DogsForeverUI.RefreshOptions()
@@ -1160,10 +1322,12 @@ do -- private scope
     ---------------------------------------------------------------------------
     -- PARTY PETS: a narrow box left of each member's frame, as tall as its
     -- bars - a vertical health fill with the heals, heal absorbs and shields,
-    -- your own buffs as tiny icons; no name, power or icon. A child of its
+    -- your own buffs as tiny icons; no name, power or icon. In a row it is
+    -- turned: over the frame, as wide, filling rightwards. A child of its
     -- owner (the column moves it, in combat too) but faded for the pet's own
     -- range. Shown by a secure driver while the pet exists, never in a raid;
-    -- hidden while placing and with Show pets off.
+    -- while placing on some members only (PREVIEW_PETS), painted as the
+    -- player; hidden with Show pets off.
     ---------------------------------------------------------------------------
 
     local PartyPets = {}
@@ -1173,16 +1337,21 @@ do -- private scope
     local PET_AURA_MARGIN = 3         -- the buffs to the box's edges
     local PET_AURA_COUNT = 4
     local PET_GAP = 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP     -- its border to its owner's
+    local PREVIEW_PETS = { [1] = true, [3] = true }                   -- the members with one while placing
 
+    -- Its width and height, and whether it is over its owner (a row).
     local function PetSize(db)
-        local width, health, power = UnitPlate.Size(db, { partyIndex = 1 })
-        return math.max(8, math.floor(width * PET_WIDTH + 0.5)), health + 1 + power
+        local width, health, power = UnitPlate.Size(db, ANY_PARTY)
+        local narrow = math.max(8, math.floor(width * PET_WIDTH + 0.5))
+        if UnitPlate.InRow(db) then return width, narrow, true end
+        return narrow, health + 1 + power, false
     end
 
-    -- How far left of its owner a box reaches, border included: the room the
-    -- column keeps clear of the screen's edge.
+    -- How far left of (in a row: over) its owner a box reaches, border
+    -- included: the room the party keeps clear of the screen's edge.
     function PartyPets.Room(db)
-        return PET_GAP + PetSize(db) + Style.BORDER_INSET
+        local width, height, over = PetSize(db)
+        return PET_GAP + (over and height or width) + Style.BORDER_INSET
     end
 
     local petMethods = {}
@@ -1192,15 +1361,15 @@ do -- private scope
         local owner = NS.plates["party" .. index]
         local box = CreateFrame("Frame", "DogsForeverUI.FramesPartyPet" .. index, owner)
         local level = box:GetFrameLevel()
-        box.unit, box.owner = unit, owner
+        box.unit, box.owner, box.index = unit, owner, index
         box:SetIgnoreParentAlpha(true)
 
         box.background = Style.SetBackground(box:CreateTexture(nil, "BACKGROUND"))
         box.background:SetAllPoints(box)
-        box.health = NewBar(box, level + 1, true, true)
+        box.health = NewBar(box, level + 1, true)
         box.health:SetAllPoints(box)
         box.health:SetStatusBarColor(HEALTH_COLOR[1], HEALTH_COLOR[2], HEALTH_COLOR[3], 1)
-        AddHeals(box, level + 1, true)
+        AddHeals(box, level + 1)
         box.border = Style.AddBorder(box)
 
         -- Your buffs, over the fills and under the click, from the bottom up.
@@ -1224,13 +1393,18 @@ do -- private scope
         return box
     end
 
-    -- Size and place out of combat only (it holds a secure button).
+    -- Size, place and fill out of combat only (it holds a secure button).
     function petMethods:Refresh()
-        local width, height = PetSize(NS.db)
+        local width, height, over = PetSize(NS.db)
         if not InCombatLockdown() then
             self:SetSize(width, height)
             self:ClearAllPoints()
-            self:SetPoint("TOPRIGHT", self.owner, "TOPLEFT", -PET_GAP, 0)
+            if over then
+                self:SetPoint("BOTTOMLEFT", self.owner, "TOPLEFT", 0, PET_GAP)
+            else
+                self:SetPoint("TOPRIGHT", self.owner, "TOPLEFT", -PET_GAP, 0)
+            end
+            TurnHeals(self, not over)
         end
         if self.auras then Call(self.auras, "SetFlowLayoutMaximumLineSize", width - 2 * PET_AURA_MARGIN) end
         self:Update()
@@ -1246,8 +1420,10 @@ do -- private scope
                 RegisterStateDriver(self, "visibility", EXISTS_CONDITION:format(self.unit))
             else
                 UnregisterStateDriver(self, "visibility")
-                self:Hide()
             end
+        end
+        if not (self.driven or InCombatLockdown()) then
+            self:SetShown(db.partyShowPets and db.unlocked and PREVIEW_PETS[self.index] or false)
         end
         if not self:IsShown() then return end
         -- (A new pet behind the same token: its auras asked for again.)
@@ -1255,12 +1431,15 @@ do -- private scope
         self:OnUpdate()
     end
 
+    petMethods.PaintUnit = methods.PaintUnit
+
     -- Every frame while shown: health is secret, handed on, never read.
     function petMethods:OnUpdate()
-        local health, most = UnitHealth(self.unit, true), UnitHealthMax(self.unit)
+        local unit = self:PaintUnit()
+        local health, most = UnitHealth(unit, true), UnitHealthMax(unit)
         self.health:SetMinMaxValues(0, most)
         self.health:SetValue(health)
-        ShowHeals(self, self.unit, health, most)
-        ShowRange(self, self.unit)
+        ShowHeals(self, unit, health, most)
+        ShowRange(self, unit)
     end
 end

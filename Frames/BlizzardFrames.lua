@@ -45,6 +45,9 @@ do -- private scope
         { root = "TargetFrameToT", parts = { {} } },
         { root = "FocusFrameToT", parts = { {} } },
         { root = "PetFrame", parts = { {} } },
+        -- Retail shadow's Voidform art, on the player frame's portrait and mana bar spots
+        -- (its own strata: the faded player frame's alpha never reached it).
+        { root = "InsanityBarFrame", parts = { {} } },
     }
 
     -- Parts of the aura container can be forbidden objects: even reading a
@@ -147,7 +150,8 @@ do -- private scope
     end
 
     local function QuietList(list)
-        for _, frame in ipairs(list or {}) do Quiet(frame) end
+        if type(list) ~= "table" then return end
+        for _, frame in ipairs(list) do Quiet(frame) end
     end
 
     function BlizzardFrames.RetireParty()
@@ -227,11 +231,13 @@ do -- private scope
         if type(texture) == "table" then Style.SetBackground(texture) end
     end
 
+    local RAID_BARS = { "healthBar", "powerBar" }
+
     local function StyleRaidFrame(frame)
         if not Ours(frame) then return end
         local parts = styled[frame] or {}
         styled[frame] = parts
-        for _, key in ipairs({ "healthBar", "powerBar" }) do
+        for _, key in ipairs(RAID_BARS) do
             local bar = frame[key]
             if Flat(bar) and not parts[key] then
                 Style.MakeSheen(bar)
@@ -295,6 +301,46 @@ do -- private scope
         RaidFrames.FitRaidBox()
     end
 
+    -- THE GROUP MANAGER (CompactRaidFrameManager, the game's party and raid options
+    -- at the screen's left edge): collapsed, its button alone - the strip of its
+    -- background left past the edge faded while its options are shut.
+
+    -- Its open and close buttons wear the addon's drawer handle's arrow (Minimap\Buttons.lua),
+    -- `rotation` from pointing left, added over itself under the mouse; the game's stone-capped
+    -- art faded (its hover swaps only that art's atlas).
+    local function Arrow(button, rotation)
+        if type(button) ~= "table" then return end
+        for _, getter in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetDisabledTexture" }) do
+            Fade(Call(button, getter))
+        end
+        local arrow = Style.ARROW
+        for _, layer in ipairs({ "ARTWORK", "HIGHLIGHT" }) do
+            local texture = button:CreateTexture(nil, layer)
+            texture:SetAtlas(arrow.atlas)
+            texture:SetSize(arrow.width, arrow.height)
+            texture:SetPoint("CENTER", button, "CENTER", 0, 0)
+            texture:SetRotation(rotation)
+            if layer == "HIGHLIGHT" then
+                texture:SetBlendMode("ADD")
+                texture:SetAlpha(arrow.highlight)
+            end
+        end
+    end
+
+    local managerHooked = false
+    local function HookManager()
+        local manager = _G.CompactRaidFrameManager
+        local options = type(manager) == "table" and manager.displayFrame
+        if managerHooked or type(options) ~= "table" then return end
+        managerHooked = true
+        local function Follow() Call(manager.Background, "SetAlpha", options:IsShown() and 1 or 0) end
+        options:HookScript("OnShow", Follow)
+        options:HookScript("OnHide", Follow)
+        Follow()
+        Arrow(manager.toggleButtonForward, math.pi)
+        Arrow(manager.toggleButtonBack, 0)
+    end
+
     local loader = CreateFrame("Frame")
     loader:RegisterEvent("PLAYER_LOGIN")
     loader:RegisterEvent("ADDON_LOADED")
@@ -308,9 +354,11 @@ do -- private scope
             end
         end
         HookRaidBox()
-        if boxHooked then self:UnregisterEvent("ADDON_LOADED") end
+        HookManager()
+        if boxHooked and managerHooked then self:UnregisterEvent("ADDON_LOADED") end
     end)
     HookRaidBox()
+    HookManager()
 
     ---------------------------------------------------------------------------
     -- TOTEMS: the game's own buttons (TotemFrame) in a row under the player
@@ -367,13 +415,15 @@ do -- private scope
         for button in pool:EnumerateActive() do SetLook(button) end
     end
 
+    local function InGameOrder(a, b) return (a.layoutIndex or 0) < (b.layoutIndex or 0) end
+
     -- Right-aligned, in the game's order; a button is placed by its centre.
     local function PlaceTotems()
         local list = {}
         for button in pool:EnumerateActive() do
             if button:IsShown() then list[#list + 1] = button end
         end
-        table.sort(list, function(a, b) return (a.layoutIndex or 0) < (b.layoutIndex or 0) end)
+        table.sort(list, InGameOrder)
         for index, button in ipairs(list) do
             local size = button.Icon:GetWidth()
             if not size or size <= 0 then size = ICON_SIZE end

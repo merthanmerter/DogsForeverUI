@@ -90,9 +90,22 @@ do -- private scope
         FlatState(button, "GetCheckedTexture", "CheckedTexture", inner, Buttons.CHECKED, "ADD")
 
         Buttons.parts[button] = {
-            inner = inner, bg = bg,
+            inner = inner, bg = bg, scale = button:GetEffectiveScale(),
             border = Style.AddBorder(inner, Buttons.BORDER, false, Buttons.BORDER_PIXELS),
         }
+    end
+
+    -- A bar's button laid out or moved: its border redrawn on the real pixels of a new
+    -- size (one drawn for another scale smears), and its edges put on whole pixels.
+    function Buttons.Fit(button)
+        local parts = Buttons.parts[button]
+        if not parts then return end
+        local scale = button:GetEffectiveScale()
+        if parts.scale ~= scale then
+            parts.scale = scale
+            Style.Refit(parts.border)
+        end
+        pcall(Style.SnapBorder, parts.border)
     end
 
     -- The main bar's strip, its dividers and the end caps; the caps are Edit
@@ -118,11 +131,17 @@ do -- private scope
         if InCombatLockdown() then return false end
         local bars = Core.ActionBars
         for _, info in ipairs(bars.BARS) do
-            for _, button in ipairs(bars.buttons[info.key] or {}) do Buttons.Skin(button) end
+            for _, button in ipairs(bars.buttons[info.key] or {}) do
+                Buttons.Skin(button)
+                Buttons.Fit(button)
+            end
         end
         for _, name in ipairs(GAME_BARS) do
             local bar = _G[name]
-            for _, button in pairs(bar and bar.actionButtons or {}) do Buttons.Skin(button) end
+            for _, button in pairs(bar and bar.actionButtons or {}) do
+                Buttons.Skin(button)
+                Buttons.Fit(button)
+            end
         end
         StripMainBar()
         return true

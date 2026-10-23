@@ -68,7 +68,7 @@ Tick(1)
 
 Section("one page, the sidebar its contents")
 -- (No Unit frames, Sizes or Positions since 2026-10-03: Unlock Mode has them.)
-local TITLES = { "Cooldown manager", "Auto-hide", "Extras", "Profiles" }
+local TITLES = { "Cooldown manager", "Auto-hide", "Extras", "Party targeting", "Profiles" }
 do
     local titles, ordered = {}, true
     for index, section in ipairs(Options.sections) do
@@ -176,13 +176,15 @@ do
     check("its name clicks it too", db.hideIssueReporter == was)
     Tick(0.3)
 
-    local chat, reporter = Control("Extras", "Chat copy button"), Control("Extras", "Hide the Issue Reporter")
-    check("the chat button and the Issue Reporter under Extras, each its own row with a line under its name",
-        chat ~= nil and reporter ~= nil and chat.row ~= reporter.row
-        and chat.row.description ~= nil and reporter.row.description ~= nil)
-    Click(chat)
-    check("writing the chat's setting", Core.Chat.db.showButton == false)
-    Click(chat)
+    local reporter = Control("Extras", "Hide the Issue Reporter")
+    check("the Issue Reporter under Extras, its own row with a line under its name; no chat copy switch (always on)",
+        reporter ~= nil and reporter.row.description ~= nil and Control("Extras", "Chat copy button") == nil)
+    -- (Rows a client does not offer are declared `hidden`: retail has no fishing or skinning ones.)
+    local classic = not Core.RETAIL
+    check("fishing, skinnable and cloth rows where the client offers them (not retail), camping on both",
+        (Control("Extras", "Double-click fishing") ~= nil) == classic and Control("Extras", "Double-click camping") ~= nil
+        and (Control("Extras", "Skinnable on tooltips") ~= nil) == classic
+        and (Control("Extras", "Cloth on tooltips") ~= nil) == classic)
     local micro = Control("Auto-hide", "Micro Menu")
     check("the micro menu under Auto-hide, a small switch like the bars', first, beside Action Bar 1",
         micro ~= nil and micro.row.description == nil
@@ -326,22 +328,75 @@ do
         end)())
 
     local first, second = list.lines[1], list.lines[2]
-    check("a line for each: icon, name and ID", first.text.text:find("Fishing") ~= nil
-        and first.text.text:find("spell 7620") ~= nil, first.text.text)
-    check("Fishing: a cooldown, no buff seen yet - the word, no choice",
+    check("a line for each: icon, the name on one line (cut short, never wrapped), the ID alone small under it",
+        first.text.text == "Fishing" and first.text.wordWrap == false and tostring(first.id.text) == "7620"
+        and first.id.points[2] == first.text and first.id.points[3] == "BOTTOMLEFT", tostring(first.text.text))
+    check("a spell with a cooldown, its buff never seen: Cooldown, said in words (no Duration that may not be)",
         not first.choice:IsShown() and first.fixed.text == "Cooldown")
-    db.tracked[1].buff = true
-    Core.Cooldowns.Refresh()
+    db.tracked[1].buff = true                 -- its buff seen on the player after a cast
     Core.RefreshOptions()
-    check("a spell with a cooldown and a buff: Cooldown, Duration or Both",
+    check("its buff seen after its cast: Cooldown, Duration or Both",
         first.choice:IsShown() and #first.choice.segments == 3
         and first.choice.segments[1].style == "active")
     Click(first.choice.segments[3])
     check("picking Both sets that spell to both", db.tracked[1].track == "both")
     Click(first.choice.segments[1])
     check("an item has no choice: the word", not second.choice:IsShown() and second.fixed.text == "Cooldown")
-    db.tracked[1].buff = nil
-    Core.Cooldowns.Refresh()
+    check("each line: Bar or Icon, a bar to start", #first.look.segments == 2
+        and first.look.segments[1].label.text == "Bar" and first.look.segments[1].style == "active")
+    Click(first.look.segments[2])
+    check("Icon picked: that one on the rings, the other still a bar",
+        db.tracked[1].display == "icon" and db.tracked[2].display == nil
+        and first.look.segments[2].style == "active" and Core.Cooldowns.iconHolder:IsShown())
+    Click(first.look.segments[1])
+    check("and back to a bar", db.tracked[1].display == nil and not Core.Cooldowns.iconHolder:IsShown())
+
+    -- (The player, 2026-10-20: "show current spec spells first, a divider, then other
+    -- added spec spells kinda disabled".)
+    check("all of this spec's: no divider, nothing dimmed", not list.divider:IsShown()
+        and first.alpha ~= 0.45 and second.alpha ~= 0.45)
+    -- The game's spellbook, as it answers on retail: the other specs' spells in it too,
+    -- marked off-spec. Fishing (7620) another spec's; 2050 (Holy Word: Serenity, no
+    -- cooldown told of out of its spec, never cast) another's too; anything else this spec's,
+    -- or not in the book (a buff or proc: 20375).
+    local OFF_SPEC = { [7620] = true, [2050] = true }
+    local wasBook = C_SpellBook
+    C_SpellBook = C_SpellBook or {}
+    local wasFind = C_SpellBook.FindSpellBookSlotForSpell
+    C_SpellBook.FindSpellBookSlotForSpell = function(id, _, _, _, includeOffSpec)
+        if OFF_SPEC[id] then return includeOffSpec and 40 or nil, includeOffSpec and 0 or nil end
+        if id ~= 20375 then return 12, 0 end
+    end
+    Core.RefreshOptions()
+    -- (The player, on Forever: "classic has no different spec structure - I DO have these".)
+    check("Forever has no specs: never grouped away, nothing dimmed, whatever the game says it knows",
+        first.index == 1 and not list.divider:IsShown() and first.alpha ~= 0.45)
+    Core.RETAIL = true
+    local height = SectionNamed("Auto-hide").top
+    Core.RefreshOptions()
+    check("this spec's first (the item), a divider, then another spec's, dimmed",
+        first.index == 2 and second.index == 1 and list.divider:IsShown()
+        and first.alpha == 1 and second.alpha == 0.45 and SectionNamed("Auto-hide").top > height,
+        tostring(first.index) .. " " .. tostring(second.alpha) .. " " .. tostring(list.divider:IsShown()))
+    check("the saved order left as it is", db.tracked[1].id == 7620 and db.tracked[2].kind == "item")
+    -- (The player: what it tracks showed wrong out of its spec.)
+    check("another spec's: no choice and no Cooldown or Duration that could be wrong - said so",
+        not second.choice:IsShown() and second.fixed:IsShown() and second.fixed.text == "Set in its spec")
+    -- (Clearcasting and the like: a buff, no spell in the book - in any spec.)
+    check("a buff or proc (not in the spellbook) is never another spec's",
+        Core.Cooldowns.IsCurrent({ kind = "spell", id = 20375 }))
+    -- (The player, 2026-10-22, in Shadow: "how come i still see holy word spell" - out of
+    -- its spec it told of no cooldown and had never been seen cast, so it passed as a proc.)
+    local baseCooldown = GetSpellBaseCooldown
+    GetSpellBaseCooldown = function() return 0 end
+    check("another spec's spell with no cooldown told of, never cast: the spellbook says another spec's",
+        not Core.Cooldowns.IsCurrent({ kind = "spell", id = 2050 }))
+    GetSpellBaseCooldown = baseCooldown
+    Core.RETAIL = false
+    C_SpellBook.FindSpellBookSlotForSpell = wasFind
+    C_SpellBook = wasBook
+    Core.RefreshOptions()
+    check("this spec's again: in its place, the divider gone", first.index == 1 and not list.divider:IsShown())
 
     Click(first.remove)
     check("the cross takes it out", #db.tracked == 1 and db.tracked[1].kind == "item")
@@ -375,6 +430,59 @@ do
     if reset.armed then pendingTimer() end
     -- (No secure click: the addon writes nothing into the game's Edit Mode.)
     check("the reset never goes through the game's Edit Mode", window.secureReset == nil)
+end
+
+Section("party targeting: a key box for next and for previous member")
+do
+    local box = Control("Party targeting", "Next party member")
+    local command = "CLICK DogsForeverUIPartyNext:LeftButton"
+    local UNBOUND = NOT_BOUND or "Not bound"
+    check("both rows there, unbound to start", box ~= nil and box.label.text == UNBOUND
+        and Control("Party targeting", "Previous party member").label.text == UNBOUND)
+    -- (The player, 2026-10-17: movement keys were bound just by pressing them with the options open.)
+    check("not clicked: taking neither keys nor wheel (setting their scripts turned both on)",
+        not box:IsKeyboardEnabled() and not box.wheelEnabled)
+    box.scripts.OnKeyDown(box, "W")
+    box.scripts.OnMouseWheel(box, 1)
+    check("and a key or the wheel reaching it binds nothing", GetBindingKey(command) == nil
+        and GetBindingAction("W") == "")
+    Click(box)
+    box.scripts.OnLeave(box)
+    for _, hook in ipairs(box.hooks.OnLeave) do hook(box) end
+    check("the mouse gone from the box: it takes no more keys",
+        not box.listening and not box:IsKeyboardEnabled() and box.label.text == UNBOUND)
+    Click(box)
+    check("clicked, it waits for a key, the keyboard taken", box.label.text == "Press a key" and box:IsKeyboardEnabled())
+    shiftDown = true
+    box.scripts.OnKeyDown(box, "LSHIFT")
+    check("a modifier alone binds nothing", box.listening and GetBindingKey(command) == nil)
+    box.scripts.OnMouseWheel(box, 1)
+    shiftDown = false
+    check("Shift+wheel up: bound to a click of the cycle button, saved into the game's bindings",
+        GetBindingKey(command) == "SHIFT-MOUSEWHEELUP" and savedBindings[1][#savedBindings[1]][2] == command
+        and box.label.text == "SHIFT-MOUSEWHEELUP" and not box:IsKeyboardEnabled())
+    SetBinding("G", "JUMP")
+    Click(box)
+    box.scripts.OnKeyDown(box, "G")
+    check("a new key replaces the old one, taken from what had it",
+        GetBindingKey(command) == "G" and select("#", GetBindingKey(command)) == 1 and GetBindingKey("JUMP") == nil)
+    local function MouseDown(mouse)
+        box.scripts.OnMouseDown(box, mouse)
+        for _, hook in ipairs(box.hooks.OnMouseDown) do hook(box, mouse) end
+    end
+    MouseDown("Button4")
+    check("a mouse button binds only while it waits", GetBindingKey(command) == "G")
+    Click(box)
+    MouseDown("Button4")
+    check("a mouse button while waiting: bound", GetBindingKey(command) == "BUTTON4")
+    Click(box)
+    box.scripts.OnKeyDown(box, "ESCAPE")
+    check("Escape clears it", GetBindingKey(command) == nil and box.label.text == "Not bound")
+    inCombat = true
+    Click(box)
+    box.scripts.OnKeyDown(box, "H")
+    check("nothing bound in combat", GetBindingKey(command) == nil and not box.listening)
+    inCombat = false
 end
 
 Section("profiles, at the end of the page")

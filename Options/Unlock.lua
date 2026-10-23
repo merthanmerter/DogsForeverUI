@@ -108,7 +108,6 @@ do -- private scope
         RefreshBar()
     end
 
-    -- Centred, just below the micro menu's place, until dragged.
     -- Centred BAR_GAP under the micro menu's default top-edge place (the Keybinds window too).
     function Unlock.PlaceUnderMicro(frame)
         local below = Unlock.BAR_GAP
@@ -119,6 +118,7 @@ do -- private scope
         frame:SetPoint("TOP", UIParent, "TOP", 0, -below)
     end
 
+    -- There until dragged.
     local function PlaceBar()
         if not bar.dragged then Unlock.PlaceUnderMicro(bar) end
     end
@@ -141,7 +141,6 @@ do -- private scope
     local function BuildBar()
         if bar then return end
         bar = NewWindow("UnlockBar", BAR_WIDTH, BAR_HEIGHT)
-        bar:SetPoint("TOP", UIParent, "TOP", 0, -8)
         bar.controls = {}
         Unlock.bar = bar
 
@@ -249,6 +248,10 @@ do -- private scope
         local Frames, Menus, Castbar, Cooldowns = Core.Frames, Core.Menus, Core.Castbar, Core.Cooldowns
         local Auras = Frames.UnitAuras
         for _, unit in ipairs({ "player", "target", "focus", "targettarget", "pet", "party" }) do
+            if unit == "party" then
+                Choice(unit, Frames, "partyLayout", "Layout", Frames.UnitPlate.LAYOUTS)
+                Choice(unit, Frames, "partySort", "Sort by", Frames.UnitPlate.SORTS)
+            end
             for _, aura in ipairs(Auras.UNITS) do
                 -- By the frame it is on: the party's Show self row is the player's unit on a party frame.
                 if (aura.plate or aura.unit) == unit or (unit == "party" and aura.key == "partyAuras") then
@@ -256,15 +259,16 @@ do -- private scope
                     break
                 end
             end
+            if unit == "party" then
+                Toggle(unit, Frames, "partyShowSelf", "Show self")
+                Toggle(unit, Frames, "partyShowPets", "Show pets")
+            end
             if unit == "target" or unit == "focus" then Toggle(unit, Frames, "showCastbar", "Castbar") end
             Toggle(unit, Frames, "showHealthText", "Health text")
             Toggle(unit, Frames, "showPowerText", "Resource text")
             Toggle(unit, Frames, "classColors", "Class colours")
             if unit == "player" then Toggle(unit, Frames, "playerDispel", "Dispel marks") end
             if unit == "party" then
-                Choice(unit, Frames, "partySort", "Sort by", Frames.UnitPlate.SORTS)
-                Toggle(unit, Frames, "partyShowSelf", "Show self")
-                Toggle(unit, Frames, "partyShowPets", "Show pets")
                 Number(unit, Frames, "partyRaidHealth", "Health height")
                 Number(unit, Frames, "partyPower", "Power height")
                 Layer(unit, Frames, "partyStrata")
@@ -283,11 +287,15 @@ do -- private scope
         Number("swing", Castbar, "swingHeight", "Height")
         Layer("swing", Castbar, "swingStrata")
         for id, module in pairs({ fsr = Core.FiveSecondRule, combo = Core.ComboPoints, xp = Core.XPBar,
-                                  cooldowns = Cooldowns, threat = Core.Threat }) do
+                                  cooldowns = Cooldowns, cooldownicons = Cooldowns, threat = Core.Threat }) do
             Layer(id, module)
         end
         Choice("cooldowns", Cooldowns, "growDirection", "Bars grow", Cooldowns.GROW)
         Toggle("cooldowns", Cooldowns, "showTooltipIDs", "IDs on tooltips")
+        Slider("cooldownicons", Cooldowns, "iconSize", "Icon size", Cooldowns.ICON_MIN, Cooldowns.ICON_MAX, 1, Whole)
+        Slider("cooldownicons", Cooldowns, "iconsPerRow", "Icons per row", 1, Cooldowns.PER_ROW_MAX, 1, Whole)
+        Choice("cooldownicons", Cooldowns, "iconGrow", "Icons grow", Cooldowns.ICON_GROW)
+        Choice("cooldownicons", Cooldowns, "iconRowsGrow", "Rows grow", Cooldowns.GROW)
         Choice("toasts", Core.LootToasts, "growDirection", "Toasts grow", Cooldowns.GROW)
         Toggle("micro", Menus, "quietMicroMenu", "Auto-hide")
         Toggle("xp", Menus, "fadeXPBar", "Auto-hide")
@@ -318,12 +326,13 @@ do -- private scope
         Slider("bags", Game, "bagsSize", "Size", Game.SIZE_MIN, Game.SIZE_MAX, 5, WholePercent)
         Slider("chat", Game, "chatWidth", "Width", Game.CHAT_MIN, Game.CHAT_MAX, 1, Whole)
         Slider("chat", Game, "chatHeight", "Height", Game.CHAT_MIN / 2, Game.CHAT_MAX, 1, Whole)
-        Toggle("chat", Core.Chat, "showButton", "Copy button")
     end
+
+    local NO_SETTINGS = {}
 
     local function OwnSettings(entry)
         if not ownSettings then BuildOwnSettings() end
-        return ownSettings[entry.opts.id or false] or {}
+        return ownSettings[entry.opts.id or false] or NO_SETTINGS
     end
 
     local function SettingRow(parent, item)
@@ -361,10 +370,14 @@ do -- private scope
         return row
     end
 
+    -- Made once per list: asked every tenth of a second while the menu shows.
     local function SettingsKey(items)
-        local parts = {}
-        for _, item in ipairs(items) do parts[#parts + 1] = item.module.key .. "." .. item.key end
-        return table.concat(parts, "|")
+        if not items.settingsKey then
+            local parts = {}
+            for _, item in ipairs(items) do parts[#parts + 1] = item.module.key .. "." .. item.key end
+            items.settingsKey = table.concat(parts, "|")
+        end
+        return items.settingsKey
     end
 
     -- The block of `entry`'s settings (pieces alike share one); nothing when none.
@@ -987,11 +1000,12 @@ do -- private scope
         LayOutBoxes()
     end
 
-    -- The selection, a pick, a match or an anchor changed.
+    -- The selection, a pick, a match or an anchor changed. A piece's menu is for it
+    -- alone: shut while more are selected.
     function Snap.SelectionChanged()
         ReopenAfterPick()
         if not (menu and menu:IsShown()) then return end
-        if Snap.SelectedEntry() ~= menu.entry then menu:Hide() else Unlock.RefreshMenu() end
+        if Snap.SelectedEntry() ~= menu.entry or Snap.SelectedMany() then menu:Hide() else Unlock.RefreshMenu() end
     end
 
     function Core.EditModeChanged()

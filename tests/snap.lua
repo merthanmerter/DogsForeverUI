@@ -345,6 +345,63 @@ do
     Clear(castbar)
 end
 
+Section("Ctrl+click selects more; they move as one")
+do
+    -- (The player, 2026-10-22.)
+    local xp = Snap.EntryById("xp").frame
+    castbar.shown, xp.shown = true, true
+    Put(castbar, 500, 300, 200, 20)
+    Put(xp, 500, 100, 300, 10)
+    Tick(0.02)
+    Press(castbar)
+    ctrlDown = true
+    Press(xp)
+    ctrlDown = false
+    Tick(0.02)
+    check("Ctrl+click: both selected, both washed; a piece's menu is for one, shut",
+        Snap.Selected() == castbar and Snap.SelectedMany() and MoverOf(castbar).wash:IsShown()
+        and MoverOf(xp).wash:IsShown() and not Unlock.menu:IsShown())
+
+    local before = saves
+    local mover = MoverOf(castbar)
+    cursorX, cursorY = 600, 310
+    mover.scripts.OnMouseDown(mover, "LeftButton")
+    MoveTo(650, 250)
+    check("dragging one drags the other the same way",
+        Near(castbar.points[4], 550) and Near(castbar.points[5], 240)
+        and Near(xp.points[4], 550) and Near(xp.points[5], 40),
+        string.format("%s,%s %s,%s", tostring(castbar.points[4]), tostring(castbar.points[5]),
+            tostring(xp.points[4]), tostring(xp.points[5])))
+    MoveTo(650, 160)
+    check("the group kept on screen whole: stopped where the lower one meets the edge",
+        Near(xp.points[5], BORDER) and Near(castbar.points[5], 200 + BORDER),
+        string.format("%s %s", tostring(castbar.points[5]), tostring(xp.points[5])))
+    MoveTo(650, 250)
+    -- (The xp bar right under it, its left edge level: alone, the castbar would snap to it.)
+    check("never snapped to one moving with it", MoverOf(xp).snapping ~= true)
+    mover.scripts.OnMouseUp(mover, "LeftButton")
+    check("let go: each saved, both still selected", saves >= before + 2 and Snap.SelectedMany())
+
+    local keys = Snap.keys
+    keys.scripts.OnKeyDown(keys, "UP")
+    check("the arrow keys move them all", Near(castbar.points[5], 241) and Near(xp.points[5], 41),
+        string.format("%s %s", tostring(castbar.points[5]), tostring(xp.points[5])))
+
+    ctrlDown = true
+    Press(xp)
+    ctrlDown = false
+    check("Ctrl+click on one of them: that one let go of", Snap.Selected() == castbar and not Snap.SelectedMany())
+    ctrlDown = true
+    Press(xp)
+    ctrlDown = false
+    Press(xp)
+    check("a plain click: that one alone", Snap.Selected() == xp and not Snap.SelectedMany())
+    Snap.Deselect()
+    Core.RevertEditMode()
+    Clear(castbar)
+    Clear(xp)
+end
+
 Section("a mover over every piece, EllesmereUI's, in the addon's look")
 do
     castbar.shown = true
@@ -946,6 +1003,39 @@ do
     check("pieces that only hung from another for having been dropped beside it: let go",
         fresh.snaps.cooldowns == nil and fresh.snaps.pet == nil)
     check("none to the game's frames", fresh.snaps.loot == nil)
+end
+
+Section("a chain of anchors, one module's: settles, and is no edit of the player's")
+do
+    -- The following needs real places to follow.
+    local undo = PlaceByPoints()
+
+    local C = DogsForeverUI
+    local S, cooldowns = C.Snap, C.Cooldowns
+    local player = C.Frames.plates.player
+    player:ClearAllPoints()
+    player:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 800, -900)
+    cooldowns.Refresh()
+    -- Your retail character's: the bars over the player frame, the icons over the bars,
+    -- the bars saved a few units off where their anchor holds them.
+    S.AnchorHere(S.EntryOf(cooldowns.holder), S.EntryOf(player))
+    S.AnchorHere(S.EntryOf(cooldowns.iconHolder), S.EntryOf(cooldowns.holder))
+    for _ = 1, 3 do Tick(0.05) end
+    cooldowns.db.barLeft = cooldowns.db.barLeft - 8
+    cooldowns.Refresh()
+    C.SetUnlocked(true)
+    local lefts = {}
+    for i = 1, 20 do
+        Tick(0.05)
+        lefts[i] = cooldowns.holder:GetLeft()
+    end
+    local still = true
+    for i = 11, 20 do still = still and Near(lefts[i], lefts[10]) end
+    check("the bars settle where their anchor holds them, no shaking", still and Near(cooldowns.db.barLeft, lefts[20]),
+        table.concat(lefts, " "))
+    check("following asks nothing: no unsaved change", not C.EditModePending())
+    C.SetUnlocked(false)
+    undo()
 end
 
 Summary()

@@ -305,9 +305,9 @@ do -- private scope
             NS.BagsBar:Apply()      -- first: its bag button is in the micro menu's row
             NS.MicroMenu:Apply()
             Bars:Apply()
-            NS.BagSort:Apply()
-        elseif event == "ADDON_LOADED" and name ~= REPORTER_ADDON then
-            return
+        elseif event == "ADDON_LOADED" then
+            if name ~= REPORTER_ADDON then return end
+            events:UnregisterEvent("ADDON_LOADED")
         end
         RefreshReporter()
     end)

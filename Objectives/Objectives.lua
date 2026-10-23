@@ -205,7 +205,21 @@ do -- private scope
 
     local ITEM_TEMPLATE = "QuestObjectiveItemButtonTemplate"
 
+    -- The highest frame level under `frame`, `skip` left out.
+    local function TopLevel(frame, skip)
+        local top = frame:GetFrameLevel()
+        for _, child in ipairs({ frame:GetChildren() }) do
+            if child ~= skip then top = math.max(top, TopLevel(child, skip)) end
+        end
+        return top
+    end
+
     local function SkinModule(module)
+        -- The scenario's find-group eye: the game makes it after the banner's
+        -- widgets, which draw over it. Over the highest of them.
+        local stage = module.StageBlock
+        local eye = stage and stage.findGroupButton
+        if eye then eye:SetFrameLevel(TopLevel(stage, eye) + 1) end
         for _, blocks in pairs(module.usedBlocks or NONE) do
             for _, block in pairs(blocks) do SkinBlock(block) end
         end
@@ -312,7 +326,7 @@ do -- private scope
         if tracker.Selection then tracker.Selection:HookScript("OnShow", FitEditBox) end
         tracker:HookScript("OnSizeChanged", FitEditBox)
         box:SetScript("OnSizeChanged", FitEditBox)
-        hooksecurefunc(tracker, "UpdateHeaderPosition", FitEditBox)
+        if tracker.UpdateHeaderPosition then hooksecurefunc(tracker, "UpdateHeaderPosition", FitEditBox) end
         FitEditBox()
     end
 
@@ -518,8 +532,11 @@ do -- private scope
         for i = shown + 1, #made do made[i]:Hide() end
     end
 
-    hooksecurefunc("QuestInfo_Display", function(template)
-        local read = template.questLog and Rewards or template == QUEST_TEMPLATE_REWARD and HandInRewards or nil
-        PlaceRewards(QuestInfoFrame.rewardsFrame, template, read)
-    end)
+    -- Forever's only: retail has no such reads, its own rows showing its (renown) reputations.
+    if not Core.RETAIL then
+        hooksecurefunc("QuestInfo_Display", function(template)
+            local read = template.questLog and Rewards or template == QUEST_TEMPLATE_REWARD and HandInRewards or nil
+            PlaceRewards(QuestInfoFrame.rewardsFrame, template, read)
+        end)
+    end
 end

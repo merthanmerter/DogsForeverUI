@@ -115,7 +115,8 @@ do -- private scope
     -- landing); until then its length (FlightRoutes.lua) over the taxi's speed,
     -- EllesmereUI's method; a route missing there says "Collecting time".
     -- Frequent Flier flies 20% faster: times are kept without it. Shared by
-    -- the account (DogsForeverUIFlights); a /reload in the air carries on.
+    -- the account (DogsForeverUIFlights, a file per install: Forever's times
+    -- and retail's never mix); a /reload in the air carries on.
     ---------------------------------------------------------------------------
 
     local TIMER_WIDTH, TIMER_HEIGHT = 206, 32   -- MirrorTimerTemplate: the container with one timer
@@ -124,7 +125,7 @@ do -- private scope
     -- Yards a second, EllesmereUI's fit to Classic flight times; a flight more
     -- than a third off it is bad data, not a speed.
     local SPEED, SPEED_STEP = 30.4, 0.25
-    -- Frequent Flier: node 110300 of the Adventure Legacy tree (1188).
+    -- Frequent Flier: node 110300 of WoW Forever's Adventure Legacy tree (1188); retail has none.
     local LEGACY_TREE, FREQUENT_FLIER, FLIER_BONUS = 1188, 110300, 1.2
 
     -- { routes = { ["From > To"] = seconds without Frequent Flier }, speed,
@@ -140,7 +141,7 @@ do -- private scope
     local lastHere
 
     local function FrequentFlier()
-        local config = C_Traits.GetConfigIDByTreeID(LEGACY_TREE)
+        local config = not DogsForeverUI.RETAIL and C_Traits.GetConfigIDByTreeID(LEGACY_TREE)
         local node = config and C_Traits.GetNodeInfo(config, FREQUENT_FLIER)
         return node and (node.activeRank or 0) > 0 and FLIER_BONUS or 1
     end

@@ -213,4 +213,61 @@ DogsForeverUI:Reset("fsr")
 check("a reset puts it back in its row over the castbar, wherever that is now (placed there once again)",
     DB.placed == true and InItsRow())
 
+Section("retail")
+-- Retail has no five-second rule: the same bar is the secondary power the
+-- game's player frame shows as its second bar, in that power's colour.
+do
+    WOW_PROJECT_ID = WOW_PROJECT_MAINLINE
+    -- (Blizzard_UnitFrame's, mainline: the second bar a spec shows, if any.)
+    local second
+    GetUnitSecondaryPowerInfo = function() if second then return second, "MANA" end end
+    local ok, err = pcall(function()
+        Reload(nil)
+        Login()
+    end)
+    check("the addon loads and logs in with no error", ok, tostring(err))
+    local rNS = DogsForeverUI.FiveSecondRule
+    check("a holy priest (no second power): no row kept for it", rNS.ClassHasMana() == false)
+    Spend(1)
+    Tick(0.1)
+    check("spending mana shows no countdown", rNS.bar:IsShown() == false)
+    DogsForeverUI.SetUnlocked(true)
+    check("nor does Unlock Mode: nothing to place", rNS.bar:IsShown() == false)
+    DogsForeverUI.SetUnlocked(false)
+    check("its settings are kept all the same", rNS.db.barWidth ~= nil and rNS.db.sized == true)
+
+    -- Shadow form: insanity the player's own power, the game's second bar
+    -- mana - which goes under the player's health; insanity comes here.
+    second = Enum.PowerType.Mana
+    PowerBarColor.INSANITY = { r = 0.4, g = 0, b = 0.8 }
+    units.player.powerToken = "INSANITY"
+    Fire("UNIT_DISPLAYPOWER", "player")
+    check("shadow: insanity's bar in its place, shown", rNS.ClassHasMana() and rNS.bar:IsShown())
+    check("in insanity's colour", rNS.bar.statusColor and rNS.bar.statusColor[1] == 0.4
+        and rNS.bar.statusColor[3] == 0.8)
+    check("its count alone, no share repeating it", rNS.bar.label.text ~= "" and not rNS.bar.label.text:find("%", 1, true))
+    check("centred, as the unit frames' health and power", rNS.bar.label.justifyH == "CENTER")
+    -- (The player, 2026-10-20, after hiding it at 0 kept going wrong: "just remove the
+    -- hiding logic".) Shown whatever its count, in a fight or out of one.
+    local had = units.player.power
+    units.player.power = 0
+    Fire("UNIT_POWER_FREQUENT", "player", "INSANITY")
+    Tick(1)
+    check("at 0, out of a fight: shown all the same", rNS.bar:IsShown() and rNS.bar.alpha == 1)
+    units.player.power = SecretCastValue("insanity")
+    local ok, err = pcall(Fire, "UNIT_POWER_FREQUENT", "player", "INSANITY")
+    check("a secret count: shown, nothing made from it, no error", ok and rNS.bar:IsShown()
+        and rNS.bar.alpha == 1, tostring(err))
+    units.player.power = had
+    local player = DogsForeverUI.Frames.plates.player
+    player:Refresh()
+    local mana = DogsForeverUI.Style.MANA_COLOR
+    check("and the player's power bar under health shows the mana",
+        player.power.statusColor and player.power.statusColor[1] == mana[1] and player.power.statusColor[3] == mana[3])
+    units.player.powerToken, PowerBarColor.INSANITY = nil, nil
+    second = nil
+    Fire("PLAYER_SPECIALIZATION_CHANGED")
+    check("a spec with none: gone", rNS.bar:IsShown() == false)
+end
+
 Summary()

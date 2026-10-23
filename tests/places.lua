@@ -59,6 +59,20 @@ local function At(id, left, bottom)
     local frame = F(id)
     return Near(frame.left, left) and Near(frame.bottom, bottom)
 end
+-- The cooldown icons' place (the player, 2026-10-22): centred on the screen, the
+-- first row a row's gap over the secondary power's saved place, anchored to nothing.
+local function OverThePower()
+    local castbar, icons = Core.Castbar, F("cooldownicons")
+    local _, _, top = castbar.RowPlace(Core.FiveSecondRule)
+    return Near(icons.left + icons.width / 2, 960)
+        and Near(icons.bottom, 1080 + top + castbar.STACK_GAP)
+        and Snap.LinkOf(Snap.EntryById("cooldownicons")) == nil
+end
+-- The loot toasts' place (the player, 2026-10-22): over the chat, left edges level, 10 clear of it.
+local function OverTheChat()
+    local chat = Snap.Box(Snap.EntryById("chat"))
+    return At("toasts", chat.l + BORDER, chat.t + 10 + BORDER) and Snap.LinkOf(Snap.EntryById("toasts")) == nil
+end
 local function HangsFrom(id, to)
     local link = Snap.LinkOf(Snap.EntryById(id))
     return link ~= nil and link.to == to
@@ -76,6 +90,7 @@ local function Scatter()
     for _, id in ipairs({ "bar6", "bar7", "bar8" }) do Put(F(id), 900, 600, 36, 440) end
     Put(F("xp"), 10, 900, 600, 10)
     Put(F("cooldowns"), 50, 50, 300, 40)
+    Put(F("cooldownicons"), 900, 900, 32, 32)
     Put(F("threat"), 1500, 50, 150, 20)
     Put(F("castbar"), 70, 80, 250, 20)
     Put(F("pet"), 600, 240, 100, 30)
@@ -88,6 +103,7 @@ local function Scatter()
     Put(F("tooltip"), 500, 500, 250, 150)
     Put(F("toasts"), 800, 800, 260, 28)
     Put(F("party"), 3, 700, 120, 33)
+    Put(F("extra"), 300, 600, 32, 32)
     db.snaps = {}
     db.defaultPlaces = nil
 end
@@ -168,9 +184,12 @@ do
         At("stance", 740, 356 + BORDER) and HangsFrom("stance", "bar1"))
     -- Action Bar 2's box bottom: 275 - 3.
     -- (Its own size: the repair laid it out again.)
-    local pet = F("petbar")
-    check("the pet bar snapped under Action Bar 2, centred on it, anchored to it",
-        At("petbar", 960 - pet.width / 2, 272 - BORDER - pet.height) and HangsFrom("petbar", "bar2"))
+    -- (The player, 2026-10-22: two rows of 24, under the pet frame, level with Action Bar 2's bottom.)
+    local pet = Snap.Box(Snap.EntryById("pet"))
+    check("the pet bar two rows of 24, its left the pet frame's, its bottom Action Bar 2's, anchored to the pet frame",
+        At("petbar", pet.l + BORDER, 272 + BORDER) and HangsFrom("petbar", "pet")
+        and Bars.db.petRows == 2 and Bars.db.petSize == 24,
+        tostring(F("petbar").left) .. "," .. tostring(F("petbar").bottom))
     check("the minimap snapped into the screen's top right corner",
         At("minimap", 1920 - BORDER - 200, 1080 - BORDER - 200))
     check("the micro menu centred, snapped to the top of the screen",
@@ -185,9 +204,8 @@ do
         and Near(ChatFrame1:GetHeight(), 200 - 2 * look.PAD - look.TOP_ROOM),
         tostring(ChatFrame1:GetWidth()) .. "x" .. tostring(ChatFrame1:GetHeight()))
     check("15 in from the bottom left corner", At("chat", gap + BORDER, gap + BORDER))
-    check("the loot toasts over the focus frame, left edges level, bottom level with the cooldowns', anchored to nothing",
-        At("toasts", F("focus").left, F("cooldowns").bottom) and Snap.LinkOf(Snap.EntryById("toasts")) == nil,
-        tostring(F("toasts").left) .. "," .. tostring(F("toasts").bottom))
+    check("the loot toasts over the chat, left edges level, 10 clear of it, anchored to nothing",
+        OverTheChat(), tostring(F("toasts").left) .. "," .. tostring(F("toasts").bottom))
     check("the tooltip 15 in from the bottom right corner, anchored to nothing",
         At("tooltip", 1920 - gap - BORDER - 250, gap + BORDER) and Snap.LinkOf(Snap.EntryById("tooltip")) == nil,
         tostring(F("tooltip").left) .. "," .. tostring(F("tooltip").bottom))
@@ -214,8 +232,58 @@ do
     local castbarTop = 1080 * (1 - 830 / 1200)
     check("the castbar centred left to right, at its own default height",
         At("castbar", 960 - 125, castbarTop - 20), tostring(F("castbar").left) .. "," .. tostring(F("castbar").bottom))
+    do
+        -- (The player, 2026-10-22: its middle on Action Bar 1's bottom edge.)
+        local bar, extra = Snap.Box(Snap.EntryById("bar1")), Core.GameFrames.db
+        check("the extra action button's middle on Action Bar 1's bottom edge, centred under it, anchored to nothing",
+            Near(extra.extraLeft, bar.cx - F("extra"):GetWidth() / 2)
+            and Near(extra.extraTop, bar.b + F("extra"):GetHeight() / 2 - 1080)
+            and Snap.LinkOf(Snap.EntryById("extra")) == nil,
+            tostring(extra.extraLeft) .. "," .. tostring(extra.extraTop))
+    end
     check("the cooldowns at the player frame's X, level with the castbar (tops level)",
         At("cooldowns", 506, castbarTop - 40), tostring(F("cooldowns").left) .. "," .. tostring(F("cooldowns").bottom))
+    check("the cooldown icons centred on the screen, a row's gap over the secondary power, anchored to nothing",
+        OverThePower(), tostring(F("cooldownicons").left) .. "," .. tostring(F("cooldownicons").bottom))
+    -- (The player, 2026-10-20: icons pushed as bars showed was wrong - they may
+    -- be anywhere. Anchored to the bars, they hang from them at their tallest.)
+    local undo = PlaceByPoints()
+    local bars, icons = Snap.EntryById("cooldowns"), Snap.EntryById("cooldownicons")
+    local listed, reached, holder = bars.opts.parts, bars.opts.reach, F("cooldowns")
+    local up, down, barsTop = 0, 0, holder.top
+    bars.opts.parts = function() return {} end
+    bars.opts.reach = function() return up, down end
+    Put(F("cooldownicons"), holder.left, holder.top + 20, 26, 26)
+    Snap.AnchorHere(icons, bars)
+    local was = F("cooldownicons").bottom
+    local row = CreateFrame("Frame", nil, UIParent)
+    Put(row, holder.left, holder.top + 6, holder.width, 20)
+    bars.opts.parts = function() return { row } end
+    Tick(0.05)
+    check("a bar more showing moves them not at all", Near(F("cooldownicons").bottom, was),
+        tostring(F("cooldownicons").bottom))
+    up = 52
+    Tick(0.05)
+    check("a bar more tracked: over the bars at their tallest", Near(F("cooldownicons").bottom, was + 52),
+        tostring(F("cooldownicons").bottom))
+    check("the bars themselves not moved by it (they hang from the player frame by their top)",
+        Near(holder.top, barsTop), tostring(holder.top))
+    up = 0
+    Tick(0.05)
+    check("one fewer: down again", Near(F("cooldownicons").bottom, was), tostring(F("cooldownicons").bottom))
+    -- Under bars that grow down: the same, downwards.
+    Snap.Unanchor(icons)
+    Put(F("cooldownicons"), holder.left, holder.bottom - 46, 26, 26)
+    Snap.AnchorHere(icons, bars)
+    was = F("cooldownicons").bottom
+    down = 52
+    Tick(0.05)
+    check("under bars growing down: under them at their tallest", Near(F("cooldownicons").bottom, was - 52),
+        tostring(F("cooldownicons").bottom))
+    down = 0
+    Tick(0.05)
+    bars.opts.parts, bars.opts.reach = listed, reached
+    undo()
     check("the threat bar the same at the target frame's X, anchored to it",
         At("threat", bar1Right + 28 + BORDER, castbarTop - 20) and HangsFrom("threat", "target"),
         tostring(F("threat").left) .. "," .. tostring(F("threat").bottom))
@@ -388,26 +456,73 @@ do
     Put(F("toasts"), 800, 800, 260, 28)
     db.defaultPlaces = 19
     Places.Update()
-    check("from 19: the loot toasts placed; the tooltip left",
-        At("toasts", F("focus").left, F("cooldowns").bottom) and At("tooltip", 500, 500))
+    check("from 19: the loot toasts placed; the tooltip left", OverTheChat() and At("tooltip", 500, 500))
 
     -- One on version 20: the loot toasts over the chat, anchored to it.
     Put(F("toasts"), 800, 800, 260, 28)
     db.snaps.toasts = { to = "chat", point = "BOTTOMLEFT", rel = "TOPLEFT", x = 0, y = 15, explicit = true }
     db.defaultPlaces = 20
     Places.Update()
-    check("from 20: the loot toasts let go of the chat, over the focus frame, anchored to nothing",
-        At("toasts", F("focus").left, F("cooldowns").bottom) and Snap.LinkOf(Snap.EntryById("toasts")) == nil
-        and At("tooltip", 500, 500), tostring(F("toasts").left) .. "," .. tostring(F("toasts").bottom))
+    check("from 20: the loot toasts let go of the chat, over it, anchored to nothing",
+        OverTheChat() and At("tooltip", 500, 500), tostring(F("toasts").left) .. "," .. tostring(F("toasts").bottom))
 
     -- One on version 21: the loot toasts anchored to the focus frame.
     Put(F("toasts"), 800, 800, 260, 28)
     db.snaps.toasts = { to = "focus", point = "BOTTOMLEFT", rel = "TOPLEFT", x = 0, y = 15, explicit = true }
     db.defaultPlaces = 21
     Places.Update()
-    check("from 21: the loot toasts let go of the focus frame, where they are",
-        Snap.LinkOf(Snap.EntryById("toasts")) == nil and At("toasts", 800, 800),
-        tostring(F("toasts").left) .. "," .. tostring(F("toasts").bottom))
+    check("from 21: the loot toasts let go of the focus frame, over the chat by version 33",
+        OverTheChat(), tostring(F("toasts").left) .. "," .. tostring(F("toasts").bottom))
+
+    -- One on version 22: the cooldown icons with their first defaults, under the character.
+    local cooldowns = Core.Cooldowns.db
+    Put(F("cooldownicons"), 900, 900, 32, 32)
+    cooldowns.iconSize, cooldowns.iconsPerRow = 30, 8
+    db.defaultPlaces = 22
+    Places.Update()
+    check("from 22: the cooldown icons over the secondary power, 32 across, 5 to a row",
+        OverThePower() and cooldowns.iconSize == 32 and cooldowns.iconsPerRow == 5,
+        tostring(F("cooldownicons").left) .. "," .. tostring(F("cooldownicons").bottom))
+
+    -- One on version 30: the icons hanging from the bars, growing rightward (the old default).
+    Put(F("cooldownicons"), 900, 900, 32, 32)
+    Snap.AnchorHere(Snap.EntryById("cooldownicons"), Snap.EntryById("cooldowns"))
+    cooldowns.iconGrow = "right"
+    db.defaultPlaces = 30
+    Places.Update()
+    check("from 30: the icons let go of the bars, over the secondary power, growing both sides",
+        OverThePower() and cooldowns.iconGrow == "center",
+        tostring(F("cooldownicons").left) .. "," .. tostring(F("cooldownicons").bottom))
+    cooldowns.iconGrow = "left"
+    db.defaultPlaces = 30
+    Places.Update()
+    check("one the player turned leftward stays leftward", cooldowns.iconGrow == "left")
+
+    -- One on version 34 or 35: the icons at an old default, 26 or 30 across - and one sized
+    -- by the player. (The player, 2026-10-23: 32.)
+    for _, old in ipairs({ 26, 30 }) do
+        cooldowns.iconSize = old
+        db.defaultPlaces = 34
+        Places.Update()
+        check("icons at the old default " .. old .. " across: 32 now", cooldowns.iconSize == 32)
+    end
+    cooldowns.iconSize = 40
+    db.defaultPlaces = 34
+    Places.Update()
+    check("one the player sized stays", cooldowns.iconSize == 40)
+    cooldowns.iconSize = 32
+
+    -- One on version 31: the pet bar one row of 20 under Action Bar 2, anchored to it.
+    Bars.db.petRows, Bars.db.petSize = 1, 20
+    Put(F("petbar"), 900, 200, 200, 20)
+    Snap.AnchorHere(Snap.EntryById("petbar"), Snap.EntryById("bar2"))
+    db.defaultPlaces = 31
+    Places.Update()
+    local petBox, bar2Box = Snap.Box(Snap.EntryById("pet")), Snap.Box(Snap.EntryById("bar2"))
+    check("from 31: the pet bar two rows of 24, under the pet frame, level with Action Bar 2's bottom, anchored to the pet frame",
+        Bars.db.petRows == 2 and Bars.db.petSize == 24 and HangsFrom("petbar", "pet")
+        and At("petbar", petBox.l + BORDER, bar2Box.b + BORDER),
+        tostring(F("petbar").left) .. "," .. tostring(F("petbar").bottom))
 end
 
 Bars.LayOutAll = LayOutAll

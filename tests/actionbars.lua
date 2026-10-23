@@ -11,11 +11,13 @@ LoadAddon()
 local Core = DogsForeverUI
 local Bars = Core.ActionBars
 local Snap = Core.Snap
+local extraButton = ExtraActionButton1     -- the game's, as the addon loaded (a later section fakes another)
 
 Section("the game's bars, out of sight as the addon loads")
 do
     check("the game's bar 1 kept where it is, at no opacity, taking no mouse",
         MainActionBar.alpha == 0 and MainActionBar.mouse == false and MainActionBar.parent ~= Bars.hidden)
+    check("its Leave Vehicle button still seen", MainActionBar.VehicleLeaveButton.ignoreParentAlpha == true)
     local all = true
     for _, name in ipairs({ "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft",
                             "MultiBar5", "MultiBar6", "MultiBar7" }) do
@@ -72,6 +74,7 @@ do
     local driver = stateDriverStrings[frame].page
     check("the vehicle, override and possess bars first",
         driver:find("^%[overridebar%] 14; %[vehicleui%]%[possessbar%] 12") ~= nil, driver)
+    check("no retail quest shapeshift page on Forever", driver:find("shapeshift", 1, true) == nil, driver)
     check("then the page keys, every stance or form (6 + its offset), skyriding, then 1",
         driver:find("%[bar:6%] 6") and driver:find("%[bonusbar:1%] 7") and driver:find("%[bonusbar:4%] 10")
         and driver:find("%[bonusbar:5%] 11; 1$"))
@@ -96,35 +99,22 @@ do
     Bars.Ready()        -- (a second after the world is up: C_Timer.After(1, Bars.Ready))
     local frame = _G.DogsForeverUIActionBar1
     check("placed once the game's bars are laid out", DB.bar1Placed == true and frame.points[1] == "TOPLEFT")
-    -- THE FORCED BUTTON SIZE, as before the addon had bars of its own: the
-    -- action bars at 80% of the game's button, the stance bar 100%; the pet
-    -- bar 20 of its own (the player, 2026-10-03).
-    check("restored once as the game's bars are laid out", DB.sizesRestored == true
-        and DB.stanceSize == 30 and DB.petSize == 20 and DB.fixedSizes == true)
+    -- THE SAME SIZES FOR EVERYONE: never the game's own bars' Icon Size,
+    -- which differs between clients and players.
+    check("by default: 36 for the action bars, 30 for the stance bar, 20 for the pet bar",
+        Bars.defaults.bar1Size == 36 and Bars.defaults.stanceSize == 30 and Bars.defaults.petSize == 20)
+    check("laid out at them", DB.bar1Size == 36 and DB.stanceSize == 30 and DB.petSize == 20)
     local stanceButton = StanceBar.actionButtons[1] or StanceButton1
     StanceBar.actionButtons[1] = stanceButton
     stanceButton.container = { GetScale = function() return 1.2 end }   -- Edit Mode's Icon Size: 120%
-    Bars.Seed(Bars.byKey.stance)
-    local first = DB.stanceSize
-    Bars.Seed(Bars.byKey.stance)
-    check("the stance bar: the game's button at Icon Size, 100% - and the same however often",
-        first == 36 and DB.stanceSize == 36)
     local gameButton = MultiBarBottomLeft.actionButtons[1]
-    if gameButton then
-        gameButton.left, gameButton.right, gameButton.top, gameButton.bottom = 100, 150, 200, 150
-        Bars.Seed(Bars.byKey.bar2)
-        check("an action bar: 80% of the game's button", DB.bar2Size == 40)
-    end
-    check("by default: 36 for the action bars, 30 for the stance bar, 20 for the pet bar",
-        Bars.defaults.bar1Size == 36 and Bars.defaults.stanceSize == 30 and Bars.defaults.petSize == 20)
-    DB.petSize = 33
+    if gameButton then gameButton.left, gameButton.right, gameButton.top, gameButton.bottom = 100, 150, 200, 150 end
+    DB.bar2Size, DB.stanceSize, DB.petSize = 50, 50, 33
+    Bars.Seed(Bars.byKey.bar2)
+    Bars.Seed(Bars.byKey.stance)
     Bars.Seed(Bars.byKey.pet)
-    check("the pet bar's first place: 20, whatever the game's", DB.petSize == 20)
-    DB.sizesRestored, DB.fixedSizes = false, false
-    DB.bar7Size, DB.petSize = 20, 19
-    Bars.Ready()
-    check("a character from before: every bar's size back to it once",
-        DB.sizesRestored == true and DB.fixedSizes == true and DB.petSize == 20 and DB.bar7Size ~= 20)
+    check("a first place (or Reset Position): the default size, whatever the game's buttons",
+        DB.bar2Size == 36 and DB.stanceSize == 30 and DB.petSize == 20)
     DB.petSize = 26
     Bars.Ready()
     check("a size chosen afterwards stays", DB.petSize == 26)
@@ -293,7 +283,7 @@ do
         IsEquippedAction = function() return false end,
         GetActionCooldown = function(slot) return { isActive = cooldowns[slot] ~= nil } end,
         GetActionCooldownDuration = function(slot) return cooldowns[slot] end,
-        GetActionCharges = function() return nil end,
+        GetActionCharges = function(slot) return actionSlots[slot] and actionSlots[slot].charges end,
         GetActionChargeDuration = function() return nil end,
         GetActionLossOfControlCooldownInfo = function() return nil end,
         GetActionLossOfControlCooldownDuration = function() return nil end,
@@ -309,12 +299,48 @@ do
     Tick(0)
     check("a slot changed: its icon, its count", button.icon.texture == 135274 and button.icon.shown ~= false
         and button.Count.text == "5")
+    -- (The player, 2026-10-21, Midnight: a proc glow errored on "AssistedCombatRotationFrame
+    -- (a nil value)"; a rotation frame made for our button then refreshed it tainted - and a
+    -- stand-in field tainted every page change: "secret values only allowed ...", by the hundred.)
+    check("no rotation frame of ours on the button, nothing the game's refresh would read",
+        rawget(button, "AssistedCombatRotationFrame") == nil)
+    local wasAssisted = C_ActionBar.IsAssistedCombatAction
+    C_ActionBar.IsAssistedCombatAction = function(slot) return slot == 2 end
+    Fire("ACTIONBAR_SLOT_CHANGED", 2)
+    Tick(0)
+    check("holding the one-button rotation action: no proc glow events (the game would error)",
+        not button.events.SPELL_ACTIVATION_OVERLAY_GLOW_SHOW and not button.events.SPELL_ACTIVATION_OVERLAY_GLOW_HIDE)
+    C_ActionBar.IsAssistedCombatAction = wasAssisted
+    Fire("ACTIONBAR_SLOT_CHANGED", 2)
+    Tick(0)
+    check("an ordinary spell there again: its glow events back", button.events.SPELL_ACTIVATION_OVERLAY_GLOW_SHOW
+        and button.events.SPELL_ACTIVATION_OVERLAY_GLOW_HIDE)
     check("its cooldown from the client's duration object", button.cooldown.durationObject == cooldowns[2])
     cooldowns[2] = nil
     Fire("ACTIONBAR_UPDATE_COOLDOWN")
     Fire("SPELL_UPDATE_COOLDOWN")
     Tick(0)
     check("the cooldowns changed: cleared, once a frame", button.cooldown.durationObject == nil)
+    -- (The player, 2026-10-20: a full stack's count went missing.)
+    actionSlots[2].count = "2"
+    Fire("ACTIONBAR_UPDATE_COOLDOWN")
+    Tick(0)
+    check("a charge back - a full stack - comes as a cooldown: its count with it", button.Count.text == "2")
+    actionSlots[2].count = "3"
+    Fire("SPELL_UPDATE_USES", 123)
+    Tick(0)
+    check("a use count's own event too", button.Count.text == "3")
+    -- (Live retail gives no display count for a spell's charges once all are back.)
+    actionSlots[2].count = ""
+    actionSlots[2].charges = { currentCharges = 2, maxCharges = 2, isActive = false }
+    Fire("SPELL_UPDATE_CHARGES")
+    Tick(0)
+    check("all charges back, the client's count empty: the charges shown", button.Count.text == 2)
+    actionSlots[2].charges = { currentCharges = 1, maxCharges = 1, isActive = false }
+    Fire("SPELL_UPDATE_CHARGES")
+    Tick(0)
+    check("a spell of one charge: nothing", button.Count.text == "")
+    actionSlots[2].charges = nil
     actionSlots[2] = nil
     Fire("ACTIONBAR_SLOT_CHANGED", 2)
     Tick(0)
@@ -327,6 +353,7 @@ do
         local b = CreateFrame("Button", name, UIParent)
         b.cooldown = CreateFrame("Cooldown", nil, b)
         b.HotKey = b:CreateFontString(nil, "ARTWORK", "NumberFontNormalSmallGray")
+        b.Count = b:CreateFontString(nil, "ARTWORK", "NumberFontNormal")
         b:SetAttribute("action", slot)
         return b
     end
@@ -433,15 +460,45 @@ do
     check("the extra action button a piece, named", entry and entry.opts.name == "Extra Action Button")
     local holder = Game.places.extra
     -- (No field written onto it: those tainted the game's Edit Mode.)
+    -- (The player, 2026-10-20: "same size as the hotbars", after larger, smaller
+    -- and round tries.) In a frame of the addon's scaled to Action Bar 1's
+    -- buttons, the game's own scale (its Edit Mode's size) left on it and undone.
+    local scaler = ExtraAbilityContainer.parentFrame
+    local onScreen = Bars.ButtonSize("bar1") / 52
     check("the game's container moved into a holder of the addon's, no field of it written",
-        ExtraAbilityContainer.parentFrame == holder and ExtraAbilityContainer.ignoreFramePositionManager == nil
+        scaler ~= nil and scaler.parent == holder and ExtraAbilityContainer.ignoreFramePositionManager == nil
         and ExtraAbilityContainer.ignoreInLayout == nil)
+    check("Action Bar 1's buttons' size, the game's own scale untouched",
+        math.abs(scaler.scale - onScreen) < 1e-9 and ExtraAbilityContainer:GetScale() == 1
+        and math.abs(holder.width - 64 * onScreen) < 1e-9)
+    DB.bar1Size = 44
+    Bars.LayOutAll()
+    check("Action Bar 1 resized: the button with it", math.abs(scaler.scale - 44 / 52) < 1e-9)
+    -- (The player, 2026-10-20, after the game's frame, the hotbars' and a round
+    -- one: "make it square again ... bordered like our frames ... add the
+    -- effect behind it back".)
+    local icon, border = extraButton.icon, nil
+    for _, child in ipairs({ extraButton:GetChildren() }) do
+        if child.spec == Core.Style.DEFAULT_BORDER then border = child end
+    end
+    check("square in our frames' border: the icon whole and cropped, the game's mask off",
+        border ~= nil and icon.mask == nil and icon.texCoord and icon.texCoord[1] == 0.08)
+    -- (The player: "when hovered the hover is square??" - the game's is a rim.)
+    local hover, press = extraButton.HighlightTexture, extraButton.PushedTexture
+    check("its hover and press the hotbars' flat washes",
+        hover.texture == Core.Style.FLAT_TEXTURE and press.texture == Core.Style.FLAT_TEXTURE)
+    check("the game's skin art (its effects) behind the button: on the bar under it, shown",
+        extraButton.style.parent == ExtraActionBarFrame and extraButton.style.alpha ~= 0)
+    check("its key and count over the icon", extraButton.HotKey.layer == "OVERLAY"
+        and extraButton.Count.layer == "OVERLAY")
+    DB.bar1Size = 36
+    Bars.LayOutAll()
     check("and out of the game's Edit Mode", ExtraAbilityContainer.isLocked == nil
         and Core.IsHeld(ExtraAbilityContainer))
     ExtraAbilityContainer:SetParent(UIParent)
-    check("taken back by the game: put in its holder again", ExtraAbilityContainer.parentFrame == holder)
+    check("taken back by the game: put in its holder again", ExtraAbilityContainer.parentFrame == scaler)
     Game.Ready()
-    check("its first place, above the action bars", Game.db.extraPlaced == true
+    check("its first place, on Action Bar 1's bottom edge", Game.db.extraPlaced == true
         and holder.points[1] == "TOPLEFT")
 end
 

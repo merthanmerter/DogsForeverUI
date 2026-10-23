@@ -27,10 +27,8 @@ do -- private scope
     local SCANS = 5                 -- looks after an addon loads or a login
     local EDGE = 0.75               -- out from the map's centre, of its half width
     local MIN_SIZE, MAX_SIZE = 14, 48
-    local ARROW = "bag-arrow"       -- the buff frame's and bag bar's toggle, at their sizes
+    local ARROW = Style.ARROW
     local HANDLE_WIDTH, HANDLE_HEIGHT = 15, 30
-    local ARROW_WIDTH, ARROW_HEIGHT = 10, 16
-    local HIGHLIGHT_ALPHA = 0.4     -- the game's
     local TITLE = "Addons"
     local ADDON = Core.ADDON_NAME
 
@@ -331,13 +329,13 @@ do -- private scope
         handle:RegisterForClicks("LeftButtonUp")
         handle:Hide()
         local arrow = handle:CreateTexture(nil, "ARTWORK")
-        arrow:SetAtlas(ARROW)
-        arrow:SetSize(ARROW_WIDTH, ARROW_HEIGHT)
+        arrow:SetAtlas(ARROW.atlas)
+        arrow:SetSize(ARROW.width, ARROW.height)
         local glow = handle:CreateTexture(nil, "OVERLAY")
-        glow:SetAtlas(ARROW)
-        glow:SetSize(ARROW_WIDTH, ARROW_HEIGHT)
+        glow:SetAtlas(ARROW.atlas)
+        glow:SetSize(ARROW.width, ARROW.height)
         glow:SetPoint("CENTER", arrow, "CENTER", 0, 0)
-        glow:SetAlpha(HIGHLIGHT_ALPHA)
+        glow:SetAlpha(ARROW.highlight)
         glow:SetBlendMode("ADD")
         glow:Hide()
         handle.glow, handle.arrows = glow, { arrow, glow }
@@ -401,6 +399,8 @@ do -- private scope
         if addon and C_AddOns.DoesAddOnExist(addon) then return C_AddOns.GetAddOnTitle(addon) end
     end
 
+    local function ByName(a, b) return a.name < b.name end
+
     local function Collect(button, name)
         local slot = CreateFrame("Frame", nil, drawer)
         slot:SetSize(Buttons.SLOT, Buttons.SLOT)
@@ -418,7 +418,7 @@ do -- private scope
         }
         collected[button] = entry
         list[#list + 1] = entry
-        table.sort(list, function(a, b) return a.name < b.name end)
+        table.sort(list, ByName)
 
         Restyle(button)
         Pin(button)
@@ -509,7 +509,7 @@ do -- private scope
         local lib = MinimapLook.LibDBIcon()
         if lib and lib.RegisterCallback and not listening then
             listening = true
-            lib.RegisterCallback(Buttons, "LibDBIcon_IconCreated", function() Scan() end)
+            lib.RegisterCallback(Buttons, "LibDBIcon_IconCreated", Scan)
         end
         local found, seen = {}, {}
         local function Consider(frame)

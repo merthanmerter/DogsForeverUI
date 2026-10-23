@@ -32,6 +32,7 @@ do -- private scope
         partyPower = 8,
         partyStrata = "MEDIUM",
         partySort = "role",      -- "role", "group" or "alphabetical"
+        partyLayout = "column",  -- "column" (party1 on top) or "row" (party1 at the left)
         partyShowSelf = true,
         partyShowPets = true,
         -- Auras: "below", "above" or "off"; the party's "right" or "off".
@@ -50,7 +51,7 @@ do -- private scope
         focusLeft = true, focusTop = true, focusPlaced = true,
         targettargetLeft = true, targettargetTop = true, targettargetPlaced = true,
         petLeft = true, petTop = true, petPlaced = true,
-        partyLeft = true, partyTop = true, partyPlaced = true,   -- party1's; the rest hang under it
+        partyLeft = true, partyTop = true, partyPlaced = true,   -- party1's; the rest follow it
     }
 
     -- Default row: focus and player left of the middle, target and its target
@@ -61,13 +62,13 @@ do -- private scope
     local PET_GAP = 6            -- the player's border to the pet's name band
     local PARTY_EDGE = Style.BORDER_INSET + 1
 
-    -- The party column's height as Unlock Mode boxes it, and how far its box
-    -- reaches above party1's top.
+    -- The party's height as Unlock Mode boxes it (a row's is one frame's), and
+    -- how far its box reaches above party1's top.
     function NS.PartyColumn(db)
         local UnitPlate = NS.UnitPlate
         local _, health, power = UnitPlate.Size(db, { partyIndex = 1 })
         local above = UnitPlate.PartyTopRoom() + Style.BORDER_INSET
-        local frames = db.partyShowSelf and UnitPlate.PARTY_SIZE or 4
+        local frames = UnitPlate.InRow(db) and 1 or db.partyShowSelf and UnitPlate.PARTY_SIZE or 4
         return above + (frames - 1) * UnitPlate.PartyStep(db) + health + 1 + power + Style.BORDER_INSET, above
     end
 
@@ -147,7 +148,6 @@ do -- private scope
         NS.plates.partyplayer = UnitPlate.New("player", "PartyPlayer", UnitPlate.PARTY_SCALE, 0)
         for index = 1, 4 do NS.plates["partypet" .. index] = NS.PartyPets.New(index) end
         UnitPlate.BuildColumn()
-        NS.plates.targettarget:HookScript("OnShow", function() NS:Show() end)
     end
 
     -- The plates may wait for combat's end; the game's frames do not.
@@ -205,6 +205,7 @@ do -- private scope
         NS:RegisterEvent(event)
     end
     NS:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "target", "focus")
+    NS:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "target", "focus")
     for event in pairs(CAST_STARTS) do NS:RegisterUnitEvent(event, "target", "focus") end
     NS:RegisterUnitEvent("UNIT_TARGET", "target")
 
@@ -235,11 +236,16 @@ do -- private scope
             plates.target:Update()
             plates.targettarget:Update()
             NS.BlizzardFrames.Refresh()
+            NS.UnitPlate.FollowTarget()
         elseif event == "PLAYER_FOCUS_CHANGED" then
             plates.focus:Update()
             NS.BlizzardFrames.Refresh()
         elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
             plates[...].castbar:Interrupted()
+        elseif event == "UNIT_SPELLCAST_EMPOWER_STOP" then
+            -- An empowered cast (retail) cut short: not complete, maybe secret.
+            local unit, _, _, complete = ...
+            if not issecretvalue(complete) and complete == false then plates[unit].castbar:Interrupted() end
         elseif CAST_STARTS[event] then
             plates[...].castbar:OnUpdate()
         elseif event == "UNIT_TARGET" or event == "CVAR_UPDATE" then
@@ -257,6 +263,7 @@ do -- private scope
                or event == "PLAYER_ROLES_ASSIGNED" then
             if event ~= "PARTY_LEADER_CHANGED" and NS.UnitPlate.SortParty(NS.db) then Refresh() end
             for _, plate in pairs(plates) do plate:Update() end
+            NS.UnitPlate.FollowTarget()     -- the target may be in another slot now
         else
             local unit = ...
             if type(unit) ~= "string" then return end
@@ -271,7 +278,10 @@ do -- private scope
     -- Every frame while a cast bar or plate is on screen; asleep otherwise
     -- (hidden, its events still coming).
     local function OnUpdate()
-        if not NS.plates then return end
+        if not NS.plates then
+            NS:Hide()
+            return
+        end
         local busy = false
         for _, plate in pairs(NS.plates) do
             local castbar = plate.castbar

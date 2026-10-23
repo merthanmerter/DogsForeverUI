@@ -221,4 +221,18 @@ DoubleClick()
 check("a name the client will not describe is never taken for the fire", not Armed())
 Over(nil)
 
+Section("on retail (its pole always in its slot) only the campfire")
+check("offered on Forever", DogsForeverUI.Fishing.FISHING_OFFERED == true)
+DogsForeverUI.Fishing.FISHING_OFFERED = false
+equipped[INVSLOT_MAINHAND] = POLE
+DoubleClick()
+check("no fishing where it is not offered", not Armed())
+Over("Object", "Basic Campfire")
+DoubleClick()
+check("the fire still sits down", Armed() and button:GetAttribute("macrotext") == "/sit")
+Release()
+Over(nil)
+equipped[INVSLOT_MAINHAND] = nil
+DogsForeverUI.Fishing.FISHING_OFFERED = true
+
 Summary()

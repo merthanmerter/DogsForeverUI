@@ -1,17 +1,17 @@
 -- The bag bar: hidden whole until a bag is open (or while placing), a bag
 -- button second in the micro menu to open them with, and the backpack's icon
--- mask put back after the game dims it. And the Clean Up button, reachable.
+-- mask put back after the game dims it.
 
-local Bar, Sort = {}, {}
+local Bar = {}
 DogsForeverUI.Menus.BagsBar = Bar
-DogsForeverUI.Menus.BagSort = Sort
 
 do -- private scope
     local NS = DogsForeverUI.Menus
     local Core = DogsForeverUI
 
     local BACKPACK = 0          -- Enum.BagIndex.Backpack
-    local BAG_ICON = "Interface\\Icons\\ui-hud-actionbar-bag"   -- the backpack's own
+    -- The backpack's own (Forever's); retail draws its backpack as an atlas: a plain bag.
+    local BAG_ICON = { "Interface\\Icons\\ui-hud-actionbar-bag", "Interface\\Icons\\INV_Misc_Bag_08" }
 
     local hiddenByUs = false    -- a bar the game hid (a gamepad) is the game's to show
     local bagOpen = false       -- as Bar:Update last read it
@@ -54,8 +54,9 @@ do -- private scope
         end
     end
 
-    -- The game re-anchors the backpack's mask to a smaller box when it dims
-    -- it, and never back: centred on the icon again, as built.
+    -- The game re-anchors the square backpack's mask (Forever's; retail's is
+    -- round) to a smaller box when it dims it, and never back: centred on the
+    -- icon again, as built.
     local function RecentreIconMask(button)
         button.SquareMask:ClearAllPoints()
         button.SquareMask:SetPoint("CENTER", button.icon)
@@ -77,8 +78,10 @@ do -- private scope
             self.button:SetScript("OnReceiveDrag", function() PutItemInBackpack() end)
 
             local backpack = _G.MainMenuBarBackpackButton
-            hooksecurefunc(backpack, "UpdateItemContextOverlayTextures", RecentreIconMask)
-            RecentreIconMask(backpack)
+            if backpack.SquareMask then
+                hooksecurefunc(backpack, "UpdateItemContextOverlayTextures", RecentreIconMask)
+                RecentreIconMask(backpack)
+            end
 
             for _, name in ipairs({ "MainActionBar_InitializeGamepad", "MainActionBar_UnInitializeMKB" }) do
                 if _G[name] then hooksecurefunc(name, function() hiddenByUs = false end) end
@@ -92,44 +95,5 @@ do -- private scope
             if _G.BagsBar then _G.BagsBar:HookScript("OnShow", Soon) end
         end
         self:Update()
-    end
-
-    ---------------------------------------------------------------------------
-    -- Clean Up: the game's own button lies under Camelot's gamepad bag bar,
-    -- which hides and eats it. Ours, in its art over it, does what it does:
-    -- the server's sort, instant. The game's button itself is never touched.
-
-    local RAISE = 100           -- levels over the game's button: over the gamepad bag bar
-
-    local function SortClick()
-        PlaySound(SOUNDKIT.UI_BAG_SORTING_01)
-        C_Container.SortBags()
-    end
-
-    local function SortTooltip(button)
-        GameTooltip:SetOwner(button)
-        GameTooltip_SetTitle(GameTooltip, BAG_CLEANUP_BAGS, HIGHLIGHT_FONT_COLOR)
-        GameTooltip_AddNormalLine(GameTooltip, BAG_CLEANUP_BAGS_DESCRIPTION)
-        GameTooltip:Show()
-    end
-
-    -- A child of the game's button: shown only where and when it is.
-    function Sort:Apply()
-        local game = _G.BagItemAutoSortButton
-        if not game or self.button then return end
-        local button = CreateFrame("Button", nil, game)
-        button:SetAllPoints(game)
-        button:SetNormalAtlas("bags-button-autosort-up")
-        button:SetPushedAtlas("bags-button-autosort-down")
-        local glow = button:CreateTexture(nil, "HIGHLIGHT")
-        glow:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
-        glow:SetBlendMode("ADD")
-        glow:SetSize(24, 23)
-        glow:SetPoint("CENTER")
-        button:SetScript("OnShow", function() button:SetFrameLevel(game:GetFrameLevel() + RAISE) end)
-        button:SetScript("OnClick", SortClick)
-        button:SetScript("OnEnter", SortTooltip)
-        button:SetScript("OnLeave", GameTooltip_Hide)
-        self.button = button
     end
 end

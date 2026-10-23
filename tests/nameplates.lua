@@ -34,6 +34,11 @@ local function NewPlate(unit, forbidden)
     bar.LeftText = bar:CreateFontString(nil, "OVERLAY")        -- the health numbers
     bar.RightText = bar:CreateFontString(nil, "OVERLAY")
     bar.Text = bar:CreateFontString(nil, "OVERLAY")
+    -- Its shield as the game makes it (NamePlateUnitFrameMixin:OnLoad): the old files.
+    bar.totalAbsorb = bar:CreateTexture(nil, "BORDER")
+    bar.totalAbsorb:SetTexture("Interface\\RaidFrame\\Shield-Fill")
+    bar.totalAbsorbOverlay = bar:CreateTexture(nil, "BORDER")
+    bar.totalAbsorbOverlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay")
     container.healthBar = bar
     unitFrame.HealthBarsContainer = container
     -- Camelot's level box to the bar's right: the box, its ring, the number.
@@ -62,6 +67,18 @@ local function NewPlate(unit, forbidden)
     castBar.Icon = castBar:CreateTexture(nil, "OVERLAY")
     castBar.Text = castBar:CreateFontString(nil, "OVERLAY")           -- the spell's name
     castBar.CastTargetNameText = castBar:CreateFontString(nil, "OVERLAY")
+    -- Its highlights, rounded art the game shows on an important cast, a cast at you.
+    castBar.ImportantCastIndicator = castBar:CreateTexture(nil, "OVERLAY")
+    castBar.ImportantCastIndicator:SetAtlas("ui-hud-nameplates-importantcast")
+    castBar.ImportantCastIndicator:Hide()
+    castBar.CastTargetIndicator = castBar:CreateTexture(nil, "OVERLAY")
+    castBar.CastTargetIndicator:SetAtlas("ui-hud-nameplates-targetedbyenemy")
+    castBar.CastTargetIndicator:Hide()
+    -- Live retail's art over a channel's fill, and the game's spark.
+    castBar.WispGlow = castBar:CreateTexture(nil, "OVERLAY")
+    castBar.WispGlow:SetAtlas("Cast_Channel_WispGlow")
+    castBar.Spark = castBar:CreateTexture(nil, "OVERLAY")
+    castBar.Spark:SetAtlas("ui-castingbar-pip")
     castBar.unit = unit
     castBar:GetStatusBarTexture()
     -- Shown and hidden by the game after it sets the cast's flags; and the
@@ -280,6 +297,19 @@ do
     check("with one border, however often it is put back", borders == 1, borders)
 end
 
+-- (The player, 2026-10-21: plate shields' stripes "lose their geometry when stretched,
+-- hard to tell the shielded part" - the game gives plates its old art, stretched.)
+Section("the plate's shield")
+do
+    local bar = plate.UnitFrame.HealthBarsContainer.healthBar
+    local fill, lines = bar.totalAbsorb, bar.totalAbsorbOverlay
+    local wrap = TextureKitConstants.AddressModeWrap
+    check("the raid frames' shield, as on the unit frames: their atlases, repeated and tiled both ways, never stretched",
+        fill.atlas == "raidframe-shield-fill" and lines.atlas == "RaidFrame-Shield-Overlay"
+        and tiling[lines].modes[1] == wrap and tiling[lines].modes[2] == wrap
+        and tiling[lines].horiz == true and tiling[lines].vert == true and tiling[fill].horiz == true)
+end
+
 Section("the plate's cast bar")
 do
     local castBar = plate.UnitFrame.CastBarsContainer.castBar
@@ -289,13 +319,55 @@ do
         castBar:GetStatusBarTexture().texture == FLAT, tostring(castBar:GetStatusBarTexture().texture))
     check("in the castbar's colour for a cast",
         Near(castBar.statusColor, Style.CAST_COLOR.casting), tostring(castBar.statusColor[2]))
-    local border
+    local border, borders = nil, 0
     for _, frame in ipairs(allFrames) do
-        if frame.parent == castBar and frame.lines then border = frame end
+        if frame.parent == castBar and frame.lines then
+            border, borders = frame, borders + 1
+        end
     end
     check("with the thin border, the black background and the sheen",
-        border ~= nil and border.unitPixels == 1 and castBar.Background.alpha == 0
-        and OurBackground(castBar) ~= nil)
+        border ~= nil and border.unitPixels == 1 and castBar.Background.atlas == nil
+        and castBar.Background.texture == nil and OurBackground(castBar) ~= nil)
+    -- (The player, 2026-10-20, again and again: the game's textures on the cast bar.)
+    check("every other texture of the game's on it blank - its glows, its spark - its icon kept",
+        castBar.WispGlow.atlas == nil and castBar.Spark.atlas == nil and castBar.Icon ~= nil)
+    castBar:Show()
+    castBar.WispGlow:SetAtlas("Cast_Channel_WispGlow")      -- a channel's wisps, set again
+    Tick(0.02)
+    check("and blank again the frame after the game sets one back", castBar.WispGlow.atlas == nil
+        and castBar.WispGlow.texture == nil)
+    -- (The player, 2026-10-20: "some nameplate castbars are still rounded inside
+    -- squared borders" - the game's highlight art, an important cast's or a cast at you.
+    -- Then every fix to the cast bar dead in game: a border of ours mirroring those
+    -- highlights handed the game's secret SetShown on - refused from addon code - and
+    -- the error stopped the cast bar's setup halfway.)
+    local important, atYou = castBar.ImportantCastIndicator, castBar.CastTargetIndicator
+    important:SetShown(SecretCastValue("important"))       -- the game's own call
+    atYou:Show()
+    Tick(0.02)
+    check("the game's rounded highlights blank, shown or not, and nothing of ours mirrors them (one border)",
+        important.atlas == nil and atYou.atlas == nil and borders == 1)
+    -- (The player, 2026-10-20: "sometimes still rounded" - live retail's cast finished
+    -- from its OnUpdate sets its rounded full art and white through none of the methods.)
+    castBar:SetStatusBarTexture("ui-castingbar-full-standard")
+    castBar:SetStatusBarColor(1, 1, 1)
+    check("its fill and colour set straight by the game: flat and ours again",
+        castBar:GetStatusBarTexture().texture == FLAT and Near(castBar.statusColor, Style.CAST_COLOR.casting),
+        tostring(castBar:GetStatusBarTexture().texture))
+    -- (The player, 2026-10-20, again: the game's gold fill mid-cast.) Changed by a
+    -- path no hook sees: flat again by the next frame it shows.
+    castBar:Show()
+    castBar:GetStatusBarTexture():SetAtlas("ui-castingbar-filling-standard")
+    Tick(0.02)
+    check("its fill changed behind every hook's back: flat again a frame later",
+        castBar:GetStatusBarTexture().texture == FLAT, tostring(castBar:GetStatusBarTexture().texture))
+    -- (The player, 2026-10-20: errors every frame in combat - a texture's file is secret
+    -- there, and was compared.)
+    castBar:GetStatusBarTexture().texture = SecretCastValue("fill file")
+    castBar.WispGlow.texture = SecretCastValue("wisp file")
+    local ok, err = pcall(Tick, 0.02)
+    check("in combat, files secret: never compared - painted and blanked all the same, no error",
+        ok and castBar:GetStatusBarTexture().texture == FLAT and castBar.WispGlow.texture == nil, tostring(err))
     castBar.barType = "channel"
     castBar:UpdateBarFillTexture()
     check("a channel in the channel colour, after the game repaints it",
@@ -669,8 +741,10 @@ do
     Enum = Enum or {}
     Enum.NamePlateStyle = Enum.NamePlateStyle or { Thin = 1, Modern = 2, Block = 3 }
     Enum.NamePlateInfoDisplay = Enum.NamePlateInfoDisplay or { CurrentHealthPercent = 1, CurrentHealthValue = 2 }
+    Enum.NamePlateSimplifiedType = Enum.NamePlateSimplifiedType or { Minion = 1, MinusMob = 2, FriendlyPlayer = 3, FriendlyNpc = 4 }
     local store = { nameplateStyle = "1", nameplateInfoDisplay = string.char(1, 0x40 + 2),   -- Thin; value only
-                    nameplateMinScale = "0.8", nameplateMaxScale = "1", nameplateSelectedScale = "1.2" }
+                    nameplateMinScale = "0.8", nameplateMaxScale = "1", nameplateSelectedScale = "1.2",
+                    nameplateSimplifiedTypes = string.char(1, 0x40 + 1) }                      -- Minions
     local realCVar = C_CVar
     C_CVar = {
         GetCVar = function(name) return store[name] or realCVar.GetCVar(name) end,
@@ -698,6 +772,8 @@ do
     check("the targeted one TARGET_GROW times larger (this client takes it as the target's whole size)",
         math.abs(tonumber(store.nameplateSelectedScale) - 1.2 * NP.TARGET_GROW) < 1e-6,
         tostring(store.nameplateSelectedScale))
+    check("Simplified Nameplates: Friendly NPCs on, Minions kept",
+        store.nameplateSimplifiedTypes == string.char(1, 0x40 + 1 + 8))
     check("done once for the character", db.nameplateDefaults == NP.DEFAULT_STEPS)
     store.nameplateStyle, store.nameplateInfoDisplay = "1", string.char(1)
     cvars[FRIENDLY_NAME] = false
@@ -772,6 +848,96 @@ do
         store.nameplateStyle == "1" and store.nameplateInfoDisplay == string.char(1)
         and cvars[FRIENDLY_NAME] == false)
     C_CVar = realCVar
+end
+
+Section("caster NPCs in light blue")
+do
+    local casterPlate, casterBar = NewPlate("nameplate9")
+    units.nameplate9 = { name = "Cultist", level = 10, reaction = 2, health = 1, healthMax = 1 }
+    NamePlateDriverFrame:OnNamePlateAdded("nameplate9")
+    local unitFrame = casterPlate.UnitFrame
+    local function GameColours()
+        casterBar:SetStatusBarColor(1, 0, 0)        -- the game's hostile red
+        CompactUnitFrame_UpdateHealthColor(unitFrame)
+        return casterBar.statusColor
+    end
+    check("an enemy NPC with mana: light blue over the game's red",
+        Near(GameColours(), DogsForeverUI.Frames.NamePlates.CASTER_COLOR))
+    units.nameplate9.powerToken = "RAGE"
+    check("one without: the game's colour", Near(GameColours(), { 1, 0, 0 }))
+    units.nameplate9.powerToken = nil
+    tapDenied.nameplate9 = true
+    check("tapped by others: the game's grey stays", Near(GameColours(), { 1, 0, 0 }))
+    tapDenied.nameplate9 = nil
+    friendlyUnits.nameplate9 = true
+    check("a friendly one: the game's colour", Near(GameColours(), { 1, 0, 0 }))
+    friendlyUnits.nameplate9 = nil
+    -- (The player, 2026-10-20: only a red one turns blue.)
+    units.nameplate9.reaction = 4
+    check("a neutral one: the game's yellow stays", Near(GameColours(), { 1, 0, 0 }))
+    units.nameplate9.reaction = 2
+    units.nameplate9.isPlayer = true
+    check("a player: the game's colour", Near(GameColours(), { 1, 0, 0 }))
+end
+
+Section("retail: its level ring is the game's, the rest of the look the same")
+do
+    -- NamePlates.lua alone as the retail client loads it (Core.RETAIL set).
+    local retail = setmetatable({ RETAIL = true, Frames = setmetatable({}, { __index = DogsForeverUI.Frames }) },
+        { __index = DogsForeverUI })
+    local env = setmetatable({ DogsForeverUI = retail }, { __index = _G })
+    assert(loadfile(ADDON_PATH .. "/Frames/NamePlates.lua", "t", env))("DogsForeverUI", {})
+    -- Retail's level frame (Blizzard_NamePlateLevelFrame.xml): a ring left of
+    -- the bars, its number - no skull, no selection border. Shown here.
+    NamePlateSetupOptions.unitNameAnchorStyle = 1
+    local ringPlate, ringBar = NewPlate("nameplate8")
+    local unitFrame = ringPlate.UnitFrame
+    local level = unitFrame.PlayerLevelDiffFrame
+    level.selectedBorder, level.highLevelTexture = nil, nil
+    level:ClearAllPoints()
+    level:SetPoint("RIGHT", unitFrame.HealthBarsContainer, "LEFT", 0, 0)
+    unitFrame:UpdateAnchors()
+    local ok, err = pcall(retail.Frames.NamePlates.Refresh)
+    check("a plate with retail's level frame raises nothing", ok, tostring(err))
+    local function Anchor(region, point)
+        for _, a in ipairs(region.anchors or {}) do
+            if a[1] == point then return a end
+        end
+    end
+    check("the look all the same: flat fill, border, background",
+        ringBar:GetStatusBarTexture().texture == FLAT and OurBorder(ringBar) ~= nil and ringBar.bgTexture.alpha == 0)
+    check("the bar not widened over a box retail does not have",
+        Anchor(ringBar, "BOTTOMRIGHT") and Anchor(ringBar, "BOTTOMRIGHT")[4] == 0)
+    check("the ring, its number and its size left to the game",
+        (level.playerLevelDiffIcon.alpha or 1) == 1 and level.playerLevelDiffText.points[2] ~= ringBar
+        and level.playerLevelDiffText.textHeight == nil)
+    check("the name from the bar's left end, short of the numbers",
+        Anchor(unitFrame.name, "LEFT")[2] == unitFrame.HealthBarsContainer
+        and Anchor(unitFrame.name, "RIGHT")[2] == ringBar.Text)
+    ok, err = pcall(unitFrame.UpdateAnchors, unitFrame)
+    check("and laid out again by the game, still nothing raised", ok, tostring(err))
+    plates.nameplate8 = nil
+end
+
+Section("a cast bar the game fills its own way: square all the same")
+do
+    -- (The player, 2026-10-20, retail: a rounded fill inside the square border.)
+    -- No fill method of the game's to follow, and the fill rounded by a mask.
+    local livePlate = NewPlate("nameplate10")
+    local castBar = livePlate.UnitFrame.CastBarsContainer.castBar
+    castBar.UpdateBarFillTexture, castBar.UpdateIconShown = nil, nil
+    local ok, err = pcall(NamePlateDriverFrame.OnNamePlateAdded, NamePlateDriverFrame, "nameplate10")
+    check("no method to follow: no error", ok, tostring(err))
+    local fill = castBar:GetStatusBarTexture()
+    local masks = { {} }
+    function fill:GetNumMaskTextures() return #masks end
+    function fill:GetMaskTexture(index) return masks[index] end
+    function fill:RemoveMaskTexture(mask) for i = #masks, 1, -1 do if masks[i] == mask then table.remove(masks, i) end end end
+    fill:SetAtlas("ui-castingbar-filling-standard")
+    for _, hook in ipairs(castBar.hooks.OnEvent or {}) do hook(castBar, "UNIT_SPELLCAST_START", "nameplate10") end
+    check("a cast starting: the flat fill again, its mask gone", fill.texture == FLAT and #masks == 0,
+        tostring(fill.texture))
+    plates.nameplate10 = nil
 end
 
 Summary()

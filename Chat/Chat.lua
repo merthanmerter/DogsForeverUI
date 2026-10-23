@@ -17,7 +17,6 @@ do -- private scope
     NS.title = "Chat"
 
     NS.defaults = {
-        showButton = true,      -- the copy button, the only way in
         chatDefaults = 0,       -- the game chat defaults set so far (ChatLook.lua, DEFAULTS)
     }
 
@@ -230,12 +229,8 @@ do -- private scope
         copied = BuildToast(window)
         tinsert(UISpecialFrames, WINDOW_NAME)
 
-        window:SetScript("OnShow", function(self)
-            self.closing = false
-            W.SnapBorders()
-        end)
+        window:SetScript("OnShow", W.SnapBorders)
         window:SetScript("OnHide", function(self)
-            self.closing = false
             -- (Closed mid-drag by Esc: no drag carries on into the next open.)
             self:StopMovingOrSizing()
             scroller.thumb:SetScript("OnUpdate", nil)
@@ -321,11 +316,6 @@ do -- private scope
 
     local function RefreshButton()
         local look = NS.Look
-        if not NS.db.showButton then
-            if button then button:Hide() end
-            look.Layout()       -- the header's row closes up behind it
-            return
-        end
         if look.Header() then
             Button():Show()
             look.AddOwn("copy", button)

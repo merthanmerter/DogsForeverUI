@@ -99,6 +99,21 @@ do
     check("set again", AllOn() and GD.db.done == #GD.STEPS)
 end
 
+Section("no key bound, kept or loaded: the player's own bindings untouched")
+do
+    local cycle = Core.Frames.UnitPlate.CYCLE
+    SetBinding("1", "ACTIONBUTTON1")
+    local loads, saves = LoadBindings, SaveBindings
+    local touched = false
+    LoadBindings = function(...) touched = true; return loads(...) end
+    SaveBindings = function(...) touched = true; return saves(...) end
+    Core:ResetAll()
+    for _ = 1, 3 do Tick(15) end
+    LoadBindings, SaveBindings = loads, saves
+    check("the party cycle unbound", GetBindingKey(cycle[1].command) == nil and GetBindingKey(cycle[2].command) == nil)
+    check("an action bar key still bound, nothing loaded or saved", GetBindingAction("1") == "ACTIONBUTTON1" and not touched)
+end
+
 C_CVar = realCVar
 check("nothing forbidden called", #forbiddenCalls == 0)
 Summary()

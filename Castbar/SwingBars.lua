@@ -6,6 +6,15 @@
 local SwingBars = {}
 DogsForeverUI.Castbar.SwingBars = SwingBars
 
+-- WoW Forever's alone: retail has no swing timer (Blizzard_SwingTimer is
+-- camelot's). Nothing is made there - no bars, no piece to place - and the
+-- castbar is answered as if no hand ever swung.
+if DogsForeverUI.RETAIL then
+    local function None() return false end
+    SwingBars.Refresh, SwingBars.OnUpdate, SwingBars.OnEvent, SwingBars.Busy = None, None, None, None
+    return
+end
+
 do -- private scope
     local NS = DogsForeverUI.Castbar
     local Style = DogsForeverUI.Style
@@ -95,10 +104,11 @@ do -- private scope
 
     -- The bars shown, stacked from the group's bottom. One fading out keeps its
     -- row (`leaving`) until gone; `settled` (a settings change) is at once.
+    local shown = {}                         -- Layout's, refilled each time
     local function Layout(settled)
         local db = NS.db
         local instant = settled or db.unlocked
-        local shown = {}
+        wipe(shown)
         for _, bar in ipairs(bars) do
             if ShouldShow(bar) then
                 shown[#shown + 1] = bar

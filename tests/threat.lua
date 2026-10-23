@@ -18,21 +18,30 @@ check("hidden with no target", not bar:IsShown())
 check("takes no mouse while locked", not bar:IsMouseEnabled())
 
 Section("on the threat list")
-units.target = { name = "Kobold", level = 10, reaction = 2, health = 1, healthMax = 1, threat = 62.4 }
+units.target = { name = "Kobold", level = 10, reaction = 2, health = 1, healthMax = 1, threat = 62.4,
+                 scaledThreat = 56 }
 Fire("PLAYER_TARGET_CHANGED")
 Settle()
-check("shown, filled to the threat", bar:IsShown() and bar:GetValue() == 62.4, bar:GetValue())
+-- (The player, 2026-10-20: it did not match the game's tooltip - it showed the scaled one.)
+check("shown, filled to the game's own number: the share of the top threat, not the scaled one",
+    bar:IsShown() and bar:GetValue() == 62.4, bar:GetValue())
 check("the percentage on the right", bar.valueText:GetText() == "62%", bar.valueText:GetText())
 check("labelled", bar.nameText:GetText() == "Threat")
 check("with its spark", bar.spark.alpha == 1)
 
-units.target.threat = 100
+units.target.threat, units.target.scaledThreat = 100, nil
 Fire("UNIT_THREAT_LIST_UPDATE", "target")
 check("redrawn as the threat list changes", bar:GetValue() == 100 and bar.valueText:GetText() == "100%")
 check("no spark against the full bar's end", bar.spark.alpha == 0)
 
 Fire("UNIT_THREAT_LIST_UPDATE", "nameplate3")
 check("another mob's list is not listened to", bar:GetValue() == 100)
+
+units.target.tanking, units.target.lead = true, 143.6
+Fire("UNIT_THREAT_LIST_UPDATE", "target")
+check("holding it: the lead over the next, as the game's", bar.valueText:GetText() == "144%"
+    and bar.spark.alpha == 0, bar.valueText:GetText())
+units.target.tanking, units.target.lead = nil, nil
 
 Section("secret")
 local secret = SecretCastValue("threat")

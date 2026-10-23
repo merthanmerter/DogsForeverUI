@@ -25,14 +25,14 @@ do -- private scope
     -- Position puts one piece back.
     ---------------------------------------------------------------------------
 
-    Places.VERSION = 22
+    Places.VERSION = 36
     Places.EDGE_GAP = 15            -- the chat and the tooltip from the screen's edges
     Places.CHAT_SIZE = { 502, 200 } -- 400 wide plus the tabs' sidebar (Chat\ChatLook.lua)
     Places.SIDE_GAP = 28            -- the player and target frames from Action Bar 1
     local BAR1_UP = 3               -- Action Bar 1's top above the player frame's
     local BAR3_GAP = 15             -- Action Bar 3 above the XP bar
     local FAR_GAP = 15              -- the focus and target of target from theirs
-
+    local TOAST_GAP = 10            -- the loot toasts above the chat
     local Entry = Snap.EntryById
 
     local function BoxOf(id)
@@ -130,14 +130,13 @@ do -- private scope
             end
             Anchor("stance", "bar1")
         end },
+        -- Left edge level with the pet frame's, bottom with Action Bar 2's; anchored to the pet frame.
         { "petbar", function()
             LetGo("petbar")
-            local bar = BoxOf("bar2")
-            if bar then
-                MoveX("petbar", "boxmiddle", bar.cx)
-                MoveY("petbar", "top", bar.b)
-            end
-            Anchor("petbar", "bar2")
+            local pet, bar = BoxOf("pet"), BoxOf("bar2")
+            if pet then MoveX("petbar", "left", pet.l) end
+            if bar then MoveY("petbar", "bottom", bar.b) end
+            Anchor("petbar", "pet")
         end },
         { "xp", function()
             MoveX("xp", "boxmiddle", GetScreenWidth() / 2)
@@ -199,37 +198,61 @@ do -- private scope
             MoveX("castbar", "boxmiddle", GetScreenWidth() / 2)
             MoveY("castbar", "frametop", GetScreenHeight() * (1 - Core.Castbar.TOP_SHARE))
         end },
+        -- The extra action button's middle on Action Bar 1's bottom edge, anchored to nothing.
+        { "extra", function()
+            LetGo("extra")
+            Core.GameFrames.PlaceExtra()
+        end },
+        -- The game's class resource frame (runes, holy power...) on the secondary power's spot.
+        { "classpower", function()
+            LetGo("classpower")
+            Core.GameFrames.PlaceClassPower()
+        end },
         { "cooldowns", function()
             MoveX("cooldowns", "frameleft", FrameLeft("player"))
             MoveY("cooldowns", "frametop", FrameTop("castbar"))
+        end },
+        -- Centred on the screen, the first row a row's gap over the secondary power (the
+        -- five-second rule; from its saved place: a hidden bar cannot be measured), anchored to nothing.
+        { "cooldownicons", function()
+            LetGo("cooldownicons")
+            local castbar = Core.Castbar
+            local _, _, top = castbar.RowPlace(Core.FiveSecondRule)
+            MoveX("cooldownicons", "middle", GetScreenWidth() / 2)
+            MoveY("cooldownicons", "middle",
+                GetScreenHeight() + top + castbar.STACK_GAP + Core.Cooldowns.db.iconSize / 2)
         end },
         { "threat", function()
             MoveX("threat", "frameleft", FrameLeft("target"))
             MoveY("threat", "frametop", FrameTop("castbar"))
         end },
         { "toasts", function()
-            -- Over the focus frame, bottom level with the cooldowns'; they grow up.
+            -- Over the chat, left edges level, TOAST_GAP clear of it; they grow up.
             LetGo("toasts")
-            local focus, cooldowns = BoxOf("focus"), BoxOf("cooldowns")
-            if focus then MoveX("toasts", "left", focus.l) end
-            if cooldowns then MoveY("toasts", "bottom", cooldowns.b) end
+            local chat = BoxOf("chat")
+            if chat then
+                MoveX("toasts", "left", chat.l)
+                MoveY("toasts", "bottom", chat.t + TOAST_GAP)
+            end
         end },
     }
 
-    -- Action Bars 1-5 twelve buttons in two rows, 2 apart; 6-8 one button wide ("all": a row each).
+    -- Action Bars 1-5 twelve buttons in two rows, 2 apart; 6-8 one button wide ("all": a row each);
+    -- the pet bar two rows of 24.
     local TWO_ROWS = { Buttons = 12, Rows = 2, Spacing = 2 }
     local ONE_WIDE = { Rows = "all" }
     local BAR_SETTINGS = {
         bar1 = TWO_ROWS, bar2 = TWO_ROWS, bar3 = TWO_ROWS, bar4 = TWO_ROWS, bar5 = TWO_ROWS,
-        bar6 = ONE_WIDE, bar7 = ONE_WIDE, bar8 = ONE_WIDE,
+        bar6 = ONE_WIDE, bar7 = ONE_WIDE, bar8 = ONE_WIDE, pet = { Rows = 2, Size = 24 },
     }
-    local BAR_ORDER = { "bar1", "bar2", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8" }
+    local BAR_ORDER = { "bar1", "bar2", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8", "pet" }
+    -- `ids`: Unlock Mode ids (the pet bar's "petbar"); nil: every bar.
     local function BarSettings(ids)
         local bars = Core.ActionBars
         local any = false
         for _, key in ipairs(BAR_ORDER) do
-            if not ids or ids[key] then
-                for _, setting in ipairs({ "Buttons", "Rows", "Spacing" }) do
+            if not ids or ids[bars.byKey[key].id] then
+                for _, setting in ipairs({ "Buttons", "Rows", "Spacing", "Size" }) do
                     local value = BAR_SETTINGS[key][setting]
                     if value == "all" then value = tonumber(bars.db[key .. "Buttons"]) or 12 end
                     if value ~= nil and bars.db[key .. setting] ~= value then
@@ -307,6 +330,51 @@ do -- private scope
         [20] = Place("toasts"),
         [21] = Place("toasts"),
         [22] = function() LetGo("toasts") end,
+        -- The cooldown icons' place, and their size and row length the defaults again.
+        [23] = function()
+            local cooldowns = Core.Cooldowns
+            for _, key in ipairs({ "iconSize", "iconsPerRow" }) do cooldowns.db[key] = cooldowns.defaults[key] end
+            cooldowns.Refresh()
+            Places.Place("cooldownicons")
+        end,
+        [24] = Place("cooldownicons"),      -- over the bars at their tallest
+        [25] = Place("extra"),              -- over the castbar, half size
+        [26] = Place("extra"),              -- over the secondary power, let go of the castbar
+        -- Retail's bag bar at the game's own size (Forever's 75% kept), in its corner again.
+        [27] = function()
+            local game = Core.GameFrames
+            if Core.RETAIL and game.db.bagsSize == 75 then
+                game.db.bagsSize = game.defaults.bagsSize
+                game.Refresh()
+                Places.Place("bags")
+            end
+        end,
+        [28] = Place("cooldownicons"),      -- over the bars shown, pushed up as more show
+        [29] = Place("extra"),              -- Action Bar 1's size and a touch: centred over the row again
+        [30] = Place("extra"),              -- Action Bar 1's size: centred over the row again
+        -- The extra button on Action Bar 1's bottom; the cooldown icons let go of the bars, over
+        -- the secondary power, growing both sides (unless the player picked leftward).
+        [31] = function()
+            local cooldowns = Core.Cooldowns
+            if cooldowns.db.iconGrow == "right" then
+                cooldowns.db.iconGrow = cooldowns.defaults.iconGrow
+                cooldowns.Refresh()
+            end
+            Places.Place("extra")
+            Places.Place("cooldownicons")
+        end,
+        [32] = Place("petbar"),             -- two rows of 24, beside Action Bar 2, anchored to the pet frame
+        [33] = Place("toasts"),             -- over the chat, left edges level
+        [34] = Place("classpower"),         -- the class resource, new: on the secondary power's spot
+        -- (35 set them 30 across; 36 replaced it.) The cooldown icons 32 across, from an older default (26, 30); one the player sized stays.
+        [36] = function()
+            local cooldowns = Core.Cooldowns
+            local size = cooldowns.db.iconSize
+            if size == 26 or size == 30 then
+                cooldowns.db.iconSize = cooldowns.defaults.iconSize
+                cooldowns.Refresh()
+            end
+        end,
     }
 
     -- Brought up to date: patched, or (never had, or reset) laid out whole.
@@ -371,7 +439,7 @@ do -- private scope
     local Same = GameDefaults.Same
 
     -- Each step: the CVars it sets (an Enum value the client lacks: skipped), and
-    -- whether it switches Action Bars 2-5 on.
+    -- whether it switches Action Bars 2-5 on. No key is ever bound.
     local CVAR_STEPS = {
         -- Nameplates on and always shown, Large (Camelot's name for Modern),
         -- friendly players class coloured; the damage meter on, reset per instance.

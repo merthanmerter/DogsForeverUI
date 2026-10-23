@@ -183,15 +183,9 @@ _G.ChatFrame1.shown = true
 Fire("UPDATE_CHAT_WINDOWS")
 check("and brings it back", icon:IsShown())
 
--- The one setting: the icon, which is the only way in.
-DogsForeverUI.Chat.db.showButton = false
-DogsForeverUI.Chat.Refresh()
-check("switching the button off takes the icon away", not icon:IsShown())
-Fire("UPDATE_CHAT_WINDOWS")
-check("and a chat rebuild does not bring it back", not icon:IsShown())
-DogsForeverUI.Chat.db.showButton = true
-DogsForeverUI.Chat.Refresh()
-check("switching it back on brings it back", icon:IsShown())
+-- Always on: the icon is the only way in.
+check("no setting to switch it off", DogsForeverUI.Chat.db.showButton == nil
+    and DogsForeverUI.Chat.defaults.showButton == nil)
 
 check("and none of that touched the chat", #chatEdits == 0, table.concat(chatEdits, ", "))
 

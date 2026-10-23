@@ -11,7 +11,6 @@ do -- private scope
     local IsSecret = issecretvalue
 
     local BUTTONS, BASE = 12, 45        -- an action bar's buttons; the game's action button's size
-    local SCALE = 0.8                   -- the game's 80% is our 100%
     local SHOWN_ROWS, SHOWN_SPACING = 2, 2
     local CLICK_BUTTON = "Keybind"      -- the "mouse button" a wheel binding clicks with
     local COUNTDOWN_CVAR = "countdownForCooldowns"
@@ -30,10 +29,10 @@ do -- private scope
         { key = "bar7", label = "Action Bar 7", offset = 156, command = "MULTIACTIONBAR6BUTTON", game = "MultiBar6" },
         { key = "bar8", label = "Action Bar 8", offset = 168, command = "MULTIACTIONBAR7BUTTON", game = "MultiBar7" },
         { key = "stance", label = "Stance Bar", command = "SHAPESHIFTBUTTON", game = "StanceBar",
-          stance = true, prefix = "StanceButton", count = 10, gameBase = 30, grow = true },
+          stance = true, prefix = "StanceButton", count = 10, size = 30, grow = true },
         -- (Unlock Mode id "petbar": "pet" is the pet's unit frame.)
         { key = "pet", id = "petbar", label = "Pet Bar", command = "BONUSACTIONBUTTON", game = "PetActionBar",
-          pet = true, prefix = "PetActionButton", count = 10, gameBase = 30, defaultSize = 20 },
+          pet = true, prefix = "PetActionButton", count = 10, size = 20 },
     }
     AB.byKey = {}
     for _, bar in ipairs(AB.BARS) do
@@ -67,14 +66,14 @@ do -- private scope
     AB.SPACING_MAX = 12
 
     -- The flags mark one-time migrations and the game's bar switches turned on once.
-    AB.defaults = { unlocked = false, shownByDefault = false, sizesRestored = false, fixedSizes = false,
-                    gameToggles = false, gameBarsOn = false }
+    AB.defaults = { unlocked = false, shownByDefault = false, gameToggles = false, gameBarsOn = false }
     AB.placement = {}
     for _, bar in ipairs(AB.BARS) do
         local k = bar.key
         AB.defaults[k .. "Buttons"] = bar.count
         AB.defaults[k .. "Rows"] = bar.shown and SHOWN_ROWS or 1
-        AB.defaults[k .. "Size"] = bar.defaultSize or bar.gameBase or 36
+        -- The same for everyone, whatever the game's own bars' Icon Size.
+        AB.defaults[k .. "Size"] = bar.size or 36
         AB.defaults[k .. "Spacing"] = 2
         AB.defaults[k .. "Show"] = "always"
         AB.defaults[k .. "Orientation"] = "horizontal"
@@ -139,6 +138,8 @@ do -- private scope
                         NoSelection(bar.EndCaps.RightEndCap)
                     end
                     bar:SetAlpha(0)
+                    -- Its child, the game's Leave Vehicle / land-early button, still seen.
+                    if bar.VehicleLeaveButton then bar.VehicleLeaveButton:SetIgnoreParentAlpha(true) end
                 else
                     pcall(bar.UnregisterAllEvents, bar)
                     bar:SetParent(hidden)
@@ -205,13 +206,14 @@ do -- private scope
         for _, event in ipairs(CAST_EVENTS) do pcall(actions.RegisterUnitEvent, actions, event, "player") end
     end
 
-    -- Bar 1's pages, as the game's on this client: override, vehicle or possess bar, the page
-    -- keys, every class's form (6 + its offset), skyriding, then page 1.
+    -- Bar 1's pages, as the game's on this client: override, vehicle or possess bar, retail's
+    -- quest shapeshifts, the page keys, every class's form (6 + its offset), skyriding, then page 1.
     local function PageConditions()
         local parts = {
             "[overridebar] " .. C_ActionBar.GetOverrideBarIndex(),
             "[vehicleui][possessbar] " .. C_ActionBar.GetVehicleBarIndex(),
         }
+        if Core.RETAIL then parts[#parts + 1] = "[shapeshift] " .. C_ActionBar.GetTempShapeshiftBarIndex() end
         for page = 2, NUM_ACTIONBAR_PAGES do parts[#parts + 1] = "[bar:" .. page .. "] " .. page end
         for form = 1, 4 do parts[#parts + 1] = "[bonusbar:" .. form .. "] " .. (6 + form) end
         parts[#parts + 1] = "[bonusbar:5] 11"
@@ -251,10 +253,17 @@ do -- private scope
         SetDuration(loss, api.GetActionLossOfControlCooldownInfo(action), api.GetActionLossOfControlCooldownDuration, action)
     end
 
+    -- A secret count is set as it is. A plain nothing (live retail gives none for a spell's
+    -- charges when they are all back) is its charges, where it has more than one.
     local function PaintCount(button, action)
-        local text = Has(action) and C_ActionBar.GetActionDisplayCount(action)
-        -- A secret count is set as it is; only a plain nothing becomes "".
-        if not IsSecret(text) and not text then text = "" end
+        local filled = Has(action)
+        local text = filled and C_ActionBar.GetActionDisplayCount(action)
+        if not IsSecret(text) and (not text or text == "") then
+            text = ""
+            local charges = filled and C_ActionBar.GetActionCharges(action)
+            local max = charges and charges.maxCharges
+            if not IsSecret(max) and type(max) == "number" and max > 1 then text = charges.currentCharges end
+        end
         button.Count:SetText(text)
     end
 
@@ -285,6 +294,21 @@ do -- private scope
         button:SetAlpha(hide and 0 or 1)
     end
 
+    -- The game draws the proc glow of a one-button rotation action on a rotation frame its own
+    -- buttons make; ours may not have one (made from here, its updater refreshes the button
+    -- tainted - secret cooldowns refused by the hundred; a field of ours there taints every
+    -- page change), and the game errors without it. So a button holding that action hears no
+    -- glow events: switching them is an engine call, nothing the game reads written.
+    local GLOW_EVENTS = { "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" }
+    local glowOff = setmetatable({}, { __mode = "k" })     -- button -> its glow events off
+    local function GlowEvents(button, on)
+        if (glowOff[button] == true) ~= on then return end
+        glowOff[button] = not on or nil
+        for _, event in ipairs(GLOW_EVENTS) do
+            if on then button:RegisterEvent(event) else button:UnregisterEvent(event) end
+        end
+    end
+
     -- Everything a slot's contents decide (EllesmereUI's ForceButtonRefresh).
     local function PaintButton(button)
         local action = button:GetAttribute("action")
@@ -301,6 +325,7 @@ do -- private scope
         button:SetChecked(filled and (api.IsCurrentAction(action) or api.IsAutoRepeatAction(action)) and true or false)
         button.Border:SetShown(filled and api.IsEquippedAction(action) and true or false)
         AB.PaintEmpty(button, filled)
+        if barOf[button] then GlowEvents(button, not (filled and Core.Try(api.IsAssistedCombatAction, action) == true)) end
     end
 
     -- A wheel has no key-up, so it binds to a click of the button, not its command: ours with
@@ -333,14 +358,21 @@ do -- private scope
         return text:sub(1, at - 1) .. with .. text:sub(at + #find)
     end
 
-    -- The game's short form; a wheel shorter still ("WU", "WD"), as EllesmereUI writes them.
+    -- The game's short form; a wheel and the lock keys shorter still ("WU", "CL"), as
+    -- EllesmereUI writes them - the game's names do not fit a button.
+    local SHORT = { MOUSEWHEELUP = "WU", MOUSEWHEELDOWN = "WD", CAPSLOCK = "CL", NUMLOCK = "NL", SCROLLLOCK = "SL" }
     local function KeyText(key)
         local text = GetBindingText(key, 1)
-        text = Replace(text, KEY_MOUSEWHEELUP, "WU")
-        text = Replace(text, KEY_MOUSEWHEELDOWN, "WD")
-        text = Replace(text, "MOUSEWHEELUP", "WU")
-        return Replace(text, "MOUSEWHEELDOWN", "WD")
+        for base, short in pairs(SHORT) do text = Replace(text, GetBindingText(base, 1), short) end
+        return text
     end
+    AB.KeyText = KeyText
+
+    -- A bar's buttons' size, and how large that is of the game's (their key text with them).
+    function AB.ButtonSize(key)
+        return Clamp(tonumber(AB.db and AB.db[key .. "Size"]) or 36, AB.SIZE_MIN, AB.SIZE_MAX)
+    end
+    function AB.ButtonScale(key) return AB.ButtonSize(key) / BASE end
 
     local function PaintHotkey(button)
         local hotkey = button.HotKey
@@ -473,8 +505,13 @@ do -- private scope
         end
         if dirty.cooldowns then
             dirty.cooldowns = nil
+            -- (A charge coming back - a full stack again - arrives as a cooldown: counts with them.)
             for _, button in ipairs(AB.all) do
-                if button:IsVisible() then pcall(PaintCooldown, button, button:GetAttribute("action")) end
+                if button:IsVisible() then
+                    local action = button:GetAttribute("action")
+                    pcall(PaintCooldown, button, action)
+                    pcall(PaintCount, button, action)
+                end
             end
             game = true
         end
@@ -646,9 +683,21 @@ do -- private scope
         if button.AutoCastOverlay then button.AutoCastOverlay:SetSize(BASE, BASE) end
     end
 
+    -- Retail's rotation helper sizes its ants for the game's small stance buttons (48);
+    -- ours have the action buttons' shape, so the action buttons' ants (66).
+    local ANTS = 66
+    local stanceButtons = {}
+    if AssistedCombatManager and AssistedCombatManager.SetAssistedHighlightFrameShown then
+        hooksecurefunc(AssistedCombatManager, "SetAssistedHighlightFrameShown", function(_, button, shown)
+            local highlight = shown and stanceButtons[button] and button.AssistedCombatHighlightFrame
+            if highlight then highlight.Flipbook:SetSize(ANTS, ANTS) end
+        end)
+    end
+
     local function TakeGameButton(info, index, frame)
         local button = _G[info.prefix .. index]
         if not button then return end
+        if info.stance then stanceButtons[button] = true end
         button:SetAttributeNoHandler("statehidden", nil)
         for _, event in ipairs(info.stance and STANCE_EVENTS or PET_EVENTS) do
             pcall(button.RegisterEvent, button, event)
@@ -873,6 +922,8 @@ do -- private scope
             frame:ClearAllPoints()
             frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", db[key .. "Left"] or 0, db[key .. "Top"] or 0)
         end
+        -- (Sized and placed: the borders on whole pixels where they are now.)
+        for index = 1, shape.count do Core.Menus.ActionButtons.Fit(buttons[index]) end
         if info.grow then Core.Snap.KeepEdge(entries[key]) end
         RegisterAttributeDriver(frame, "state-visibility", Visibility(info))
     end
@@ -907,33 +958,11 @@ do -- private scope
     -- The game's Hidden is not copied: its on/off switch is followed live (GameShown).
     local GAME_SHOW = { InCombat = "combat", OutOfCombat = "nocombat" }
 
-    -- The action bars at 80% of the game's button at Edit Mode's Icon Size; stance and pet 100%.
-    local function GameSize(info)
-        if info.defaultSize then return info.defaultSize end
-        local game = _G[info.game]
-        local first = game and game.actionButtons and game.actionButtons[1]
-        local width
-        if first and info.own then
-            local l, r = Measure(first)
-            if l then width = r - l end
-        end
-        -- Stance/pet buttons sit in our scaled bars (measuring would compound): Edit Mode's scale.
-        if not width then
-            local scale = 1
-            local container = first and first.container
-            if container then
-                local ok, value = pcall(container.GetScale, container)
-                if ok and type(value) == "number" and value > 0 then scale = value end
-            end
-            width = (info.gameBase or BASE) * scale
-        end
-        return Clamp(math.floor(width * (info.own and SCALE or 1) + 0.5), AB.SIZE_MIN, AB.SIZE_MAX)
-    end
-
     function AB.Seed(info)
         local db, key = AB.db, info.key
         local game = _G[info.game]
         local width, height = GetScreenWidth(), GetScreenHeight()
+        db[key .. "Size"] = AB.defaults[key .. "Size"]
         if info.shown then
             db[key .. "Buttons"], db[key .. "Rows"], db[key .. "Spacing"] = info.count, SHOWN_ROWS, SHOWN_SPACING
         end
@@ -949,7 +978,6 @@ do -- private scope
                     db[key .. "Rows"] = Clamp(rows, 1, count)
                 end
             end
-            db[key .. "Size"] = GameSize(info)
             if info.own then db[key .. "Show"] = GAME_SHOW[game.visibility] or "always" end
         end
         -- Centred where the game's was; without one, bars 1-3 stacked at the bottom, the rest right.
@@ -985,25 +1013,10 @@ do -- private scope
         return any
     end
 
-    -- Once the game's bars are laid out: first places, and once each the game's button sizes
-    -- (GameSize), then the fixed ones (the pet bar's 20).
+    -- Once the game's bars are laid out: first places.
     function AB.Ready()
-        local db = AB.db
         ready = true
-        local any = SeedAll()
-        if not InCombatLockdown() then
-            if not db.sizesRestored then
-                for _, info in ipairs(AB.BARS) do db[info.key .. "Size"] = GameSize(info) end
-                db.sizesRestored, any = true, true
-            end
-            if not db.fixedSizes then
-                for _, info in ipairs(AB.BARS) do
-                    if info.defaultSize then db[info.key .. "Size"] = info.defaultSize end
-                end
-                db.fixedSizes, any = true, true
-            end
-        end
-        if any then AB.LayOutAll() end
+        if SeedAll() then AB.LayOutAll() end
         TryGameBarDefaults()
     end
 
@@ -1092,7 +1105,7 @@ do -- private scope
         ACTIONBAR_SLOT_CHANGED = "all", ACTIONBAR_SHOWGRID = "all", ACTIONBAR_HIDEGRID = "all",
         ACTIONBAR_UPDATE_COOLDOWN = "cooldowns", SPELL_UPDATE_COOLDOWN = "cooldowns",
         LOSS_OF_CONTROL_ADDED = "cooldowns", LOSS_OF_CONTROL_UPDATE = "cooldowns",
-        SPELL_UPDATE_CHARGES = "counts", BAG_UPDATE_DELAYED = "counts",
+        SPELL_UPDATE_CHARGES = "counts", SPELL_UPDATE_USES = "counts", BAG_UPDATE_DELAYED = "counts",
         UPDATE_BINDINGS = "hotkeys", GAME_PAD_ACTIVE_CHANGED = "hotkeys",
         UPDATE_SHAPESHIFT_FORMS = "stances", UPDATE_SHAPESHIFT_FORM = "stances",
         UPDATE_SHAPESHIFT_COOLDOWN = "stances", UPDATE_SHAPESHIFT_USABLE = "stances",

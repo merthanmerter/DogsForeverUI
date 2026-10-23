@@ -92,8 +92,10 @@ Looted(SWORD)
 local won = active[1]
 check("one toast for the roll and its loot line; not stackable, no count",
     #active == 1 and won.text:GetText():find("^|cff0070deArcheus|r\ncoins:2500\n"), won.text:GetText())
-check("twice as large", won.height == 2 * DB.barHeight and won.icon.width == 2 * DB.barHeight * (24 / 31)
-    and won.text.points[4] == 2 * DB.barHeight and won.text.width == DB.barWidth - 2 * DB.barHeight)
+-- (The player, 2026-10-22: twice as large was a little much.)
+local wonSize = math.floor(1.6 * DB.barHeight + 0.5)
+check("1.6 times as large", won.height == wonSize and won.icon.width == wonSize * (24 / 31)
+    and won.text.points[4] == wonSize and won.text.width == DB.barWidth - wonSize)
 check("a row more: You Won! and the need roll",
     won.text:GetText():find("\n|cff%x+You Won!|r |T[^|]*Dice[^|]*|t 87$"), won.text:GetText())
 check("the game's sound", played[#played] == SOUNDKIT.UI_EPICLOOT_TOAST)

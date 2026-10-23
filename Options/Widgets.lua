@@ -197,6 +197,10 @@ do -- private scope
     ---------------------------------------------------------------------------
 
     local CLEAR = { 0, 0, 0, 0 }
+    local function Lifted(colour)
+        return { math.min(1, colour[1] * 1.15), math.min(1, colour[2] * 1.15), math.min(1, colour[3] * 1.15), 1 }
+    end
+    local LIFTED = { active = Lifted(W.GOLD), armed = Lifted(W.DANGER) }     -- hovered
 
     function W.PaintButton(button)
         local style = button.style or "normal"
@@ -217,8 +221,8 @@ do -- private scope
         elseif button.pressed then
             bg = (style == "normal" or style == "primary") and W.PRESSED or bg
         elseif button.hovered then
-            if style == "active" or style == "armed" then
-                bg = { math.min(1, bg[1] * 1.15), math.min(1, bg[2] * 1.15), math.min(1, bg[3] * 1.15), 1 }
+            if LIFTED[style] then
+                bg = LIFTED[style]
             elseif style == "nav" then
                 bg, text = W.RAISED, W.TEXT
             elseif style == "primary" then
@@ -232,7 +236,9 @@ do -- private scope
         W.Colour(button.bg, bg)
         if button.border then W.TintBorder(button.border, line) end
         if button.label then W.SetTextColour(button.label, text) end
-        for _, stroke in ipairs(button.glyph or {}) do W.Colour(stroke, text) end
+        if button.glyph then
+            for _, stroke in ipairs(button.glyph) do W.Colour(stroke, text) end
+        end
     end
     local PaintButton = W.PaintButton
 

@@ -4,7 +4,11 @@
 -------------------------------------------------------------------------------
 -- MODULE: Five Second Rule  (DogsForeverUI.FiveSecondRule, settings section "fsr")
 -- Counts down the five-second rule after mana is spent; gone the rest of the
--- time. Driven by events alone: no power value is ever read.
+-- time. Driven by events alone: no power value is ever read. Retail has no
+-- such rule: there the same bar, in the same place, is the secondary power
+-- of a spec the game gives a second bar (a shadow priest's insanity, a
+-- balance druid's astral power, an elemental shaman's maelstrom) - its mana
+-- is under the player's health (Frames\UnitPlate.lua) - in that power's colour.
 -------------------------------------------------------------------------------
 
 DogsForeverUI.FiveSecondRule = CreateFrame("Frame")
@@ -14,6 +18,7 @@ do -- private scope
     local Style = DogsForeverUI.Style
     local Castbar = DogsForeverUI.Castbar
     local IsSecret = issecretvalue
+    local RETAIL = DogsForeverUI.RETAIL
 
     local DELAY = 5
     local PENDING = 0.4                      -- a cast's mana change arrives within this
@@ -36,48 +41,11 @@ do -- private scope
     bar.label = bar:CreateFontString(nil, "OVERLAY")
     NS.bar = bar
 
-    local Place = Castbar.JoinRow(NS, bar, "5SR")
+    local Place = Castbar.JoinRow(NS, bar, RETAIL and "Secondary Power" or "5SR")
 
-    -- Not a warrior, not a rogue: what the castbar group keeps a row for.
-    function NS.ClassHasMana()
-        local _, class = UnitClass("player")
-        if IsSecret(class) then return true end
-        return class ~= "WARRIOR" and class ~= "ROGUE"
-    end
-
-    -- On mana now: not in cat (the combo points' turn) or bear form. A form
-    -- the client keeps secret counts as mana.
-    local function ManaActive()
-        local powerType, token = UnitPowerType("player")
-        if IsSecret(powerType) or IsSecret(token) then return true end
-        if token ~= nil then return token == "MANA" end
-        return powerType == nil or powerType == MANA
-    end
-
-    -- One the client will not name might: the mana change still has to follow.
-    local function SpellHasManaCost(spellID)
-        if IsSecret(spellID) or not spellID then return true end
-        local costs = C_Spell.GetSpellPowerCost(spellID)
-        if not costs then return false end
-        for _, cost in ipairs(costs) do
-            if cost.type == MANA and ((cost.cost or 0) > 0 or (cost.minCost or 0) > 0) then
-                return true
-            end
-        end
-        return false
-    end
-
-    -- Unlocked: as it really looks, a countdown just begun.
-    local function ShowPreview()
-        Style.ShowNow(bar)
-        bar:SetValue(DELAY)
-        bar.label:SetFormattedText("%.1fs", DELAY)
-        bar.spark:Hide()
-    end
-
-    local function Redraw()
+    -- Its place, size, background and label, laid out as the group's.
+    local function LayOut()
         Place()
-        Style.Paint(bar, Style.COUNTDOWN_COLOR)
         Style.SetBackground(bar.bg)
         local label = bar.label
         label:ClearAllPoints()
@@ -87,70 +55,161 @@ do -- private scope
         label:SetPoint("LEFT", bar, "LEFT", 4, 0)
         label:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
         bar.spark:SetHeight(NS.db.barHeight * Style.SPARK_HEIGHT)
-        -- A countdown running is left to OnUpdate; with none the bar goes at once.
-        if Castbar.db.unlocked and not noMana then
-            ShowPreview()
-        elseif noMana or countdownEnd <= 0 or not ManaActive() then
-            Style.HideNow(bar)
-        end
-        NS:Show()
     end
 
-    -- Runs only while there is something to draw: a countdown, or the group
-    -- being placed. Hidden otherwise; events still arrive.
-    NS:SetScript("OnUpdate", function()
-        local unlocked = Castbar.db.unlocked
-        if noMana or UnitIsDead("player") then
-            Style.HideNow(bar)
-        elseif unlocked then
-            ShowPreview()
-        elseif not ManaActive() then
-            Style.HideNow(bar)               -- cat or bear form: out of sight, still counting
-        else
-            local remaining = countdownEnd - GetTime()
-            if countdownEnd <= 0 or remaining < 0 then
-                countdownEnd = 0
-                Style.FadeOut(bar)
+    if RETAIL then
+        local SecondaryPower = GetUnitSecondaryPowerInfo or function() end
+        local secondary             -- the power type shown (the player's own), or nil
+        local POWER_EVENTS = { UNIT_POWER_FREQUENT = true, UNIT_MAXPOWER = true }
+
+        -- What the castbar group keeps a row for: a second power right now.
+        function NS.ClassHasMana() return secondary ~= nil end
+
+        -- Shown while the spec has a second power, whatever its count (the player:
+        -- hiding it at 0 never worked right - a secret count can't be told from 0).
+        local function Update()
+            if not secondary then
+                Style.HideNow(bar)
+                return
+            end
+            local value = UnitPower("player", secondary)
+            bar:SetMinMaxValues(0, UnitPowerMax("player", secondary))
+            bar:SetValue(value)
+            -- The count alone: these run to 100 or so, a share would only repeat it.
+            bar.label:SetText(AbbreviateNumbers(value))
+            Style.ShowNow(bar)
+        end
+
+        -- Which power, its colour, then its value: on a change of spec, form or power.
+        local function Redraw()
+            local token
+            secondary = nil
+            if SecondaryPower("player") then secondary, token = UnitPowerType("player") end
+            LayOut()
+            bar.label:SetJustifyH("CENTER")     -- as the unit frames' health and power
+            bar.spark:Hide()
+            if secondary then Style.Paint(bar, { Style.PowerColour(secondary, token) }) end
+            Update()
+        end
+
+        NS:RegisterEvent("PLAYER_ENTERING_WORLD")
+        NS:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+        NS:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        for _, event in ipairs({ "UNIT_POWER_FREQUENT", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER" }) do
+            NS:RegisterUnitEvent(event, "player")
+        end
+        NS:SetScript("OnEvent", function(_, event)
+            if POWER_EVENTS[event] then Update() else Redraw() end
+        end)
+
+        NS.Init = Redraw
+        NS.Redraw = Redraw
+    else
+        -- Not a warrior, not a rogue: what the castbar group keeps a row for.
+        function NS.ClassHasMana()
+            local _, class = UnitClass("player")
+            if IsSecret(class) then return true end
+            return class ~= "WARRIOR" and class ~= "ROGUE"
+        end
+
+        -- On mana now: not in cat (the combo points' turn) or bear form. A form
+        -- the client keeps secret counts as mana.
+        local function ManaActive()
+            local powerType, token = UnitPowerType("player")
+            if IsSecret(powerType) or IsSecret(token) then return true end
+            if token ~= nil then return token == "MANA" end
+            return powerType == nil or powerType == MANA
+        end
+
+        -- One the client will not name might: the mana change still has to follow.
+        local function SpellHasManaCost(spellID)
+            if IsSecret(spellID) or not spellID then return true end
+            local costs = C_Spell.GetSpellPowerCost(spellID)
+            if not costs then return false end
+            for _, cost in ipairs(costs) do
+                if cost.type == MANA and ((cost.cost or 0) > 0 or (cost.minCost or 0) > 0) then
+                    return true
+                end
+            end
+            return false
+        end
+
+        -- Unlocked: as it really looks, a countdown just begun.
+        local function ShowPreview()
+            Style.ShowNow(bar)
+            bar:SetValue(DELAY)
+            bar.label:SetFormattedText("%.1fs", DELAY)
+            bar.spark:Hide()
+        end
+
+        local function Redraw()
+            LayOut()
+            Style.Paint(bar, Style.COUNTDOWN_COLOR)
+            -- A countdown running is left to OnUpdate; with none the bar goes at once.
+            if Castbar.db.unlocked and not noMana then
+                ShowPreview()
+            elseif noMana or countdownEnd <= 0 or not ManaActive() then
+                Style.HideNow(bar)
+            end
+            NS:Show()
+        end
+
+        -- Runs only while there is something to draw: a countdown, or the group
+        -- being placed. Hidden otherwise; events still arrive.
+        NS:SetScript("OnUpdate", function()
+            local unlocked = Castbar.db.unlocked
+            if noMana or UnitIsDead("player") then
+                Style.HideNow(bar)
+            elseif unlocked then
+                ShowPreview()
+            elseif not ManaActive() then
+                Style.HideNow(bar)               -- cat or bear form: out of sight, still counting
             else
-                bar:SetValue(remaining)
-                bar.label:SetFormattedText("%.1fs", remaining)
-                bar.spark:Show()
-                bar.spark:SetPoint("CENTER", bar, "LEFT", bar:GetWidth() * remaining / DELAY, 0)
-                Style.FadeIn(bar)
+                local remaining = countdownEnd - GetTime()
+                if countdownEnd <= 0 or remaining < 0 then
+                    countdownEnd = 0
+                    Style.FadeOut(bar)
+                else
+                    bar:SetValue(remaining)
+                    bar.label:SetFormattedText("%.1fs", remaining)
+                    bar.spark:Show()
+                    bar.spark:SetPoint("CENTER", bar, "LEFT", bar:GetWidth() * remaining / DELAY, 0)
+                    Style.FadeIn(bar)
+                end
             end
-        end
-        if not unlocked and (countdownEnd <= 0 or GetTime() > countdownEnd) then NS:Hide() end
-    end)
+            if not unlocked and (countdownEnd <= 0 or GetTime() > countdownEnd) then NS:Hide() end
+        end)
 
-    NS:RegisterEvent("PLAYER_ENTERING_WORLD")
-    NS:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-    NS:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
-    NS:SetScript("OnEvent", function(_, event, ...)
-        if event == "PLAYER_ENTERING_WORLD" then
+        NS:RegisterEvent("PLAYER_ENTERING_WORLD")
+        NS:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        NS:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
+        NS:SetScript("OnEvent", function(_, event, ...)
+            if event == "PLAYER_ENTERING_WORLD" then
+                Redraw()
+            elseif noMana then
+                return
+            elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+                local _, _, spellID = ...
+                if SpellHasManaCost(spellID) then pendingUntil = GetTime() + PENDING end
+            elseif GetTime() <= pendingUntil then
+                -- Mana moving just after a mana-costing cast is its cost (a free
+                -- cast never moves it): the one power signal secret values leave.
+                local _, powerToken = ...
+                if IsSecret(powerToken) or powerToken == "MANA" then
+                    countdownEnd = GetTime() + DELAY
+                    pendingUntil = 0
+                    NS:Show()                    -- brought out by the next OnUpdate, fading in
+                end
+            end
+        end)
+
+        function NS.Init()
+            noMana = not NS.ClassHasMana()
             Redraw()
-        elseif noMana then
-            return
-        elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            local _, _, spellID = ...
-            if SpellHasManaCost(spellID) then pendingUntil = GetTime() + PENDING end
-        elseif GetTime() <= pendingUntil then
-            -- Mana moving just after a mana-costing cast is its cost (a free
-            -- cast never moves it): the one power signal secret values leave.
-            local _, powerToken = ...
-            if IsSecret(powerToken) or powerToken == "MANA" then
-                countdownEnd = GetTime() + DELAY
-                pendingUntil = 0
-                NS:Show()                    -- brought out by the next OnUpdate, fading in
-            end
         end
-    end)
 
-    function NS.Init()
-        noMana = not NS.ClassHasMana()
-        Redraw()
+        NS.Redraw = Redraw
     end
-
-    NS.Redraw = Redraw
 
     DogsForeverUI:RegisterModule(NS)
 end
@@ -158,17 +217,19 @@ end
 -------------------------------------------------------------------------------
 -- MODULE: Combo points  (DogsForeverUI.ComboPoints, settings section "combo")
 -- A rogue's (or cat druid's) combo points: one bar split into a segment per
--- point, shown while there are points. The game's gems are held off the target.
--- The count is never read (SecretWhenUnitPowerRestricted): every segment,
--- ranged over its own point, is handed it and clamps it.
+-- point, shown while there are points. The game's gems are held off the target
+-- (retail's, on the player frame, faded). The count is never read
+-- (SecretWhenUnitPowerRestricted): every segment, ranged over its own point,
+-- is handed it and clamps it.
 -------------------------------------------------------------------------------
 
 DogsForeverUI.ComboPoints = CreateFrame("Frame")
 
 do -- private scope
     local NS = DogsForeverUI.ComboPoints
-    local Style = DogsForeverUI.Style
-    local Castbar = DogsForeverUI.Castbar
+    local Core = DogsForeverUI
+    local Style = Core.Style
+    local Castbar = Core.Castbar
     local IsSecret = issecretvalue
 
     local COMBO_POINTS = Enum.PowerType.ComboPoints
@@ -204,6 +265,10 @@ do -- private scope
         local _, token = UnitPowerType("player")
         return not IsSecret(token) and token == "ENERGY"
     end
+
+    -- Forever keeps the points on the target; retail on the player.
+    local Points = Core.RETAIL and function() return UnitPower("player", COMBO_POINTS) end
+        or function() return GetComboPoints("player", "target") end
 
     local function MaxPoints()
         local max = UnitPowerMax("player", COMBO_POINTS)
@@ -266,7 +331,7 @@ do -- private scope
             return
         end
         -- Every segment gets the count, shown or not: none keeps an old one.
-        local points = GetComboPoints("player", "target")
+        local points = Points()
         for _, segment in ipairs(segments) do segment:SetValue(points) end
         if not UsesComboPoints() then
             Style.HideNow(bar)
@@ -279,15 +344,28 @@ do -- private scope
         end
     end
 
-    -- The game's gems sit on UIParent by the target frame and show again at
-    -- every point: held down from their OnShow. Not protected, so safe in combat.
-    ComboFrame:HookScript("OnShow", function(self) self:Hide() end)
+    -- Forever's gems sit on UIParent by the target frame and show again at
+    -- every point: held down from their OnShow. Not protected, so safe in
+    -- combat. Retail's are in the player frame's bottom-managed stack, where
+    -- hiding one re-lays it: faded instead, no tooltip (nothing of the game's
+    -- writes their alpha).
+    local HoldGems
+    if Core.RETAIL then
+        for _, gems in ipairs({ "RogueComboPointBarFrame", "DruidComboPointBarFrame" }) do
+            Core.Fade(_G[gems])
+            Core.Call(_G[gems], "EnableMouse", false)
+        end
+        HoldGems = function() end
+    else
+        ComboFrame:HookScript("OnShow", function(self) self:Hide() end)
+        HoldGems = function() ComboFrame:Hide() end
+    end
 
     local function Redraw()
         Place()
         Style.SetBackground(bar.bg)
         Layout()
-        ComboFrame:Hide()
+        HoldGems()
         Update(true)
     end
 

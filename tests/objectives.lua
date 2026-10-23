@@ -220,6 +220,21 @@ check("flat, in the game's blue", fill.texture == DogsForeverUI.Style.FLAT_TEXTU
 check("with a border and background", Objectives.parts[bar] and Objectives.parts[bar].border
     and Objectives.parts[bar].bg)
 
+Section("a scenario's find-group eye")
+-- The game makes it after its banner's widgets (a timer), which drew over it.
+local stage = CreateFrame("Frame", nil, tracker)
+stage:SetFrameLevel(5)
+local widgets = CreateFrame("Frame", nil, stage)
+widgets:SetFrameLevel(40)
+local timer = CreateFrame("Frame", nil, widgets)
+timer:SetFrameLevel(130)
+stage.findGroupButton = CreateFrame("Button", nil, stage)
+stage.findGroupButton:SetFrameLevel(6)
+quests.StageBlock = stage
+quests:EndLayout()
+check("over the highest of the banner's widgets", stage.findGroupButton:GetFrameLevel() == 131)
+quests.StageBlock = nil
+
 Section("again, and pooled frames handed round")
 local regions = #tracker.Header.regions
 local barRegions = #bar.regions

@@ -8,10 +8,10 @@ One addon for the **WoW Forever** client (1.60.1, interface 16001), in one look:
 | **Castbars** | one group, bottom to top: your casting bar; the five-second rule countdown — or, for a rogue or cat druid, the combo points, with the game's taken off the target frame — in one row above it; and the auto-attack swing bars at the top |
 | **XP bar** | an XP bar of its own, at any size, with the game's faded out |
 | **Chat** | the chat in a borderless panel (FlareUI's layout, the addon's look): tabs as words in a scrolling sidebar, icons top right, background at none until the mouse is over it; a window you can select and copy chat from |
-| **Menus** | a micro menu in the addon's look with the game's icons, a bag button second and the addon's options button last, placed with the UI and shown only under the mouse; the bag bar gone until a bag is open (the bags' Clean Up button is the game's own, instant); action bars that auto-hide until the mouse is over them (Action Bars 3 to 8 and the quest tracker to start); and the beta's Issue Reporter hidden |
-| **Cooldowns** | a cooldown manager: spells and items you add by ID, as bars while on cooldown, in line with the castbar over the player frame; spell and item IDs at the foot of tooltips to find them by |
+| **Menus** | a micro menu in the addon's look with the game's icons, a bag button second and the addon's options button last, placed with the UI and shown only under the mouse; the bag bar gone until a bag is open; action bars that auto-hide until the mouse is over them (Action Bars 3 to 8 and the quest tracker to start); and the beta's Issue Reporter hidden |
+| **Cooldowns** | a cooldown manager: spells and items you add by ID, while on cooldown each as a bar in line with the castbar over the player frame or a square icon in rows of their own; spell and item IDs at the foot of tooltips to find them by |
 | **Threat** | one bar over the target frame, in line with the castbar: your threat on the target NPC as the game counts it (100% is holding it), shown only while you are on its threat list |
-| **Loot toasts** | a toast over the focus frame for each item you loot (round icon in the game's ring, name in its quality colour, sell value) and the money, added up; a roll won is twice as large with a "You Won!" row and the roll, and replaces the game's roll-won alert. Hover holds one and shows its tooltip; Grow up or down in Unlock Mode |
+| **Loot toasts** | a toast over the chat (left edges level, 10 clear of it) for each item you loot (round icon in the game's ring, name in its quality colour, sell value) and the money, added up; a roll won has a larger icon (1.6 times) with a "You Won!" row and the roll, and replaces the game's roll-won alert. Hover holds one and shows its tooltip; Grow up or down in Unlock Mode |
 | **Fishing and camping** | with a fishing pole in hand, a double right-click in the world casts Fishing; a double right-click on a Basic Campfire sits you down — each a switch under Extras, both on |
 | **Skinning** | for a skinner, "Skinnable (150)" on a living creature's tooltip, coloured by your skill (red / orange / yellow / green / grey); for anyone, the cloth it drops once seen in its loot — a switch each under Extras, on |
 
@@ -105,6 +105,9 @@ the whole UI:
     right half of the screen (a white wash); a click again, or a click on
     empty space, lets go; the menu is free on the screen, dragged anywhere and kept
     there; the **arrow keys** move it a pixel, 100 with Shift;
+    **Ctrl+click** selects more (again: lets that one go) - dragging any of
+    them, or the arrow keys, moves them all as one, kept on screen whole and
+    never snapped to each other; the menu is for one piece, shut meanwhile;
     Shift+Right-click hides it until Unlock Mode closes. Smaller movers sit
     over bigger ones;
   - **its menu**: Width / Height (Extra Width / Height while matched),
@@ -125,8 +128,8 @@ the whole UI:
     *Buttons*, *Rows*, *Button size*, *Spacing*, *Show* and *Auto-hide*; the
     minimap's *Size*, *Header below* (the title under the map, on by
     default) and *Rotate minimap* (off by default) - the addon's own, at
-    once with no reload, put back by Reset everything; the chat's *Width*,
-    *Height* and *Copy button*. While it waits for the other part, the
+    once with no reload, put back by Reset everything; the chat's *Width*
+    and *Height*. While it waits for the other part, the
     menu steps aside and the mover says what to click; a refusal (to
     itself, in a circle) shows the part's outline red and the reason at the
     cursor. **Anything changed in a menu is an unsaved change** like a
@@ -148,7 +151,13 @@ the whole UI:
     bag bar stay the game's frames, hung from a place of the addon's that
     Unlock Mode moves (put back whenever Edit Mode re-anchors them); the
     extra action button's container moved into a holder of the addon's, out
-    of the game's layout. The bag bar's menu has its **Size** (75% to start),
+    of the game's layout. On retail **the class resource** - the game's own
+    runes, essence, arcane charges, chi, holy power or soul shards - is a piece
+    too (*Class Resource*), its frame centred on a place of the addon's, on the
+    secondary power's spot to start, and put back each time the player frame's
+    managed layout takes it (on a show, as the UI shows again); no field
+    written on it, never shown or hidden by the addon (EllesmereUI's way).
+    Rogues' and cat druids' combo points are the addon's own row. The bag bar's menu has its **Size** (75% to start),
     and it shows while Unlock Mode is open so it can be seen as it is placed;
   - **the game's frames the addon does not replace** (buffs, the quest
     tracker, raid frames...) each get a box with their name - as EllesmereUI
@@ -160,8 +169,8 @@ the whole UI:
 
   Dropping a frame beside another only places it there: **nothing moves with
   anything unless it was anchored**. **Anchored to start with**, from where
-  they are: the focus, the pet and the cooldowns to the player frame, the
-  target of target to the target, the five-second rule to the castbar and
+  they are: the focus, the pet and the cooldown bars to the player frame, the
+  target of target to the target, the pet bar to the pet frame, the five-second rule to the castbar and
   the swing timers to the five-second rule — once each (remove one and it
   stays removed; *Reset Position* anchors it again).
 
@@ -170,8 +179,9 @@ the whole UI:
   combat), at once by Reset everything, and per piece by *Reset
   Position*; anything moved afterwards stays where it is put. "Snapped"
   means the two boxes, border included, touching:
-  - Action Bars 1 to 5 twelve buttons in two rows, 2 apart; 6 to 8, the
-    stance and pet bars take the game's settings. **Whether Action Bars 2 to
+  - Action Bars 1 to 5 twelve buttons in two rows, 2 apart; the pet bar two
+    rows of 24, its left edge the pet frame's and its bottom Action Bar 2's;
+    6 to 8 and the stance bar take the game's settings. **Whether Action Bars 2 to
     8 are there at all is the game's own switch** (Options > Action Bars >
     Action Bar 2 ... 8), followed live: one switched off there is not shown,
     not in Unlock Mode either. **Action Bars 2 to 5 are switched on there**
@@ -517,9 +527,10 @@ health bar, both filled with the whole shield out of `UnitHealthMax`. One runs
 on from the fill's end inside the heal shading, which clips it at the bar's end;
 the other runs back from the bar's far end inside the heal absorb's bar, which
 clips it at the fill's end - so it shows only what the missing health could not
-hold, over the health. They wear the game's own shield look: its fill
-(`Interface\RaidFrame\Shield-Fill`) with its stripes (`Shield-Overlay`) tiled
-over it. The party pets' boxes (`Frames\UnitPlate.lua`) draw all
+hold, over the health. They wear exactly the game's raid-frame shield: its fill
+(`raidframe-shield-fill`) with its stripes (`RaidFrame-Shield-Overlay`) over it,
+set as the game sets them (`SetTextureWithAddressModeOptions`, repeated and tiled
+both ways). The party pets' boxes (`Frames\UnitPlate.lua`) draw all
 of it, turned upright.
 
 The one value that *is* read is the unit's class, because it is used as a table
@@ -634,6 +645,12 @@ placed (`Core\Defaults.lua`, v15), which keeps it centred when the party
 frames' size changes until it is placed). The column is placed as one:
 dragging any of them with *Unlock UI* moves all four. Each step down is a
 frame's bars, its border and 2 of daylight (`UnitPlate.PartyStep`).
+*Layout* in the same menu turns the column into **a row** (`partyLayout`,
+*Column* to start): party1 at the left, each next one a frame's width, its
+border and the same 2 to the right, sorted and laid out by the same secure
+layout (its `across` attribute), in combat too. In a row each pet's box is
+turned over its owner and the auras hang right under the frame. The menu
+starts Layout, Sort by, Auras, Show self, Show pets.
 Each shows the member's **role** in the health bar's top left corner (beside
 the name on a short bar): the game's own tank / healer / damage icons, the
 ones its raid-style frames use
@@ -646,7 +663,16 @@ range could be checked and it is not in it), on the frames' redraw timer. A
 secret answer is handed untested to `SetAlphaFromBoolean`. Fully drawn while
 the frames are being placed.
 Their buffs and debuffs go **to the right** of each frame (*Party auras*:
-*Right* or *Off*; a row above or below would run into the next frame). While
+*On* or *Off*; a row above or below would run into the next frame), **right
+under** it in a row, where one beside it would. The
+dispel wash over a frame's health **pulses** (half to full and back, half a
+second each way, the game's raid frames' dispel overlay pulse), so a debuff you
+can dispel stands out in a fight; the icons themselves wear only their border.
+The game's group manager (its party and raid options at the screen's left)
+shows only its button while collapsed, not the strip of its side; its open and
+close buttons wear the minimap drawer handle's gold arrow (`Style.ARROW`),
+lit under the mouse, instead of the game's stone-capped art. A name with no room for even a letter (a short,
+narrow frame beside its value) is not drawn at all, rather than as "..". While
 Unlock Mode is open each frame shows **a few made-up auras** there instead
 (2-4 buffs, then a row of 1-2 debuffs edged in their dispel colour, with
 swipes, picked at random each time it opens - `UnitAuras` PREVIEW), the real
@@ -668,11 +694,14 @@ Click targets the pet, right-click its menu. A child of its
 owner's frame, hung off its left edge, so it goes wherever the column lays the
 owner out (in combat too); its own fade - the
 pet's range, not its owner's (as the party frames). Shown by a secure
-driver while the pet exists (never in a raid), hidden while placing. So a box
+driver while the pet exists (never in a raid); while placing, shown on the
+first and third members only (a missing pet drawn as the player). So a box
 is never pushed off the screen's left edge onto its owner, every frame of the
 column keeps its room clear of that edge (`PartyPets.Room`, the frames'
 clamp rect). *Show pets* in the column's Unlock Mode menu, on by default
-(`partyShowPets`).
+(`partyShowPets`). In a row the box is turned (`TurnHeals`): over its owner,
+as wide and a fifth of that tall, its health and heals filling rightwards, the
+sheen over its top half; the room kept clear is then the screen's top edge.
 
 **Shown when the game shows its party frames**: a secure state driver on each
 (`[group:raid] hide; [@partyN,exists] show; hide`), so the game shows and
@@ -1332,29 +1361,53 @@ is in your spellbook, otherwise the rank the game knows by that spell's name
 (ranks share one cooldown), worked out again when the spellbook changes. So an
 old Rank 1 ID still shows the cooldown of the rank you cast.
 
-**Cooldown, Duration or Both.** Two questions decide what a spell can track.
-Does it have a cooldown — a base cooldown above 0, or charges (static spell
-data)? And does it leave a buff on you? No API answers that beforehand
+**Cooldown, Duration or Both.** A spell with a cooldown — a base cooldown
+above 0, or charges (static spell data) — has a choice side by side from the
+moment it is added: *Cooldown* (the default), *Duration* (a bar for its buff
+while that is on you), *Both*: one bar (or icon), its buff first and then its
+cooldown. Whether a spell leaves a buff on you no API answers beforehand
 ("helpful" and "self buff" were tried, and were wrong both ways — Consecration
-and Will of the Forsaken count as helpful and leave no buff), so it is
-**learned, the same way for every spell**: half a second after you cast a
-tracked spell, is its buff (any rank) on you? Seen: it leaves one. Not there,
-with auras readable: it leaves none. In combat auras are secret to add-ons and
-a missing buff proves nothing, so only a buff actually seen counts then; one
-out-of-combat cast settles it. A buff already on you when the list refreshes
-is noticed too. What is learned is kept on the list entry, so it is saved.
+and Will of the Forsaken count as helpful and leave no buff), so the player
+picks; until 2026-10-17 the choice waited for a buff to be seen, and the
+player hated finding only *Cooldown* on a spell that obviously has a buff.
 
-A cooldown and a buff seen: its line has a choice side by side — *Cooldown*
-(the default), *Duration* (a bar for its buff while that is on you), *Both*.
-Otherwise it says in words what the spell tracks: a spell with a cooldown its
-*Cooldown* (until a buff is seen); one without, its *Duration* — or *Nothing*,
-once it is seen to leave no buff. Items only ever show their cooldown.
+The Both buff is one of the game's aura slots laid exactly over the entry's
+own cooldown bar or icon, a few levels above it and opaque, so while it is
+up it hides the cooldown whole, and as it ends the cooldown shows. Its frame
+is never read or touched after it is set up: the game denies add-ons its aura
+frames while auras are secret (combat), and reading its shown state flooded
+errors. As a cooldown starts it stays unseen a moment (0.4 s), since its buff
+lands (and fades in) a moment after the cast and the cooldown flashed before
+it. Whether the buff is up is secret, so the spot is the cooldown's - a buff
+up while its spell is not cooling down stays where that spot last was; the
+stack always closes up (a spot kept for good left gaps all through it). A Both
+bar's spark is hidden - taller than the bar, it poked out round the buff's.
+
+A spell with no cooldown tracks its *Duration* — or *Nothing*, once it is
+seen to leave no buff. That is **learned, the same way for every spell**:
+half a second after you cast a tracked spell, is its buff (any rank) on you?
+Seen - yours or your pet's, never another player's copy of it on you: it
+leaves one, for good (a later cast on someone else, or a buff already
+gone, unlearns nothing). Not there, never seen, with auras readable: it leaves
+none. In combat auras are secret to add-ons and a missing buff proves
+nothing. A buff already on you when the list refreshes is noticed too. What
+is learned is kept on the list entry, so it is saved. Items only ever show
+their cooldown.
 
 **The section** is the explanation under its heading, *IDs on tooltips*,
 *Bars grow* (Upward / Downward), then the list: the ID box with
 one *Add* button (the toast says what the add did), and a line per entry —
 icon, name and ID, what it tracks, and a cross to remove it. The page below
-moves down as the list grows.
+moves down as the list grows. On retail, another spec's spells come after a
+*Not in your current spec* divider, dimmed, saying *Set in its spec* - as the
+game's spellbook says (it holds the other specs' spells, marked off-spec;
+`FindSpellBookSlotForSpell` with and without them). A buff or proc is in no
+spec's book, so never dimmed; Forever has no specs. **A spell's cooldown shows
+only while you have the spell** (this spec, any rank, or your pet's): the game
+answers one not learnt with some other cooldown (Prayer of Mending in Shadow
+showed Power Word: Shield's). Its own ID's cooldown is read, never the ID
+`GetOverrideSpell` hands back (its variant read as the global cooldown at
+first, and cooldowns showed late).
 
 **Spells with no cooldown track their buff.** A spell whose base cooldown is 0
 (Seal of Command, Battle Shout — static spell data, read when the list or the
@@ -1364,9 +1417,14 @@ read apart. These bars are the game's own, from the aura container
 it makes for add-ons (`CustomAuraContainerTemplate`): the game fills it from
 your auras — secret or not — and runs each bar's icon, name, time and draining
 fill itself, so it works in combat with nothing read by the addon. It is
-filtered to `HELPFUL` auras with the tracked spells' IDs — **every rank**: each
+filtered to `HELPFUL|PLAYER` auras - cast by you, as the game's Cooldown
+Manager (the aura's "from a player" field is true for any player's: another
+priest's Renew showed as yours) - with the tracked spells' IDs — **every rank**: each
 spell in your spellbook with the same name, the highest the game knows by that
-name, and the ID as added; a rank learned later is added on `SPELLS_CHANGED`.
+name, and the ID as added; a rank learned later is added on `SPELLS_CHANGED`
+(a shapeshift fires a burst of them: worked out once, a frame later, and the
+game handed new filters only when they changed). A size changed in a fight
+reaches the game's bars once auras can be read again.
 They stack directly on top of the cooldown bars (the game will not say how many
 it shows, so the two cannot be one list), and within that stack the game
 orders them. Hover a bar for the buff's tooltip. A buff that does not run out (a stance, an
@@ -1388,6 +1446,41 @@ that — only if anchored to one in Edit Mode. Dragged (*Unlock UI* on the main
 page) or given a typed position, they stay where they are put; a typed width or height leaves them where they were. Size and layer
 are on the main page under *Sizes*, the spot under *Positions*; the unlock and
 the reset stay on the main page only.
+
+**Or as icons.** Each entry's line has *Bar* or *Icon* (a bar to start):
+the bar entries stack as bars, the icon entries fill rows of square icons,
+both at once. An icon has the action buttons' corners and one line a real
+pixel wide in the bars' colours - a cooldown's gold, a duration's green -
+the time inside in one unit ("2m", "45s"), a spell's charges at the bottom
+right, and a dark swipe over the picture as its time runs (a buff's darkens
+the part gone, so one that never ends stays clear), from the same duration
+object as the bar. The rows are the *Cooldown Icons* piece (to start centred
+on the screen, a row's gap over the secondary power, anchored to nothing;
+32 across, 5 to a row; always drawn over the bars, should the two meet;
+anchored to the bars by the player, they hang from the bars at their
+tallest), placed in Unlock Mode, its menu with *Icon size*,
+*Icons per row*, *Icons grow* (both sides - each row centred on what it
+holds, to start - rightward or leftward) and *Rows grow* (up or
+down). Icons fade in, fade out where they are, and the rest glide into the
+gap, as the bars do. Duration-only icons are the game's group, laid out by
+it from the spot after the cooldown icons, filling the rest of their row
+(whether a buff is up is secret: only the game can close up over one that
+is not; it starts every line at the same place, so a second line of them
+starts under the first, not at the row's start); growing both sides, the
+game's group is hung by its middle (it sizes itself to what it shows; nothing
+is read) and **a part-full last row is shared**: that row's cooldown icons hang
+off the group's left edge, a gap clear, so the whole row centres as one (exact
+while a buff shows; 3 px left with none). The game lets only frames made with
+`DisableUntrustedLayoutScriptsTemplate` hang there, so the icons are made with
+it; tried first on a spare icon, and any refusal keeps the icons on their own
+spots instead (the buffs then carry on the row). Hung there, an icon's size is
+secret in a fight: it is let go before it is laid out again, and never hung
+there while placing (Unlock Mode measures every icon). After a full row the
+buffs take a row of their own; a Both
+icon's buff covers its own cooldown icon, as a bar's does. The icons take no
+mouse, so the world under them stays clickable. The bars and the icons keep
+a place each, and each shows only while an entry uses it. In Unlock Mode the
+two pieces are *Cooldown Bars* and *Cooldown Icons*.
 
 **No "ready" or missing-buff icons.** A mode that showed an icon while a spell
 was ready and its buff was not on you existed for a few hours and was taken
@@ -1415,15 +1508,25 @@ spell.
 
 **Secrets.** Cooldowns are secret in combat on this client, and the old global
 cooldown bar died of deciding on one. Here, whether a spell is cooling down is
-`SpellCooldownInfo.isActive`, and whether that is only the global cooldown is
+`SpellCooldownInfo.isActive`, and whether that is only the global cooldown is,
+where the game answers plainly (Forever; retail out of combat), whether the
+cooldown with the global one left out (`GetSpellCooldownDuration(id, true)`)
+`IsZero` - exact, at once. Where that is secret (retail in a fight) it is
 `.isOnGCD` (read when `SPELL_UPDATE_COOLDOWN` fires, the only time the field is
-to be trusted) — both documented `NeverSecret`. A bar is run by the game from
+to be trusted, and believed for no longer than a global cooldown lasts, 1.5 s)
+— both documented `NeverSecret` — and the spell's own cast clears it at once
+(one cast right as another's global cooldown ended showed late). A bar is run by the game from
 `C_Spell.GetSpellCooldownDuration` (`SetTimerDuration`, global cooldown left
 out) and its time formatted by the game (`FormatRemainingDuration`), neither
 read by the addon. Should `isActive` ever arrive secret after all, it is not
 looked at: the bar keeps its place and the game sets its alpha from the
 boolean. Items are not secret, so their numbers are read — checked first. A
-cooldown ends with no event, so everything looks again ten times a second.
+cooldown ends with no event, so everything looks again ten times a second
+while anything is tracked — not only while a cooldown shows: after a loading
+screen the game may report a running cooldown as idle, then correct itself
+with no event (Dash stayed missing until a form change fired one, 2026-10-17).
+For the same reason the rank asked about is remembered only once the
+spellbook has it, since the spellbook may be empty as the world loads.
 
 **The ID line** is one `TooltipDataProcessor` post-call for every kind of
 tooltip, added at the first `PLAYER_ENTERING_WORLD` so it comes after the

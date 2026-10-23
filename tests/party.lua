@@ -44,6 +44,18 @@ check("a size of their own: the health bar 40 to start (the player, 2026-10-03)"
     plates[1].width == DB.partyWidth and DB.partyRaidHealth == 40 and plates[1].health.height == 40
     and plates[1].height == 40 + 1 + DB.partyPower)
 check("no switch between two styles any more", DB.partyRaidStyle == nil and DB.partyHealth == nil)
+do
+    -- (The player, 2026-10-22: a short narrow frame drew its name as "..".)
+    check("a name with room: shown", plates[1].nameText.shown ~= false)
+    local width, health = DB.partyWidth, DB.partyRaidHealth
+    DB.partyWidth, DB.partyRaidHealth = 90, 20
+    NS.Refresh()
+    check("short and narrow, no room for a letter beside the value: no name at all",
+        plates[1].nameText.shown == false)
+    DB.partyWidth, DB.partyRaidHealth = width, health
+    NS.Refresh()
+    check("room again: back", plates[1].nameText.shown ~= false)
+end
 check("left-click targets, right-click the unit menu",
     plates[2].click:GetAttribute("*type1") == "target" and plates[2].click:GetAttribute("*type2") == "togglemenu")
 
@@ -459,6 +471,68 @@ do
     units.player.role = nil
 end
 
+Section("next and previous party member by key, down the column as shown")
+do
+    local column = UnitPlate.column
+    local nextButton, previous = _G.DogsForeverUIPartyNext, _G.DogsForeverUIPartyPrevious
+    local snippet = UnitPlate.CYCLE_SNIPPET
+    check("two secure buttons that target on a key's press, wrapped by the column",
+        nextButton and previous and nextButton.template == "SecureActionButtonTemplate"
+        and nextButton:GetAttribute("type") == "target" and nextButton:GetAttribute("useOnKeyDown") == true
+        and column.wrapped[nextButton].OnClick == snippet and column.wrapped[previous].OnClick == snippet)
+    check("the snippet as the game takes it: no function, no braces",
+        not snippet:match("function") and not snippet:match("[{}]"))
+    -- (Secure code, run as the game would: the unit it leaves is the one targeted.)
+    local function Press(button)
+        local chunk = assert(load("local self, button, down = ...\n" .. snippet, "cycle", "t",
+            { owner = column, tonumber = tonumber, UnitIsDead = UnitIsDeadOrGhost, UnitIsGhost = UnitIsDeadOrGhost }))
+        if chunk(button, "LeftButton", true) == false then return "nothing" end
+        return button:GetAttribute("unit")
+    end
+    local was = { units.party1, units.party2, units.party3, units.target, inGroup, DB.partyShowSelf, DB.partySort }
+    inGroup = true
+    units.party1, units.party2, units.party3 = Member("Grumbo"), Member("Tessa"), Member("Aldo")
+    DB.partyShowSelf, DB.partySort = true, "group"
+    NS.Refresh()
+    column:SetAttribute("state-roster", "3")
+    local seen = {}
+    for index = 1, 5 do seen[index] = Press(nextButton) end
+    check("next: down the column (by group, the player first), round to the top",
+        table.concat(seen, ",") == "player,party1,party2,party3,player", table.concat(seen, ","))
+    check("previous: back up, round to the bottom", Press(previous) == "party3" and Press(previous) == "party2")
+    units.target = units.party1
+    Fire("PLAYER_TARGET_CHANGED")
+    check("goes on from whoever was targeted another way", Press(nextButton) == "party2")
+    units.target = Member("Stranger")
+    Fire("PLAYER_TARGET_CHANGED")
+    check("someone outside the party targeted: next starts at the top", Press(nextButton) == "player")
+    units.party1.dead = true
+    check("a dead member passed over, both ways", Press(nextButton) == "party2" and Press(previous) == "player")
+    Press(nextButton)
+    units.party2.dead = true
+    check("from a member who died meanwhile, on to the next one", Press(nextButton) == "party3")
+    units.party1.dead, units.party2.dead = nil, nil
+    DB.partyShowSelf = false
+    NS.Refresh()
+    check("Show self off: the player left out, as in the column", Press(previous) == "party2"
+        and Press(nextButton) == "party3" and Press(nextButton) == "party1")
+    units.party2.offline = true
+    NS.Refresh()
+    check("an offline member passed over", column:GetAttribute("offline2") == true and Press(nextButton) == "party3")
+    inCombat = true
+    units.party2.offline = nil
+    check("back online in a fight: still passed over until it ends (the secure side cannot ask)",
+        Press(previous) == "party1")
+    inCombat = false
+    Fire("PLAYER_REGEN_ENABLED")
+    check("the fight over: in the cycle again", Press(nextButton) == "party2")
+    column:SetAttribute("state-roster", "0")
+    check("no party: nothing targeted", Press(nextButton) == "nothing")
+    units.party1, units.party2, units.party3, units.target, inGroup, DB.partyShowSelf, DB.partySort = unpack(was, 1, 7)
+    NS.Refresh()
+    Fire("GROUP_ROSTER_UPDATE")
+end
+
 Section("the members' pets: a box left of each")
 do
     local Pets = NS.PartyPets
@@ -556,7 +630,12 @@ do
     Tick(0.1)
     check("on again", pets[1].shown)
     Core.SetUnlocked(true)
-    check("hidden while placing", not pets[1].shown)
+    -- (The player, 2026-10-22: some of the column's frames show one while placing.)
+    check("placing: shown off the driver on some members only, a missing pet painted as the player",
+        pets[1].shown and not pets[2].shown and pets[3].shown and not pets[4].shown
+        and pets[1]:PaintUnit() == "partypet1" and pets[3]:PaintUnit() == "player",
+        string.format("%s %s %s %s", tostring(pets[1].shown), tostring(pets[2].shown),
+            tostring(pets[3].shown), tostring(pets[4].shown)))
     Core.SetUnlocked(false)
     Tick(0.1)
     check("back after", pets[1].shown)
@@ -596,6 +675,9 @@ check("the debuffs you can dispel first, on a row of their own, in the game's bo
     row.auraGroups.dispel.filter == "HARMFUL|RAID" and row.auraGroups.dispel.layout.forceNewLine == true
     and row.auraGroups.dispel.layout.layoutIndex == 6
     and row.auraGroups.dispel.sample.dispelOptions.style == styles.BorderWithIcon)
+-- (The player, 2026-10-22: no glow on the icons - "seriously very bad".)
+check("the icons wear nothing more: their one dispel border, no glow",
+    #row.auraGroups.dispel.sample.dispels == 1 and #row.auraGroups.debuffs.sample.dispels == 1)
 farUnits.party1 = true
 Auras.Poll(nil, 1)
 check("a member too far away to be seen: every buff and debuff once, in two plain groups",
@@ -654,6 +736,14 @@ check("in that type's colour, laid over the health bar's FILL only (the health s
     and washTexture.anchors[2][2] == plates[1].health:GetStatusBarTexture())
 check("in the bars' own look: their flat texture, with the sheen and shade over it - never a plain square",
     washTexture.texture == Style.FLAT_TEXTURE and washTexture.colorTexture == nil and shines == 2)
+do
+    -- (The player, 2026-10-22: the colour over the health bar should move, to stand out in a fight.)
+    local pulse = washTexture.animationGroup
+    local fade = pulse and pulse.animations[1]
+    check("pulsing for good, as the game's raid frames' dispel overlay: half to full and back, half a second",
+        pulse ~= nil and pulse.looping == "BOUNCE" and pulse.playing and fade.kind == "Alpha"
+        and fade.fromAlpha == 0.5 and fade.toAlpha == 1 and fade.duration == 0.5)
+end
 check("one level over the health bar, under the frame's words (name, health): never covering them",
     magic.sample.frameLevel == plates[1].health:GetFrameLevel() + 1
     and plates[1].words:GetFrameLevel() > magic.sample.frameLevel
@@ -776,8 +866,19 @@ local function MenuRow(label)
     end
 end
 local auras = MenuRow("Auras")
-check("one Auras choice for the column: Right or Off", auras ~= nil and #auras.control.choices == 2
-    and auras.control.choices[1].label == "Right")
+check("one Auras choice for the party: On (beside a column's frames, under a row's) or Off",
+    auras ~= nil and #auras.control.choices == 2 and auras.control.choices[1].label == "On")
+local layoutRow = MenuRow("Layout")
+check("Layout: Column or Row, Column to start", layoutRow ~= nil and #layoutRow.control.choices == 2
+    and layoutRow.control.choices[1].label == "Column" and layoutRow.control.choices[2].label == "Row"
+    and DB.partyLayout == "column")
+do
+    -- (The player, 2026-10-23: Layout, Sort by, Auras, Show self, Show pets first.)
+    local first = {}
+    for index = 1, 5 do first[index] = menu.block.rows[index].label.text end
+    check("Layout, Sort by, Auras, Show self, Show pets: the menu's first five",
+        table.concat(first, ",") == "Layout,Sort by,Auras,Show self,Show pets", table.concat(first, ","))
+end
 check("no style switch: one standard", MenuRow("Raid-style frames") == nil)
 local sortRow, selfRow = MenuRow("Sort by"), MenuRow("Show self")
 check("Sort by: the game's three, Role first", sortRow ~= nil and #sortRow.control.choices == 3
@@ -833,5 +934,141 @@ check("and a layer of their own", DB.partyStrata == "HIGH" and plates[1].strata 
 check("each an unsaved change of Unlock Mode's", Core.EditModePending())
 Core.CommitEditMode()
 Core.SetUnlocked(false)
+
+Section("a row: the party side by side, its pets over each frame, its auras under it")
+do
+    local Pets, Auras = NS.PartyPets, NS.UnitAuras
+    local pet, row = NS.plates.partypet1, Auras.containers.party1
+    DB.partyLayout = "row"
+    NS.Refresh()
+    local across = UnitPlate.PartyStep(DB)
+    local function InRow()
+        for _, plate in ipairs(plates) do
+            if plate.points[4] ~= DB.partyLeft + (plate.partySlot - 1) * across
+               or plate.points[5] ~= DB.partyTop then return false end
+        end
+        return true
+    end
+    check("each next one a step right: its width, border and the same gap",
+        across == DB.partyWidth + 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP and InRow())
+    check("the box one frame tall", NS.PartyColumn(DB) == DB.partyRaidHealth + 1 + DB.partyPower
+        + 2 * Style.BORDER_INSET)
+    local gap = 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP
+    -- (The player, 2026-10-23: the pets above the frames, the buffs right below.)
+    check("each pet over its owner, as wide, a fifth of that tall, its border clear of the owner's",
+        pet.points[1] == "BOTTOMLEFT" and pet.points[2] == plates[1] and pet.points[3] == "TOPLEFT"
+        and pet.points[4] == 0 and pet.points[5] == gap
+        and pet.width == plates[1].width and pet.height == math.floor(DB.partyWidth / 5 + 0.5))
+    check("its fill turned: rightwards, the heals and shields with it, the sheen over its top half",
+        pet.health.orientation == "HORIZONTAL" and pet.prediction.orientation == "HORIZONTAL"
+        and pet.healAbsorb.orientation == "HORIZONTAL" and pet.shield.orientation == "HORIZONTAL"
+        and pet.prediction.anchors[1][1] == "TOPLEFT" and pet.prediction.anchors[1][3] == "TOPRIGHT"
+        and pet.overShield.anchors[1][1] == "TOPRIGHT"
+        and pet.health.sheen.gradient.orientation == "VERTICAL")
+    local room = Pets.Room(DB)
+    check("room for the pets kept clear of the screen's top edge instead",
+        room == gap + pet.height + Style.BORDER_INSET and plates[1].clampInsets[1] == 0
+        and plates[1].clampInsets[3] == room)
+    check("the auras right under each frame", Auras.Side("party1") == "below" and DB.partyAuras == "right"
+        and row.points[1] == "TOPLEFT" and row.points[2] == plates[1] and row.points[3] == "BOTTOMLEFT"
+        and row.points[5] > -room)
+
+    local column = UnitPlate.column
+    check("the secure layout told", column:GetAttribute("across") == true
+        and column:GetAttribute("step") == across)
+    -- (Secure code: allowed in combat, as the game allows its own.)
+    for _, plate in ipairs(plates) do plate:ClearAllPoints() end
+    assert(load("return function(self, ...) " .. UnitPlate.COLUMN_LAYOUT .. " end"))()(column, "4")
+    check("so a member joining in combat is laid out along the row too", InRow())
+
+    Core.SetUnlocked(true)
+    check("placing: the made-up auras under the frames too",
+        Auras.previews.party1.points[3] == "BOTTOMLEFT" and Auras.previews.party1.points[2] == plates[1])
+    plates[2].left, plates[2].top = 300, 500
+    plates[2].click.scripts.OnMouseDown(plates[2].click, "LeftButton")
+    plates[2].click.scripts.OnMouseUp(plates[2].click, "LeftButton")
+    check("dragging any of them moves the row: party1's place worked back along it",
+        DB.partyLeft == 300 - (plates[2].partySlot - 1) * across
+        and math.abs(DB.partyTop - (500 - GetScreenHeight())) < 1e-9 and InRow())
+    Core.SetUnlocked(false)
+
+    DB.partyLayout = "column"
+    NS.Refresh()
+    check("a column again: the pets left of their owners, filling upwards, the auras to the right",
+        pet.points[1] == "TOPRIGHT" and pet.points[3] == "TOPLEFT" and pet.height == plates[1].height
+        and pet.health.orientation == "VERTICAL" and pet.health.sheen.gradient.orientation == "HORIZONTAL"
+        and plates[1].clampInsets[1] == -Pets.Room(DB) and plates[1].clampInsets[3] == 0
+        and Auras.Side("party1") == "right" and row.points[3] == "TOPRIGHT"
+        and column:GetAttribute("across") == false)
+end
+
+Section("the targeted member: a white border over the gold")
+do
+    local first, second = NS.plates.party1, NS.plates.party2
+    units.party2 = units.party2 or Member("Tessa", "PRIEST")
+    units.target = units.party2
+    Fire("PLAYER_TARGET_CHANGED")
+    check("on the targeted member's frame alone",
+        second.targetBorder:IsShown() and not first.targetBorder:IsShown()
+        and second.targetBorder:GetFrameLevel() > second.border:GetFrameLevel())
+    local white = second.targetBorder.lines[1].colour
+    check("white, plain to tell from the gold", white[1] == 1 and white[2] == 1 and white[3] == 1)
+    units.target = units.party1
+    Fire("PLAYER_TARGET_CHANGED")
+    check("another member targeted: it moves", first.targetBorder:IsShown() and not second.targetBorder:IsShown())
+    units.target = nil
+    Fire("PLAYER_TARGET_CHANGED")
+    check("nobody in the party targeted: none", not first.targetBorder:IsShown())
+    check("the other unit frames have none", NS.plates.target.targetBorder == nil)
+end
+
+Section("a follower dungeon's NPC in the party: its class colour, as the game's raid frames")
+do
+    -- (The player, 2026-10-22: Valeera's frame was the game's blue party selection colour.)
+    local was = units.party3
+    units.party3 = Member("Valeera", "ROGUE")
+    units.party3.isPlayer, units.party3.asPlayer = false, true
+    Fire("GROUP_ROSTER_UPDATE")
+    Tick(0.1)
+    local rogue, colour = RAID_CLASS_COLORS.ROGUE, NS.plates.party3.health.statusColor
+    check("the rogue's yellow, untoned", colour and colour[1] == rogue.r and colour[2] == rogue.g
+        and colour[3] == rogue.b, colour and table.concat(colour, ","))
+    units.party3 = was
+    Fire("GROUP_ROSTER_UPDATE")
+end
+
+Section("the game's group manager, collapsed: its button alone")
+do
+    -- (The player, 2026-10-22: the strip of its side showed past the screen's edge.)
+    local manager = CreateFrame("Frame", "CompactRaidFrameManager", UIParent)
+    manager.Background = manager:CreateTexture()
+    manager.displayFrame = CreateFrame("Frame", nil, manager)
+    manager.displayFrame:Hide()
+    -- (The game's button, its art from its template.)
+    local button = CreateFrame("Button", nil, manager)
+    local normal, pushed = button:CreateTexture(nil, "OVERLAY"), button:CreateTexture(nil, "OVERLAY")
+    function button:GetNormalTexture() return normal end
+    function button:GetPushedTexture() return pushed end
+    manager.toggleButtonForward = button
+    Fire("ADDON_LOADED", "Blizzard_CompactRaidFrames")
+    check("collapsed (its options shut): its background gone", manager.Background:GetAlpha() == 0)
+    -- (The player, 2026-10-22: "use a better arrow. this looks broken in style".)
+    local forward = manager.toggleButtonForward
+    local arrow, hover
+    for _, region in ipairs(forward.regions or {}) do
+        if region.atlas == Core.Style.ARROW.atlas then
+            if region.layer == "HIGHLIGHT" then hover = region else arrow = region end
+        end
+    end
+    check("its button the drawer handle's gold arrow, pointing right, the game's stone art faded",
+        arrow ~= nil and arrow.rotation == math.pi and forward:GetNormalTexture():GetAlpha() == 0
+        and forward:GetPushedTexture():GetAlpha() == 0)
+    check("lit under the mouse as the handle is: the arrow added over itself",
+        hover ~= nil and hover.blendMode == "ADD" and hover:GetAlpha() == Core.Style.ARROW.highlight)
+    manager.displayFrame:Show()
+    check("opened: back", manager.Background:GetAlpha() == 1)
+    manager.displayFrame:Hide()
+    check("shut again: gone again", manager.Background:GetAlpha() == 0)
+end
 
 Summary()

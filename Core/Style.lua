@@ -23,6 +23,10 @@ do -- private scope
     Style.TEXT_COLOR = { 1, 1, 1 }
     Style.GOLD = { 0xff / 255, 0xbb / 255, 0x20 / 255 }      -- the game's heading gold
 
+    -- The game's small gold toggle arrow (the buff frame's and bag bar's), pointing
+    -- left, at their size; under the mouse a copy added over it at the game's strength.
+    Style.ARROW = { atlas = "bag-arrow", width = 10, height = 16, highlight = 0.4 }
+
     -- The border's three lines, outside in: the tooltip's gold, a darker
     -- bevel, black (also the hairline between two bars).
     Style.BORDER_COLOR = { 178 / 255, 142 / 255, 97 / 255, 1 }
@@ -85,6 +89,25 @@ do -- private scope
     local function GameColour(colour, r, g, b)
         if type(colour) == "table" and colour.GetRGB then return { colour:GetRGB() } end
         return { r, g, b }
+    end
+
+    -- A resource's colour (UnitPowerType's two answers): mana ours, any other exactly the
+    -- game's PowerBarColor - plain fields or a colour object, by token or by number.
+    local MANA = Enum.PowerType.Mana
+    local function PowerBarRGB(info)
+        if type(info) ~= "table" then return end
+        if type(info.r) == "number" then return info.r, info.g, info.b end
+        if info.GetRGB then return info:GetRGB() end
+    end
+    function Style.PowerColour(powerType, token)
+        if issecretvalue(powerType) or issecretvalue(token) or token == "MANA"
+           or (token == nil and powerType == MANA) then
+            return unpack(Style.MANA_COLOR)
+        end
+        local r, g, b = PowerBarRGB(PowerBarColor[token])
+        if not r then r, g, b = PowerBarRGB(PowerBarColor[powerType]) end
+        if r then return r, g, b end
+        return unpack(Style.MANA_COLOR)
     end
 
     -- Cast states: the game's classic castbar colours, but the cast in the
@@ -150,11 +173,18 @@ do -- private scope
     function Style.SheenOver(owner, region, sublevel, vertical)
         local sheen = owner:CreateTexture(nil, "ARTWORK", nil, sublevel)
         sheen:SetTexture(Style.FLAT_TEXTURE)
-        sheen:SetPoint("TOPLEFT", region, "TOPLEFT")
-        sheen:SetPoint("BOTTOMRIGHT", region, vertical and "BOTTOM" or "RIGHT")
-
         local shade = owner:CreateTexture(nil, "ARTWORK", nil, sublevel)
         shade:SetTexture(Style.FLAT_TEXTURE)
+        Style.TurnSheen(sheen, shade, region, vertical)
+        return sheen, shade
+    end
+
+    -- A sheen and shade laid out again, for a bar turned the other way.
+    function Style.TurnSheen(sheen, shade, region, vertical)
+        sheen:ClearAllPoints()
+        sheen:SetPoint("TOPLEFT", region, "TOPLEFT")
+        sheen:SetPoint("BOTTOMRIGHT", region, vertical and "BOTTOM" or "RIGHT")
+        shade:ClearAllPoints()
         shade:SetPoint("TOPLEFT", region, vertical and "TOP" or "LEFT")
         shade:SetPoint("BOTTOMRIGHT", region, "BOTTOMRIGHT")
 
@@ -167,7 +197,6 @@ do -- private scope
             sheen:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, SHEEN))
             shade:SetGradient("VERTICAL", CreateColor(0, 0, 0, SHADE), CreateColor(0, 0, 0, 0))
         end
-        return sheen, shade
     end
 
     -- Whether the pieces are being placed (Unlock Mode).
@@ -505,6 +534,16 @@ do -- private scope
         frame:Hide()
     end
 
+    -- A shield exactly as the game's raid frames draw it (CompactUnitFrame.lua): its fill, its
+    -- stripes over it, each the game's atlas, repeated both ways at its own size - never
+    -- stretched. Unit frames and nameplates alike.
+    Style.SHIELD_FILL = "raidframe-shield-fill"
+    Style.SHIELD_LINES = "RaidFrame-Shield-Overlay"
+    function Style.ShieldArt(region, atlas)
+        local wrap = TextureKitConstants.AddressModeWrap
+        SetTextureWithAddressModeOptions(region, atlas, TextureKitConstants.IgnoreAtlasSize, wrap, wrap)
+    end
+
     ---------------------------------------------------------------------------
     -- Sparks: the castbar's, on every bar's leading edge, under its text.
     ---------------------------------------------------------------------------
@@ -654,10 +693,18 @@ do -- private scope
 
     local CHAT_SPACING = 3      -- a little more room between chat lines
 
+    -- A font file's lower-case name, worked out once per file (every font is
+    -- asked again as each addon loads).
+    local faces = {}            -- file -> its name, or false
     local function Face(file)
         if type(file) ~= "string" then return nil end
-        local name = file:match("([^\\/]+)$")
-        return name and name:lower()
+        local face = faces[file]
+        if face == nil then
+            local name = file:match("([^\\/]+)$")
+            face = name and name:lower() or false
+            faces[file] = face
+        end
+        return face or nil
     end
     local BOLD_FACE = Face(BOLD)
 

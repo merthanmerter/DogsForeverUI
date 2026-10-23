@@ -23,6 +23,9 @@ do -- private scope
         fishing = true,     -- double right-click with a pole casts Fishing
         camping = true,     -- double right-click on a Basic Campfire sits down
     }
+    -- Classic's pole in hand. Retail's sits in its profession slot for good, so
+    -- every double-click would cast: no fishing there (and not in the options).
+    NS.FISHING_OFFERED = not DogsForeverUI.RETAIL
 
     local BUTTON_NAME = "DogsForeverUIFishingButton"
     local FISHING_SPELL_ID = 7620       -- cast by name: the rank the player has
@@ -64,8 +67,12 @@ do -- private scope
     end
 
     -- A campfire is remembered until the mouse is seen elsewhere: mouse-look
-    -- hides the world cursor between the two clicks.
+    -- hides the world cursor between the two clicks. Not read with camping off.
     local function LookUnderMouse()
+        if not NS.db.camping then
+            campfireSeen = false
+            return
+        end
         local over = OverCampfire()
         if over ~= nil then
             campfireSeen = over
@@ -118,7 +125,7 @@ do -- private scope
     local function Action()
         if not Ready() then return nil end
         if NS.db.camping and campfireSeen then return "macro", "/sit" end
-        if NS.db.fishing and PoleInHand() then
+        if NS.FISHING_OFFERED and NS.db.fishing and PoleInHand() then
             local spell = KnownFishing()
             if spell then return "spell", spell end
         end
@@ -214,6 +221,9 @@ do -- private scope
         cloth = {},             -- [npcID] = { [itemID] = true }: cloth seen in its loot
     }
     NS.keep = { learned = true, cloth = true }  -- the player's own, through a reset
+    -- Classic's skill by level and its cloth: retail has neither, so nothing
+    -- there (settings kept, not in the options).
+    NS.OFFERED = not DogsForeverUI.RETAIL
 
     -- Raw cloth, lowest first: Linen, Wool, Silk, Mageweave, Runecloth, Felcloth.
     local CLOTH = { 2589, 2592, 4306, 4338, 14047, 14256 }
@@ -342,7 +352,8 @@ do -- private scope
     local function Cleared(tip) added[tip] = nil end
 
     local function Add(tip)
-        if added[tip] then return end
+        -- (A tooltip the game forbids to add-ons: asking that is all that is allowed.)
+        if tip:IsForbidden() or added[tip] then return end
         local ok, _, unit = pcall(tip.GetUnit, tip)
         if not ok or not Plain(unit) or type(unit) ~= "string" then return end
         local state = State(unit)
@@ -459,22 +470,24 @@ do -- private scope
 
     DogsForeverUI:RegisterModule(NS)
 
-    local events = CreateFrame("Frame")
-    events:RegisterEvent("PLAYER_LOGIN")
-    events:RegisterEvent("LOOT_OPENED")
-    events:RegisterEvent("LOOT_CLOSED")
-    events:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-    events:SetScript("OnEvent", function(self, event, ...)
-        if event == "PLAYER_LOGIN" then
-            self:UnregisterEvent("PLAYER_LOGIN")
-            -- The same hook as the other tooltip lines (ActionBars\GameFrames.lua, Cooldowns\Cooldowns.lua).
-            if TooltipDataProcessor then TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, Add) end
-        elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            OnCast(select(3, ...))
-        elseif event == "LOOT_OPENED" then
-            OnLoot()
-        else
-            OnLootClosed()
-        end
-    end)
+    if NS.OFFERED then
+        local events = CreateFrame("Frame")
+        events:RegisterEvent("PLAYER_LOGIN")
+        events:RegisterEvent("LOOT_OPENED")
+        events:RegisterEvent("LOOT_CLOSED")
+        events:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        events:SetScript("OnEvent", function(self, event, ...)
+            if event == "PLAYER_LOGIN" then
+                self:UnregisterEvent("PLAYER_LOGIN")
+                -- The same hook as the other tooltip lines (ActionBars\GameFrames.lua, Cooldowns\Cooldowns.lua).
+                if TooltipDataProcessor then TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, Add) end
+            elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+                OnCast(select(3, ...))
+            elseif event == "LOOT_OPENED" then
+                OnLoot()
+            else
+                OnLootClosed()
+            end
+        end)
+    end
 end

@@ -19,9 +19,10 @@ do -- private scope
         { value = "above", label = "Above" },
         { value = "off",   label = "Off" },
     }
-    -- The party's column has no room above or below: beside each frame.
+    -- The party's column has no room above or below: beside each frame. A
+    -- row has none beside: under each frame ("right" is then "below").
     local PARTY_CHOICES = {
-        { value = "right", label = "Right" },
+        { value = "right", label = "On" },
         { value = "off",   label = "Off" },
     }
     UnitAuras.UNITS = {
@@ -77,6 +78,7 @@ do -- private scope
         if not entry then return "off" end
         if entry.self and not db.partyShowSelf then return "off" end
         local side = db[entry.key]
+        if side == "right" and NS.UnitPlate.InRow(db) then return "below" end
         return VALID[side] and side or "off"
     end
 
@@ -150,17 +152,14 @@ do -- private scope
     end
 
     -- Friendly: buffs (yours, purgeable, the rest), then a row of debuffs
-    -- (yours first). Hostile: debuffs first, then a row of buffs.
-    local function Layouts(friendly)
-        if friendly then
-            return { mybuffs = Layout(1, false), purge = Layout(2, false), buffs = Layout(3, false),
-                     mine = Layout(4, true), others = Layout(5, false),
-                     farbuffs = Layout(6, false), fardebuffs = Layout(7, true) }
-        end
-        return { mine = Layout(1, false), others = Layout(2, false),
-                 mybuffs = Layout(3, true), purge = Layout(4, false), buffs = Layout(5, false),
-                 fardebuffs = Layout(6, false), farbuffs = Layout(7, true) }
-    end
+    -- (yours first). Hostile: debuffs first, then a row of buffs. Made once:
+    -- the container copies what it is handed.
+    local FRIENDLY_LAYOUTS = { mybuffs = Layout(1, false), purge = Layout(2, false), buffs = Layout(3, false),
+                               mine = Layout(4, true), others = Layout(5, false),
+                               farbuffs = Layout(6, false), fardebuffs = Layout(7, true) }
+    local HOSTILE_LAYOUTS = { mine = Layout(1, false), others = Layout(2, false),
+                              mybuffs = Layout(3, true), purge = Layout(4, false), buffs = Layout(5, false),
+                              fardebuffs = Layout(6, false), farbuffs = Layout(7, true) }
 
     local function Friendly(unit)
         local friend = UnitIsFriend("player", unit)
@@ -181,7 +180,7 @@ do -- private scope
     local function ApplyGroups(container, unit)
         local away = far[unit] == true
         local friend = order[unit] == "friendly"
-        for _, key in ipairs(groupKeys[unit] or {}) do
+        for _, key in ipairs(groupKeys[unit]) do
             local on
             if FAR[key] then
                 on = away
@@ -206,27 +205,32 @@ do -- private scope
         local kind = Friendly(unit) and "friendly" or "hostile"
         if order[unit] == kind and not force then return end
         order[unit] = kind
-        for key, layout in pairs(Layouts(kind == "friendly")) do
+        for key, layout in pairs(kind == "friendly" and FRIENDLY_LAYOUTS or HOSTILE_LAYOUTS) do
             Call(container, "SetAuraGroupLayout", key, layout)
         end
         ApplyGroups(container, unit)
     end
 
-    -- Rows as wide as the plate, hung below, above (clear of the name row) or
-    -- right of it. Guarded: the client may refuse layout once it has groups.
+    -- A row's point, the plate's it hangs from and the offset: below, above
+    -- (clear of the name row) or right of it.
+    local function Anchor(plate, side)
+        if side == "right" then return "TOPLEFT", "TOPRIGHT", Style.BORDER_INSET + GAP, 0 end
+        if side == "above" then
+            return "BOTTOMLEFT", "TOPLEFT", 0, NS.UnitPlate.TopRoom() * (plate.scale or 1) + GAP
+        end
+        return "TOPLEFT", "BOTTOMLEFT", 0, -(Style.BORDER_INSET + GAP)
+    end
+
+    -- Rows as wide as the plate. Guarded: the client may refuse layout once
+    -- it has groups.
     local function Place(container, plate, side)
         local above = side == "above"
         Call(container, "SetFlowLayoutAnchorPoint", above and "BOTTOMLEFT" or "TOPLEFT")
         Call(container, "SetFlowLayoutGrowthDirection", FLOW.Right, above and FLOW.Up or FLOW.Down)
         Call(container, "SetFlowLayoutMaximumLineSize", (NS.UnitPlate.Size(NS.db, plate)))
         Call(container, "ClearAllPoints")
-        if side == "right" then
-            Call(container, "SetPoint", "TOPLEFT", plate, "TOPRIGHT", Style.BORDER_INSET + GAP, 0)
-        elseif above then
-            Call(container, "SetPoint", "BOTTOMLEFT", plate, "TOPLEFT", 0, NS.UnitPlate.TopRoom() * (plate.scale or 1) + GAP)
-        else
-            Call(container, "SetPoint", "TOPLEFT", plate, "BOTTOMLEFT", 0, -(Style.BORDER_INSET + GAP))
-        end
+        local point, to, x, y = Anchor(plate, side)
+        Call(container, "SetPoint", point, plate, to, x, y)
     end
 
     ---------------------------------------------------------------------------
@@ -263,13 +267,23 @@ do -- private scope
 
     -- The dispel wash (EllesmereUI's "fill"): the bars' flat fill in the type's
     -- colour with their sheen over it, one level over the health bar and under
-    -- the frame's words. Answers its texture.
+    -- the frame's words, pulsing for good as the game's raid frames' dispel
+    -- overlay does (CompactUnitFrameDispelOverlayTemplate's PulseAnim), the
+    -- health's own colour showing through between. Answers its texture.
+    local PULSE_FROM, PULSE_TIME = 0.5, 0.5
     local function Wash(owner, plate, r, g, b)
         local wash = owner:CreateTexture(nil, "ARTWORK", nil, 0)
         wash:SetTexture(Style.FLAT_TEXTURE)
         wash:SetVertexColor(r, g, b, 1)
         OverFill(wash, plate)
         Style.SheenOver(owner, wash, 1)
+        local pulse = wash:CreateAnimationGroup()
+        pulse:SetLooping("BOUNCE")
+        local fade = pulse:CreateAnimation("Alpha")
+        fade:SetFromAlpha(PULSE_FROM)
+        fade:SetToAlpha(1)
+        fade:SetDuration(PULSE_TIME)
+        pulse:Play()
         return wash
     end
 
@@ -408,7 +422,7 @@ do -- private scope
             Reach(container, unit, true)
             return container
         end
-        AddGroups(unit, container, ROW_GROUPS, small, large, Layouts(false))
+        AddGroups(unit, container, ROW_GROUPS, small, large, HOSTILE_LAYOUTS)
         order[unit] = "hostile"
         far[unit] = false
         ApplyGroups(container, unit)
@@ -533,7 +547,7 @@ do -- private scope
         marks:Show()
     end
 
-    local function ShowPreview(unit, plate)
+    local function ShowPreview(unit, plate, side)
         if not picks[unit] then Pick(unit) end
         local row = previews[unit]
         if not row then
@@ -543,7 +557,8 @@ do -- private scope
         end
         row:SetFrameLevel(plate:GetFrameLevel() + 5)
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", plate, "TOPRIGHT", Style.BORDER_INSET + GAP, 0)
+        local point, to, x, y = Anchor(plate, side)
+        row:SetPoint(point, plate, to, x, y)
         local scale = byUnit[unit].iconScale or 1
         local small = math.floor(SMALL * scale + 0.5)
         local large = math.floor(LARGE * scale + 0.5)
@@ -624,7 +639,7 @@ do -- private scope
         if Previewing(unit) then
             if container then Call(container, "Hide") end
             Indicators(unit, false)
-            ShowPreview(unit, plate)
+            ShowPreview(unit, plate, side)
             return
         end
         if previews[unit] then previews[unit]:Hide() end

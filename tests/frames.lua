@@ -749,11 +749,14 @@ do
         and select(2, over:GetMinMaxValues()) == 10000 and over:GetValue() == 2500)
     player.health:GetScript("OnSizeChanged")(player.health, 200, 30)
     local lines = shield.regions[#shield.regions]
-    check("both as big as the health bar, in the game's shield look: its fill, its stripes tiled over it",
+    -- (The player, 2026-10-20: "the shield stripes are a little buggy - exactly Blizzard's".)
+    local fill, wrap = shield:GetStatusBarTexture(), TextureKitConstants.AddressModeWrap
+    check("both as big as the health bar, exactly the game's raid-frame shield: its atlases, repeated and tiled both ways",
         shield.width == 200 and shield.height == 30 and over.width == 200 and over.height == 30
-        and shield:GetStatusBarTexture().texture == "Interface\\RaidFrame\\Shield-Fill"
-        and lines.texture == "Interface\\RaidFrame\\Shield-Overlay"
-        and lines.allPointsTo == shield:GetStatusBarTexture())
+        and fill.atlas == "raidframe-shield-fill" and lines.atlas == "RaidFrame-Shield-Overlay"
+        and tiling[lines].modes[1] == wrap and tiling[lines].modes[2] == wrap
+        and tiling[lines].horiz == true and tiling[lines].vert == true and tiling[fill].horiz == true
+        and lines.allPointsTo == fill)
     units.player.shield = nil
 end
 
@@ -1260,6 +1263,8 @@ print("== the game's own frames ==")
 check("the player frame's artwork is faded out",
     PlayerFrame.PlayerFrameContainer.alpha == 0, PlayerFrame.PlayerFrameContainer.alpha)
 check("and so are its bars", PlayerFrame.PlayerFrameContent.alpha == 0)
+-- (The player, 2026-10-20: a magenta orb and a white glow over the plate in Voidform.)
+check("and the shadow class bar's Voidform art on them", InsanityBarFrame.alpha == 0)
 check("the player frame itself is left alone, so the totems in it survive",
     PlayerFrame.alpha == nil, tostring(PlayerFrame.alpha))
 check("the pet frame is faded out whole - the pet plate draws it now",
@@ -1784,6 +1789,83 @@ do
     check("orange, not red: green at more than a third of red",
         worn[2] > worn[1] / 3 and worn[3] < worn[2], Show(worn))
     SetTarget(nil)
+end
+
+print("== an empowered cast (retail's Evokers): a cast, held at its last stage ==")
+do
+    -- The client reports one as a channel with its stages (isEmpowered,
+    -- numStages, never secret); the game's bar fills it and adds the hold.
+    local plainChannel = UnitChannelInfo
+    function UnitChannelInfo(token)
+        local c = casting[token]
+        if c and c.stages and not castingSecret[token] then
+            return c.name, c.name, "icon", c.start * 1000, c.finish * 1000, false, false, 1, true, c.stages
+        end
+        return plainChannel(token)
+    end
+    function GetUnitEmpowerHoldAtMaxTime() return 1000 end
+
+    SetTarget({ name = "Scalecommander", level = 70, isPlayer = false, reaction = 2,
+        health = 100, healthMax = 100, power = 0, powerMax = 100, powerToken = "MANA" })
+    local bar = target.castbar.bar
+    casting.target = { name = "Fire Breath", start = now, finish = now + 2, channel = true, stages = 3 }
+    Fire("UNIT_SPELLCAST_EMPOWER_START", "target")
+    Tick()
+    check("measured with the hold at its last stage", select(2, bar:GetMinMaxValues()) == 3,
+        tostring(select(2, bar:GetMinMaxValues())))
+    check("in the cast's colour, not the channel's",
+        Near(bar.statusColor, DogsForeverUI.Style.CAST_COLOR.casting), Show(bar.statusColor))
+    local before = bar:GetValue()
+    Tick(1)
+    check("filling, not draining", bar:GetValue() > before, bar:GetValue())
+
+    Fire("UNIT_SPELLCAST_EMPOWER_STOP", "target", "cast-1", 1, SECRET_TRUE)
+    check("a secret end is never looked at", not Near(bar.statusColor, Toned(0.9, 0.2, 0.2, POWER_TOP)))
+    Fire("UNIT_SPELLCAST_EMPOWER_STOP", "target", "cast-1", 1, false)
+    casting.target = nil
+    Tick()
+    check("cut short: held in the interrupted red",
+        bar:IsShown() == true and Near(bar.statusColor, Toned(0.9, 0.2, 0.2, POWER_TOP)), Show(bar.statusColor))
+
+    castingSecret.target = true
+    casting.target = { name = "Fire Breath", start = now, finish = now + 2, channel = true, stages = 3 }
+    function UnitChannelInfo(token)
+        local c = casting[token]
+        if c and c.stages and castingSecret[token] then
+            local s = SecretCastValue
+            return s("name"), s("name"), s("icon"), s("start"), s("end"), false, s("notInterruptible"),
+                s("spell"), true, c.stages
+        end
+        return plainChannel(token)
+    end
+    Tick(1)
+    local ok, err = pcall(Tick)
+    check("a secret empowered cast does not throw", ok, tostring(err))
+    check("and fills like a cast", bar.timer ~= nil
+        and bar.timer.direction == Enum.StatusBarTimerDirection.ElapsedTime)
+    castingSecret.target, casting.target = nil, nil
+    UnitChannelInfo, GetUnitEmpowerHoldAtMaxTime = plainChannel, nil
+    SetTarget(nil)
+    Tick()
+end
+
+print("== retail: the PvP badge in retail's own faction art ==")
+do
+    -- UnitPlate.lua alone as the retail client loads it (Core.RETAIL set),
+    -- next to everything else as it is.
+    local retail = setmetatable({ RETAIL = true, Frames = setmetatable({}, { __index = NS }) },
+        { __index = DogsForeverUI })
+    local env = setmetatable({ DogsForeverUI = retail }, { __index = _G })
+    assert(loadfile(ADDON_PATH .. "/Frames/UnitPlate.lua", "t", env))("DogsForeverUI", {})
+    atlases["UI-HUD-UnitFrame-Player-PVP-HordeIcon"] = { width = 30, height = 40 }
+    units.target = { name = "Grunt", level = 70, isPlayer = false, reaction = 2, faction = "Horde", pvp = true,
+        health = 100, healthMax = 100, power = 0, powerMax = 100, powerToken = "MANA" }
+    local plate = retail.Frames.UnitPlate.New("target", "RetailTarget")
+    plate:Refresh()
+    check("a flagged Horde unit wears retail's Horde emblem (there is no small circle there)",
+        plate.pvpBadge.shown and plate.pvpBadge.icon.atlas == "UI-HUD-UnitFrame-Player-PVP-HordeIcon",
+        tostring(plate.pvpBadge.icon.atlas))
+    units.target = nil
 end
 
 Summary()

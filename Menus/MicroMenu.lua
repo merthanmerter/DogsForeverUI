@@ -17,6 +17,7 @@ do -- private scope
     local GAME_WIDTH, GAME_HEIGHT = 32, 40  -- the game's micro button
     local PORTRAIT_CROP = 0.15          -- zoomed in on the face
     local ROUND_CROP = 0.14             -- past a round portrait's rim
+    local WHOLE = { 0, 1, 0, 1 }        -- a file's coords, uncut
     local EMBLEM_HEIGHT = 0.8           -- of the square; the game makes it 7/8 as wide
     local IDLE_STEP = 0.1               -- auto-hide off: looked at ten times a second
     local PORTRAIT = "portrait"
@@ -87,6 +88,12 @@ do -- private scope
         end
     end
 
+    -- Retail's talents and spellbook window's portrait: the spec's icon.
+    local function PlayerSpellsIcon()
+        local specID = PlayerUtil.GetCurrentSpecID()
+        return specID and PlayerUtil.GetSpecIconBySpecID(specID)
+    end
+
     -- In a guild with a designed tabard: the tabard, as the guild window shows it.
     local function GuildTabard()
         if not IsInGuild() then return end
@@ -111,7 +118,7 @@ do -- private scope
     Micro.ICONS = {
         CharacterMicroButton    = PORTRAIT,
         ProfessionMicroButton   = { "Interface/ICONS/INV_SideTab_Professions_c60", ICON .. "Trade_BlackSmithing" },
-        PlayerSpellsMicroButton = { SpellbookIcon, ICON .. "INV_Misc_Book_09" },
+        PlayerSpellsMicroButton = { PlayerSpellsIcon, ClassIcon, ICON .. "INV_Misc_Book_09" },
         SpellbookMicroButton    = { SpellbookIcon, ICON .. "INV_Misc_Book_09" },
         TalentMicroButton       = { SpecIcon, ClassIcon, ICON .. "Ability_Marksmanship" },
         AchievementMicroButton  = { ICON .. "Achievement_General" },
@@ -240,7 +247,7 @@ do -- private scope
         else
             art:SetAllPoints(parts.inner)
             art:SetTexture(source.file)
-            local c = source.coords or { 0, 1, 0, 1 }
+            local c = source.coords or WHOLE
             local crop = source.crop or NS.ActionButtons.ICON_CROP
             local w, h = c[2] - c[1], c[4] - c[3]
             art:SetTexCoord(c[1] + w * crop, c[2] - w * crop, c[3] + h * crop, c[4] - h * crop)
@@ -369,6 +376,8 @@ do -- private scope
         return menu:GetParent() ~= _G.MicroMenuContainer
     end
 
+    local function ByLayoutIndex(a, b) return a.layoutIndex < b.layoutIndex end
+
     -- The game's shown buttons by layoutIndex, the bag button second, the
     -- options button last.
     function Micro.Row()
@@ -378,7 +387,7 @@ do -- private scope
         for _, child in ipairs({ menu:GetChildren() }) do
             if child.layoutIndex and child:IsShown() then row[#row + 1] = child end
         end
-        table.sort(row, function(a, b) return a.layoutIndex < b.layoutIndex end)
+        table.sort(row, ByLayoutIndex)
         local bag = NS.BagsBar.button
         if bag then table.insert(row, math.min(2, #row + 1), bag) end
         if optionsButton then row[#row + 1] = optionsButton end

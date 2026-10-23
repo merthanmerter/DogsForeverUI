@@ -1,6 +1,6 @@
 -- MODULE: XP bar  (DogsForeverUI.XPBar, settings section "xp")
--- Rested XP shaded beyond it, the numbers on hover; a watched reputation shows
--- in it instead, an honor bar stacks over it. The game's bars are only faded:
+-- Rested XP shaded beyond it, the numbers on hover; a tracked house or a watched
+-- reputation shows in it instead, an honor bar stacks over it. The game's bars are only faded:
 -- their container is in the stack the protected action bars are laid out on.
 
 DogsForeverUI.XPBar = CreateFrame("Frame")
@@ -15,8 +15,10 @@ do -- private scope
     local FALLBACK_BOTTOM = 64               -- about the game's XP bar, when it cannot be measured
     local HONOR_GAP = 2 + 2 * Style.BORDER_INSET
     local RENOWN_COLOR = { 0.0, 0.6, 1.0 }
+    local HOUSE_COLOR = { 0.9, 0.8, 0.6 }    -- the gold of the game's house bar
     local BARS = StatusTrackingBarInfo.BarsEnum
-    local OURS = { [BARS.Experience] = true, [BARS.Reputation] = true, [BARS.Honor] = true }
+    local OURS = { [BARS.Experience] = true, [BARS.Reputation] = true, [BARS.Honor] = true,
+                   [BARS.HouseFavor] = true }
     local CONTAINERS = { MainStatusTrackingBarContainer, SecondaryStatusTrackingBarContainer }
 
     NS.key = "xp"
@@ -55,9 +57,15 @@ do -- private scope
     honor.spark = Style.AddSpark(honor)
     NS.honor = honor
 
+    local reactionColours = {}               -- reaction -> { r, g, b }, made once each
     local function ReactionColour(reaction)
-        local c = FACTION_BAR_COLORS[reaction] or FACTION_BAR_COLORS[4]
-        return { c.r, c.g, c.b }
+        local colour = reactionColours[reaction]
+        if not colour then
+            local c = FACTION_BAR_COLORS[reaction] or FACTION_BAR_COLORS[4]
+            colour = { c.r, c.g, c.b }
+            reactionColours[reaction] = colour
+        end
+        return colour
     end
 
     local function StandingLabel(reaction)
@@ -102,6 +110,32 @@ do -- private scope
         if max <= 0 then max, current = 1, 1 end   -- the top of the last tier: full
         return { name = rep.name, label = label, colour = colour,
                  low = 0, high = max, value = math.max(0, math.min(current, max)) }
+    end
+
+    -- The tracked house ("Show as Experience Bar" on its dashboard), worked out
+    -- as the game's bar does (HouseFavorBarMixin:Update): the favor within its
+    -- level. Only HOUSE_LEVEL_FAVOR_UPDATED carries it, asked for by RequestHouse.
+    local houseFavor                         -- the tracked house's last HouseLevelFavor
+
+    local function RequestHouse()
+        local guid = C_Housing.GetTrackedHouseGuid()
+        if guid then C_Housing.GetCurrentHouseLevelFavor(guid) end
+    end
+
+    local function TrackedHouse()
+        local guid = C_Housing.GetTrackedHouseGuid()
+        if not guid or not houseFavor or houseFavor.houseGUID ~= guid then return end
+        local level = houseFavor.houseLevel
+        local low = C_Housing.GetHouseLevelFavorForLevel(level)
+        local max, current = C_Housing.GetHouseLevelFavorForLevel(level + 1) - low, houseFavor.houseFavor - low
+        if level >= C_Housing.GetMaxHouseLevel() or max <= 0 then max, current = 1, 1 end   -- the top level: full
+        return { name = "House", label = "Level " .. level, colour = HOUSE_COLOR,
+                 low = 0, high = max, value = math.max(0, math.min(current, max)) }
+    end
+
+    -- In the game's order: a tracked house before a watched reputation.
+    local function Watched()
+        return TrackedHouse() or WatchedReputation()
     end
 
     -- First run, a reset, or a new resolution while still the addon's place:
@@ -161,9 +195,10 @@ do -- private scope
 
     -- Unlocked it shows the real XP, as it really looks.
     local function UpdateXP()
-        local rep = WatchedReputation()
-        if rep then
-            Fill(rep.colour, rep.low, rep.high, rep.value, rep.secret and 0 or Style.SparkAlpha(rep.value, rep.high))
+        local watched = Watched()
+        if watched then
+            Fill(watched.colour, watched.low, watched.high, watched.value,
+                watched.secret and 0 or Style.SparkAlpha(watched.value, watched.high))
             return
         end
         if not GameRulesUtil.CanShowExperienceBar() then
@@ -218,7 +253,10 @@ do -- private scope
         if hide then
             if container.bars[shown] then Fade(container, container.bars[shown]) end
             Fade(container, container.BarFrameTexture)
-            for divider in container.HorizontalDividersPool:EnumerateActive() do Fade(container, divider) end
+            local dividers = container.HorizontalDividersPool
+            if dividers then
+                for divider in dividers:EnumerateActive() do Fade(container, divider) end
+            end
             -- Ours it no longer shows (the game hid them) get their alpha back.
             for index in pairs(OURS) do
                 if index ~= shown and container.bars[index] then Restore(container, container.bars[index]) end
@@ -238,7 +276,7 @@ do -- private scope
         faded[container] = {}
         local function Follow() FollowContainer(container) end
         hooksecurefunc(container, "ApplyPendingBarToShow", Follow)
-        hooksecurefunc(container, "UpdateDividers", Follow)
+        if container.UpdateDividers then hooksecurefunc(container, "UpdateDividers", Follow) end
         container:HookScript("OnShow", Follow)
         -- Ours faded the moment they are shown, whatever showed them: a zone
         -- change once let one through beside the addon's.
@@ -286,14 +324,14 @@ do -- private scope
 
     bar:SetScript("OnEnter", function(self)
         if NS.db.unlocked then return end
-        local rep = WatchedReputation()
-        if rep then
-            if rep.secret then return end
-            local line = ("%s / %s"):format(Number(rep.value), Number(rep.high))
-            if rep.label then line = line .. "  (" .. rep.label .. ")" end
+        local watched = Watched()
+        if watched then
+            if watched.secret then return end
+            local line = ("%s / %s"):format(Number(watched.value), Number(watched.high))
+            if watched.label then line = line .. "  (" .. watched.label .. ")" end
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText(rep.name)
-            GameTooltip:AddLine(line, rep.colour[1], rep.colour[2], rep.colour[3])
+            GameTooltip:SetText(watched.name)
+            GameTooltip:AddLine(line, watched.colour[1], watched.colour[2], watched.colour[3])
             GameTooltip:Show()
             return
         end
@@ -325,16 +363,23 @@ do -- private scope
         "PLAYER_ENTERING_WORLD", "PLAYER_XP_UPDATE", "UPDATE_EXHAUSTION", "PLAYER_LEVEL_UP",
         "PLAYER_UPDATE_RESTING", "ENABLE_XP_GAIN", "DISABLE_XP_GAIN",
         "UPDATE_FACTION", "MAJOR_FACTION_RENOWN_LEVEL_CHANGED",            -- the watched reputation
+        "TRACKED_HOUSE_CHANGED", "HOUSE_LEVEL_FAVOR_UPDATED",               -- the tracked house
         "HONOR_XP_UPDATE", "HONOR_LEVEL_UPDATE", "ZONE_CHANGED", "ZONE_CHANGED_NEW_AREA",  -- honor
     }) do
         NS:RegisterEvent(event)
     end
-    NS:SetScript("OnEvent", function(_, event)
+    NS:SetScript("OnEvent", function(_, event, ...)
         if event == "PLAYER_ENTERING_WORLD" then
             -- UIParent is unscaled at ADDON_LOADED: only the addon's own place is worked out again.
             if NS.db.autoPlaced then Place() end
+            RequestHouse()
             Refresh()
             return
+        elseif event == "TRACKED_HOUSE_CHANGED" then
+            RequestHouse()
+        elseif event == "HOUSE_LEVEL_FAVOR_UPDATED" then
+            local favor = ...
+            if favor.houseGUID == C_Housing.GetTrackedHouseGuid() then houseFavor = favor end
         end
         Update()
     end)

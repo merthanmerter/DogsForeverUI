@@ -56,7 +56,7 @@ do -- private scope
     -- Every roll window to the holder: the first centred on it, the rest the game's distance above.
     local function Anchor()
         local container = _G.GroupLootContainer
-        if not container or (InputUtil and InputUtil.IsGamepadUIEnabled()) then return end
+        if not (container and container.rollFrames) or DogsForeverUI.Call(InputUtil, "IsGamepadUIEnabled") then return end
         for i = 1, container.maxIndex do
             local frame = container.rollFrames[i]
             if frame then
@@ -94,8 +94,8 @@ end
 -- MODULE: Loot toasts  (DogsForeverUI.LootToasts, settings section "toasts")
 -- A toast for each item looted (FunLoot's idea): the icon in the game's round
 -- ring, its name in its quality's colour (a stack with the bags' count) and
--- what it sells for; money added up on one toast. A roll won is a toast twice
--- as large with "You Won!" and the roll, replacing the game's roll-won alert.
+-- what it sells for; money added up on one toast. A roll won is a toast with a
+-- larger icon (ROLL_SIZE), "You Won!" and the roll, replacing the game's roll-won alert.
 -- A toast stays DURATION seconds (held under the mouse), then fades; the same
 -- item again adds to it. Newest at the holder, older pushed up (or down).
 -------------------------------------------------------------------------------
@@ -122,6 +122,7 @@ do -- private scope
     local OLD_DEFAULT_WIDTH = 260               -- the first version's default, saved: taken as the default
     local DURATION, MAX = 5, 5
     local GAP = 4                               -- between two toasts
+    local ROLL_SIZE = 1.6                       -- a roll won's round piece, of the toasts' height
     -- The game's round button as LibDBIcon draws it (31 across): the ring 50, the icon 24.
     local RING, ICON = 50 / 31, 24 / 31
     local RING_FILE = "Interface\\Minimap\\MiniMap-TrackingBorder"
@@ -219,7 +220,7 @@ do -- private scope
     end
 
     -- Stacked from the holder: the round piece as high as set (a roll won's
-    -- twice that), the text in the rest of the width, the toast as high as the taller.
+    -- ROLL_SIZE times that), the text in the rest of the width, the toast as high as the taller.
     function Layout()
         local db = NS.db
         local up = db.growDirection ~= "down"
@@ -227,7 +228,7 @@ do -- private scope
         local w, h = db.barWidth, db.barHeight
         for i, t in ipairs(active) do
             local before = active[i - 1]
-            local size = t.roll and 2 * h or h
+            local size = t.roll and math.floor(ROLL_SIZE * h + 0.5) or h
             Style.SetFont(holder, t.text)
             t.text:SetWidth(w - size)
             t:ClearAllPoints()
@@ -353,7 +354,7 @@ do -- private scope
         end
     end
 
-    -- Halfway up the screen's left until Core\Defaults.lua puts it over the focus frame.
+    -- Halfway up the screen's left until Core\Defaults.lua puts it over the chat.
     local function Place()
         local db = NS.db
         db.barLeft = Core.DefaultPlaces.EDGE_GAP

@@ -153,7 +153,15 @@ do -- private scope
     local Page = {}
     Page.__index = Page
 
-    function Page:Section(title, note)
+    -- Not offered on this client: a section declared `hidden` is left out
+    -- with every row under it, as is a row whose entry has `hidden`.
+    local function Offered(page, entry)
+        return page.section ~= nil and not (entry and entry.hidden)
+    end
+
+    function Page:Section(title, note, hidden)
+        self.section = nil
+        if hidden then return end
         local section = { title = title, rows = {} }
         section.heading = W.Text(content, 17, W.GOLD, true)
         section.heading:SetText(title)
@@ -209,6 +217,7 @@ do -- private scope
     -- entry = { module, key, label, tooltip, compact }: compact switches
     -- share a row two by two, with no line under their names.
     function Page:Check(entry)
+        if not Offered(self, entry) then return end
         local Get, Set = Setting(entry)
         local row
         if entry.compact then
@@ -243,6 +252,7 @@ do -- private scope
 
     -- entry = { module, key, label, tooltip, choices = { { value, label } }, segmentWidth }
     function Page:Choice(entry)
+        if not Offered(self, entry) then return end
         local width = entry.segmentWidth or 72
         local row = SettingRow(self, entry.label, entry.tooltip, width * #entry.choices)
         local control = W.Segmented(row, entry.choices, width, Setting(entry))
@@ -253,10 +263,68 @@ do -- private scope
     -- entry = { module, key, label, description, min, max, step, text }
     local SLIDER_WIDTH, SLIDER_VALUE = 180, 52
     function Page:Slider(entry)
+        if not Offered(self, entry) then return end
         local row = SettingRow(self, entry.label, entry.description, SLIDER_WIDTH + SLIDER_VALUE)
         local slider = W.Slider(row, SLIDER_WIDTH, entry, Setting(entry, true))
         slider:SetPoint("RIGHT", row, "RIGHT", -CARD_PAD - SLIDER_VALUE, 0)
         Keep(self, entry.label, slider)
+    end
+
+    -- entry = { label, tooltip, button, command }: one key clicking the secure
+    -- button named `button` (`command`), kept in the game's bindings. Clicked,
+    -- the box takes the next key, mouse button or wheel, modifiers too, while
+    -- the mouse stays over it; Escape clears it.
+    local KEY_WIDTH = 180
+    function Page:Keybind(entry)
+        if not Offered(self, entry) then return end
+        local command = entry.command
+        local row = SettingRow(self, entry.label, entry.tooltip, KEY_WIDTH)
+        local box
+        local function Listen(on)
+            box.listening = on
+            box:EnableKeyboard(on)
+            box:EnableMouseWheel(on)
+            box.Refresh()
+        end
+        local function Press(input)
+            if not box.listening then return end
+            local key = GetConvertedKeyOrButton(input)
+            if input ~= "ESCAPE" and IsKeyPressIgnoredForBinding(key) then return end
+            Listen(false)
+            if InCombatLockdown() then return Say(false, ERR_NOT_IN_COMBAT) end
+            for _, old in ipairs({ GetBindingKey(command) }) do SetBinding(old, nil) end
+            if input == "ESCAPE" then
+                Say(true, KEY_UNBOUND or "Key unbound")
+            else
+                key = CreateKeyChordStringUsingMetaKeyState(key)
+                local taken = GetBindingAction(key)
+                SetBindingClick(key, entry.button)
+                Say(true, taken ~= "" and ("%s taken from %s"):format(GetBindingText(key), GetBindingName(taken))
+                    or KEY_BOUND or "Key bound")
+            end
+            SaveBindings(GetCurrentBindingSet())
+            box.Refresh()
+        end
+        box = W.Button(row, "", KEY_WIDTH, function() Listen(not box.listening) end)
+        box:SetPoint("RIGHT", row, "RIGHT", -CARD_PAD, 0)
+        box:SetScript("OnKeyDown", function(_, key) Press(key) end)
+        box:SetScript("OnMouseWheel", function(_, delta) Press(delta > 0 and "MOUSEWHEELUP" or "MOUSEWHEELDOWN") end)
+        -- Setting those scripts turned keys and wheel on: off until clicked, or
+        -- a key pressed (moving!) while the options are open is taken.
+        box:EnableKeyboard(false)
+        box:EnableMouseWheel(false)
+        box:HookScript("OnMouseDown", function(_, mouse)
+            if mouse ~= "LeftButton" and mouse ~= "RightButton" then Press(mouse) end
+        end)
+        local function Stop(self) if self.listening then Listen(false) end end
+        box:HookScript("OnLeave", Stop)
+        box:SetScript("OnHide", Stop)
+        function box.Refresh()
+            local key = GetBindingKey(command)
+            W.SetLabel(box, box.listening and "Press a key" or key and GetBindingText(key) or NOT_BOUND or "Not bound")
+            W.SetStyle(box, box.listening and "primary" or nil)
+        end
+        Keep(self, entry.label, box)
     end
 
     ---------------------------------------------------------------------------
@@ -265,9 +333,12 @@ do -- private scope
 
     local LIST_TOP = 60             -- the add row, above the entries
     local ENTRY = 38
+    local DIVIDER = 26              -- a list's divider between two groups of entries
     local ICON = 22
     local CHOICE_SEGMENT = 74
+    local LOOK_SEGMENT = 48         -- Bar / Icon
     local FIXED_TRACK = { buff = "Duration", cooldown = "Cooldown" }
+    local OTHER_SPEC_ALPHA = 0.45   -- a tracked spell of another spec, in the list
 
     local function Line(parent)
         local line = CreateFrame("Frame", nil, parent)
@@ -285,7 +356,7 @@ do -- private scope
         row.count = 0
         row.lines = {}
         function row.Measure()
-            return LIST_TOP + math.max(1, row.count) * ENTRY + 8
+            return LIST_TOP + math.max(1, row.count) * ENTRY + (row.gapAt and DIVIDER or 0) + 8
         end
         row.empty = W.Text(row, 12, W.DIM)
         row.empty:SetPoint("TOPLEFT", row, "TOPLEFT", CARD_PAD, -(LIST_TOP + 12))
@@ -297,28 +368,31 @@ do -- private scope
     end
 
     -- A line per item (MakeLine() as needed, then fill(line, item, index)),
-    -- the rest hidden; the page laid out again if the count changed.
-    local function ShowLines(row, items, MakeLine, fill)
+    -- the rest hidden; `gapAt` items in, the room for a divider. The page laid
+    -- out again if the count or the divider changed.
+    local function ShowLines(row, items, MakeLine, fill, gapAt)
         for index, item in ipairs(items) do
             local line = row.lines[index] or MakeLine()
             row.lines[index] = line
             line:ClearAllPoints()
-            line:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -(LIST_TOP + (index - 1) * ENTRY))
+            local gap = (gapAt and index > gapAt) and DIVIDER or 0
+            line:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -(LIST_TOP + (index - 1) * ENTRY + gap))
             line:Show()
             fill(line, item, index)
         end
         row.empty:SetShown(#items == 0)
         for index = #items + 1, #row.lines do row.lines[index]:Hide() end
-        if row.count ~= #items then
-            row.count = #items
+        if row.count ~= #items or row.gapAt ~= gapAt then
+            row.count, row.gapAt = #items, gapAt
             Relayout()
         end
     end
 
     -- The cooldown manager's list (Cooldowns\Cooldowns.lua): an ID box and
     -- Add, then a line per entry with what it tracks (a choice where there
-    -- is one) and a cross.
+    -- is one), its look (a bar or an icon) and a cross.
     function Page:Cooldowns()
+        if not Offered(self) then return end
         local Cooldowns = Core.Cooldowns
         local row = ListRow(self, "Nothing tracked yet. Type an ID above - Add works out whether it is a spell or an item.",
             "IdBox", 24, "Spell or item ID")
@@ -343,47 +417,92 @@ do -- private scope
             line.icon:SetSize(ICON, ICON)
             line.icon:SetPoint("LEFT", line, "LEFT", CARD_PAD, 0)
             line.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            line.text = W.Text(line, 13)
-            line.text:SetPoint("LEFT", line.icon, "RIGHT", 10, 0)
-            line.text:SetWidth(CONTENT_WIDTH - 2 * CARD_PAD - ICON - 10 - CHOICE_SEGMENT * #Cooldowns.TRACK - 50)
+            -- The name on one line, cut short if long; the ID small under it.
+            local width = CONTENT_WIDTH - 2 * CARD_PAD - ICON - 10 - CHOICE_SEGMENT * #Cooldowns.TRACK
+                - LOOK_SEGMENT * #Cooldowns.DISPLAY - 62
+            line.text = W.Text(line, 13, nil, false, width)
+            line.text:SetWordWrap(false)
+            line.text:SetPoint("BOTTOMLEFT", line.icon, "RIGHT", 10, 0)
+            line.id = W.Text(line, 10, W.MUTED)
+            line.id:SetPoint("TOPLEFT", line.text, "BOTTOMLEFT", 0, -2)
             line.remove = W.IconButton(line, "close", 22, function()
                 Cooldowns.Remove(line.index)
                 Refresh()
             end)
             line.remove:SetPoint("RIGHT", line, "RIGHT", -CARD_PAD + 4, 0)
             W.Tooltip(line.remove, "Remove", "Stop tracking this.")
+            local function Entry() return line.index and Cooldowns.db.tracked[line.index] end
+            line.look = W.Segmented(line, Cooldowns.DISPLAY, LOOK_SEGMENT,
+                function()
+                    local entry = Entry()
+                    return entry and Cooldowns.DisplayOf(entry)
+                end,
+                function(value)
+                    Cooldowns.SetDisplay(line.index, value)
+                    Refresh()
+                end)
+            line.look:SetPoint("RIGHT", line.remove, "LEFT", -12, 0)
             line.choice = W.Segmented(line, Cooldowns.TRACK, CHOICE_SEGMENT,
                 function()
-                    local entry = line.index and Cooldowns.db.tracked[line.index]
+                    local entry = Entry()
                     return entry and Cooldowns.TrackOf(entry)
                 end,
                 function(value)
                     Cooldowns.SetTrack(line.index, value)
                     Refresh()
                 end)
-            line.choice:SetPoint("RIGHT", line.remove, "LEFT", -12, 0)
+            line.choice:SetPoint("RIGHT", line.look, "LEFT", -12, 0)
             -- Nothing to choose: what it tracks, in words, in the same place.
             line.fixed = W.Text(line, 12, W.MUTED)
             line.fixed:SetPoint("LEFT", line.choice, "LEFT", 8, 0)
             return line
         end
 
-        local function Fill(line, entry, index)
+        -- `index`, the entry's place in the saved list (the list shows them in another order).
+        -- Another spec's: what it tracks unknown till that spec (the game's Cooldown Manager
+        -- knows only the spec now's) - nothing said that could be wrong, its setting kept.
+        local function Fill(line, index)
+            local entry = Cooldowns.db.tracked[index]
+            local current = Cooldowns.IsCurrent(entry)
             line.index = index
+            line:SetAlpha(current and 1 or OTHER_SPEC_ALPHA)
             local name, icon = Cooldowns.Describe(entry)
             line.icon:SetTexture(icon)
-            line.text:SetText(name .. "  |cff808080" .. entry.kind .. " " .. entry.id .. "|r")
-            local choose = Cooldowns.HasChoice(entry)
+            line.text:SetText(name)
+            line.id:SetText(entry.id)
+            line.look.Refresh()
+            local choose = current and Cooldowns.HasChoice(entry)
             line.choice:SetShown(choose)
             line.fixed:SetShown(not choose)
             if choose then
                 line.choice.Refresh()
+            elseif not current then
+                line.fixed:SetText("Set in its spec")
             else
                 line.fixed:SetText(FIXED_TRACK[Cooldowns.TrackOf(entry)] or "Nothing to track")
             end
         end
 
-        Register(function() ShowLines(row, Cooldowns.db.tracked, MakeLine, Fill) end)
+        -- The spec now's first; after a divider, another spec's, dimmed (still there to set or remove).
+        row.divider = W.Text(row, 11, W.MUTED)
+        row.divider:SetText("Not in your current spec")
+        local order = {}
+        Register(function()
+            wipe(order)
+            local currents
+            for _, current in ipairs({ true, false }) do
+                for index, entry in ipairs(Cooldowns.db.tracked) do
+                    if Cooldowns.IsCurrent(entry) == current then order[#order + 1] = index end
+                end
+                currents = currents or #order
+            end
+            local gapAt = currents < #order and currents or nil
+            ShowLines(row, order, MakeLine, Fill, gapAt)
+            row.divider:SetShown(gapAt ~= nil)
+            row.divider:ClearAllPoints()
+            row.divider:SetPoint("BOTTOMLEFT", row, "TOPLEFT", CARD_PAD,
+                -(LIST_TOP + (gapAt or 0) * ENTRY + DIVIDER - 6))
+        end)
         Options.idList = row
     end
 
@@ -391,6 +510,7 @@ do -- private scope
     -- is taken), then a line per profile with Load and Delete, which always
     -- ask. A name clicked goes into the box.
     function Page:Profiles()
+        if not Offered(self) then return end
         local Profiles = Core.Profiles
         local row = ListRow(self, "No profiles yet.", "ProfileName", Profiles.MAX_NAME, "Profile name")
         local box = row.box
@@ -448,7 +568,7 @@ do -- private scope
         local Bars = Menus.ActionBars
 
         page:Section("Cooldown manager",
-            "Bars for the spells and items you add by ID - hover anything to see its ID. A spell tracks its cooldown, or the duration of its buff while it is on you (any rank); once you have cast it out of combat and its buff was seen, a spell with both lets you pick. Items track their cooldown. The bars sit in line with the castbar, over the player frame.")
+            "Bars for the spells and items you add by ID - hover anything to see its ID. A spell tracks its cooldown, or the duration of its buff while it is on you (any rank); once you have cast it out of combat and its buff was seen, a spell with both lets you pick. Items track their cooldown. Each one is a Bar, in line with the castbar over the player frame, or an Icon, in rows of their own (placed, sized and laid out in Unlock Mode).")
         page:Check({ module = Cooldowns, key = "showTooltipIDs", label = "IDs on tooltips" })
         page:Choice({
             module = Cooldowns, key = "growDirection", label = "Bars grow",
@@ -469,19 +589,24 @@ do -- private scope
             text = function(value) return string.format("%.1fs", value or 0) end,
         })
 
-        page:Section("Extras", "Small helpers for chat, professions and tooltips.")
-        page:Check({ module = Core.Chat, key = "showButton", label = "Chat copy button",
-            tooltip = "A button above the chat menu button opens the chat tab you are looking at in a window you can copy from." })
+        page:Section("Extras", "Small helpers for professions and tooltips.")
         page:Check({ module = Menus, key = "hideIssueReporter", label = "Hide the Issue Reporter",
+            hidden = not C_AddOns.DoesAddOnExist("Blizzard_PTRFeedback"),
             tooltip = "Takes the beta's box and its \"Press F6\" lines off tooltips. F6 still works." })
-        page:Check({ module = Fishing, key = "fishing", label = "Double-click fishing",
+        page:Check({ module = Fishing, key = "fishing", label = "Double-click fishing", hidden = not Fishing.FISHING_OFFERED,
             tooltip = "Double right-click in the world with a fishing pole in hand to cast Fishing." })
         page:Check({ module = Fishing, key = "camping", label = "Double-click camping",
             tooltip = "Double right-click a Basic Campfire to sit down." })
-        page:Check({ module = Skinning, key = "showSkinnable", label = "Skinnable on tooltips",
+        page:Check({ module = Skinning, key = "showSkinnable", label = "Skinnable on tooltips", hidden = not Skinning.OFFERED,
             tooltip = "Shows the skill a creature takes to skin, coloured like a recipe, once one like it has been confirmed skinnable." })
-        page:Check({ module = Skinning, key = "showCloth", label = "Cloth on tooltips",
+        page:Check({ module = Skinning, key = "showCloth", label = "Cloth on tooltips", hidden = not Skinning.OFFERED,
             tooltip = "Names the cloth a creature drops, once you have seen it in the loot of one like it." })
+
+        page:Section("Party targeting",
+            "Keys that target the next or previous living, online member down the party frames, in the order shown, in combat too - the mouse wheel to start, in place of camera zoom. Click a box and, with the mouse still over it, press a key, mouse button or the mouse wheel, with Alt, Ctrl or Shift if you like. Escape clears it.")
+        for _, entry in ipairs(Core.Frames.UnitPlate.CYCLE) do
+            page:Keybind({ label = entry.label, button = entry.name, command = entry.command })
+        end
 
         page:Section("Profiles",
             "Save every setting on this page under a name, for any of your characters to load. Loading one replaces this character's settings; the cooldown list stays each character's own.")
@@ -705,18 +830,15 @@ do -- private scope
         -- Esc closes it, as the game's own windows.
         table.insert(UISpecialFrames, PANEL_NAME)
 
-        window:SetScript("OnShow", function(self)
-            self.closing = false
+        window:SetScript("OnShow", function()
             Relayout()
             Refresh()
             Follow(scrollFrame:GetVerticalScroll())
         end)
-        window:SetScript("OnHide", function(self)
-            self.closing = false
-            W.ClosePopup()
-        end)
+        window:SetScript("OnHide", W.ClosePopup)
     end
 
+    -- Shown only from here: `closing` (fading out) is reset where it opens.
     function Options.Open()
         Build()
         window.closing = false
@@ -786,7 +908,6 @@ do -- private scope
         button:SetSize(200, 35)
         button:SetText(GameMenu.LABEL)
         GameMenu.lifts[button] = {}
-        Tint(button)
         hooksecurefunc(button, "UpdateButton", Tint)
         -- Resized, the template re-cuts its end pieces: the copies follow.
         button:HookScript("OnSizeChanged", Tint)
@@ -822,10 +943,9 @@ do -- private scope
         own:ClearAllPoints()
         own:SetPoint("TOP", anchor, "BOTTOM", 0, -MENU_GAP)
         own:Show()
-        -- Its art: the template sets it only in its OnShow, which never ran
-        -- for a button made while the menu showed.
+        -- Its art (tinted by the hook): the template sets it only in its
+        -- OnShow, which never ran for a button made while the menu showed.
         own:UpdateButton()
-        Tint(own)
 
         local bottom = anchor:GetBottom()
         if bottom then

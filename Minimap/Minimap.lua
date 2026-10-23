@@ -1,7 +1,8 @@
 -- MINIMAP  (DogsForeverUI.Minimap)
 -- The game's minimap, square, in the frames' border, its round art faded; the
 -- header row laid along a band on the map's edge (below it by default); the
--- dial, flags, coordinates and the group finder's eye moved into its corners.
+-- dial, mail flag, coordinates and the group finder's eye moved into its corners
+-- (on retail the difficulty flag and the expansion button, its eye left alone).
 -- No setting of its own; nothing of the game's is given a field.
 
 local MinimapLook = {}
@@ -28,7 +29,6 @@ do -- private scope
     MinimapLook.MAIL_INSET = 4
     MinimapLook.COORDS_INSET = 3
     MinimapLook.COORDS_SHADOW = { x = 1, y = -1, alpha = 1 }
-    MinimapLook.COUNT_OFFSET = { x = 3, y = -2 }    -- the player count, past the skull's corner
     MinimapLook.CORNER = 10                         -- an edge button rounds a corner by this
     MinimapLook.EYE_SCALE = 0.6
     MinimapLook.EYE_INSET = 3
@@ -42,7 +42,8 @@ do -- private scope
     end
 
     function MinimapLook.MadeBy(lib, frame)
-        for _, object in pairs(lib and lib.objects or {}) do
+        if not lib then return false end
+        for _, object in pairs(lib.objects) do
             if object == frame then return true end
         end
         return false
@@ -55,7 +56,6 @@ do -- private scope
         map:SetMaskTexture(Style.FLAT_TEXTURE)
         Faded(_G.MinimapCompassTexture)
         Faded(_G.MinimapCompassTextureUnderlay)
-        if _G.MinimapCluster then Faded(_G.MinimapCluster.BorderTop) end
     end
 
     ---------------------------------------------------------------------------
@@ -86,13 +86,6 @@ do -- private scope
     local function PlaceRow(band, lift, side)
         local cluster = _G.MinimapCluster
         local PAD, GAP = MinimapLook.PAD + side, MinimapLook.GAP
-
-        -- The strip a few of the game's pieces still hang from.
-        local strip = cluster.BorderTop
-        strip:ClearAllPoints()
-        strip:SetPoint("LEFT", band, "LEFT", PAD, lift)
-        strip:SetPoint("RIGHT", band, "RIGHT", -PAD, lift)
-
         local rightOf
         local function Next(frame)
             frame:ClearAllPoints()
@@ -137,15 +130,36 @@ do -- private scope
     -- their art faded under text in the clock's font and the zone's gold -
     -- the day of the month, and T. Each button exactly as wide as its text.
 
-    local function FadeArt(button)
-        for _, get in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture" }) do
-            Faded(button[get] and button[get](button))
+    -- Every picture of a header button's faded, whichever the client draws
+    -- with (Forever's StateTexture, retail's own; the game sets a picture
+    -- again on every state change, never its alpha), and its hover glow
+    -- emptied (the game sets its alpha on every hover, never its picture).
+    -- Retail frames its zone button with a nine-slice too. A lettered
+    -- button's child frames too, all but our letters.
+    local letters = {}          -- button -> our letters on it
+    local function FadeTextures(frame)
+        for _, region in ipairs({ frame:GetRegions() }) do
+            if region:IsObjectType("Texture") then Faded(region) end
         end
     end
+    local function FadeArt(button)
+        if not button then return end
+        FadeTextures(button)
+        local glyph = letters[button]
+        if glyph then
+            for _, child in ipairs({ button:GetChildren() }) do
+                if child ~= glyph then FadeTextures(child) end
+            end
+        end
+        Faded(button.BorderTop)
+        if button.AddTexture then button.AddTexture:SetTexture(nil) end
+    end
 
-    -- Dimmed until the mouse is over it, a pixel down while pressed.
+    -- Dimmed until the mouse is over it, a pixel down while pressed; the
+    -- game's art faded again after each state change (a client may swap it).
     local function Letters(button)
         local glyph = CreateFrame("Frame", nil, button)
+        letters[button] = glyph
         glyph:SetSize(MinimapLook.ICON_SIZE, MinimapLook.ICON_SIZE)
         glyph:EnableMouse(false)
 
@@ -156,14 +170,21 @@ do -- private scope
         label:SetPoint("CENTER", glyph, "CENTER", 0, 0)
         glyph.label = label
 
-        local function Rest() glyph:SetAlpha(MinimapLook.ICON_ALPHA) end
+        local function Rest()
+            glyph:SetAlpha(MinimapLook.ICON_ALPHA)
+            FadeArt(button)
+        end
         local function At(x, y)
             glyph:ClearAllPoints()
             glyph:SetPoint("CENTER", button, "CENTER", x, y)
+            FadeArt(button)
         end
         Rest()
         At(0, 0)
-        button:HookScript("OnEnter", function() glyph:SetAlpha(1) end)
+        button:HookScript("OnEnter", function()
+            glyph:SetAlpha(1)
+            FadeArt(button)
+        end)
         button:HookScript("OnLeave", Rest)
         button:HookScript("OnMouseDown", function() At(1, -1) end)
         button:HookScript("OnMouseUp", function() At(0, 0) end)
@@ -180,12 +201,12 @@ do -- private scope
         if also then also:SetWidth(width) end
     end
 
-    -- After the game's GameTimeFrame_SetDate, which sets its art again.
+    -- After the game's own SetDate.
     local function CalendarDay()
         local glyph, button = MinimapLook.calendarIcon, _G.GameTimeFrame
-        FadeArt(button)
         glyph.label:SetText(C_DateAndTime.GetCurrentCalendarTime().monthDay)
         FitWidth(button, glyph)
+        FadeArt(button)
     end
 
     local function BuildIcons()
@@ -193,7 +214,11 @@ do -- private scope
         if calendar and not MinimapLook.calendarIcon then
             calendar:SetSize(MinimapLook.ICON_SIZE, MinimapLook.ICON_SIZE)
             MinimapLook.calendarIcon = Letters(calendar)
-            hooksecurefunc("GameTimeFrame_SetDate", CalendarDay)
+            if calendar.SetDate then
+                hooksecurefunc(calendar, "SetDate", CalendarDay)
+            elseif GameTimeFrame_SetDate then
+                hooksecurefunc("GameTimeFrame_SetDate", CalendarDay)
+            end
             CalendarDay()
         end
 
@@ -203,7 +228,6 @@ do -- private scope
             tracking:SetSize(MinimapLook.ICON_SIZE, MinimapLook.ICON_SIZE)
             button:SetSize(MinimapLook.ICON_SIZE, MinimapLook.ICON_SIZE)
             Faded(tracking.Background)
-            FadeArt(button)
             local glyph = Letters(button)
             glyph.label:SetText(MinimapLook.TRACKING_LETTER)
             FitWidth(button, glyph, tracking)
@@ -256,8 +280,8 @@ do -- private scope
     end
 
     function MinimapLook.PlaceHeader()
-        local band, map, cluster = MinimapLook.band, _G.Minimap, _G.MinimapCluster
-        if not (band and map and cluster and cluster.BorderTop) then return end
+        local band, map = MinimapLook.band, _G.Minimap
+        if not (band and map) then return end
         local out = MinimapLook.BorderOut(band)
         local underneath = MinimapLook.HeaderBelow()
         band:ClearAllPoints()
@@ -299,17 +323,8 @@ do -- private scope
         dial:SetAlpha(1)
     end
 
-    -- Right-aligned and outlined once, in the font and size the game gave it.
-    local function Outline(text, fallbackFile)
-        text:SetJustifyH("RIGHT")
-        local file, size, flags = text:GetFont()
-        file = file or fallbackFile
-        if file and (type(flags) ~= "string" or not flags:find("OUTLINE")) then
-            text:SetFont(file, size or COORDS_SIZE, "OUTLINE")
-        end
-    end
-
-    -- Bottom right, outlined with a solid shadow.
+    -- Bottom right, right-aligned, outlined once (in the font and size the
+    -- game gave it) with a solid shadow.
     local function PlaceCoords()
         local map = _G.Minimap
         local container = _G.MinimapCluster and _G.MinimapCluster.MinimapContainer
@@ -323,60 +338,27 @@ do -- private scope
         local shadow = MinimapLook.COORDS_SHADOW
         text:SetShadowColor(0, 0, 0, shadow.alpha)
         text:SetShadowOffset(shadow.x, shadow.y)
-        Outline(text, Style.FONT)
-    end
-
-    -- The difficulty flag: no banner, the player count on the skull's corner
-    -- like a stack count - put back after each of its layout frame's layouts.
-    local function CountOnSkull(holder)
-        local text = holder.Text
-        if not (text and holder.DifficultyTextures) then return end
-        local skull
-        for _, texture in ipairs(holder.DifficultyTextures) do
-            if texture:IsShown() then skull = texture end
-        end
-        if not skull then return end
-        local offset = MinimapLook.COUNT_OFFSET
-        text:ClearAllPoints()
-        text:SetPoint("BOTTOMRIGHT", skull, "BOTTOMRIGHT", offset.x, offset.y)
-        Outline(text)
-    end
-
-    local difficultyStyled = false
-    local function StyleDifficulty()
-        local flag = _G.MinimapCluster and _G.MinimapCluster.InstanceDifficulty
-        if not flag or difficultyStyled then return end
-        difficultyStyled = true
-        for _, key in ipairs({ "Default", "Guild", "ChallengeMode" }) do
-            local mode = flag[key]
-            if mode then
-                Faded(mode.Background)
-                Faded(mode.Border)
-            end
-        end
-        for _, holder in ipairs({ flag.Default, flag.Guild and flag.Guild.Instance }) do
-            if holder and holder.Layout then
-                hooksecurefunc(holder, "Layout", CountOnSkull)
-                CountOnSkull(holder)
-            end
+        text:SetJustifyH("RIGHT")
+        local file, size, flags = text:GetFont()
+        if type(flags) ~= "string" or not flags:find("OUTLINE") then
+            text:SetFont(file or Style.FONT, size or COORDS_SIZE, "OUTLINE")
         end
     end
 
-    -- The mail flags in the top left corner, the dial's mirror; the
-    -- difficulty flag under the dial, which it would cover otherwise.
+    -- The mail flag in the top left corner, the dial's mirror; retail's
+    -- instance difficulty flag (no dial there) in the top right, over the map.
     local function PlaceFlags()
-        StyleDifficulty()
         local cluster, map = _G.MinimapCluster, _G.Minimap
         if not (cluster and map) then return end
-        local mail = cluster.IndicatorFrame
+        local mail, difficulty, inset = cluster.IndicatorFrame, cluster.InstanceDifficulty, MinimapLook.MAIL_INSET
         if mail then
             mail:ClearAllPoints()
-            mail:SetPoint("TOPLEFT", map, "TOPLEFT", MinimapLook.MAIL_INSET, -MinimapLook.MAIL_INSET)
+            mail:SetPoint("TOPLEFT", map, "TOPLEFT", inset, -inset)
         end
-        local difficulty, dial = cluster.InstanceDifficulty, cluster.DielFrame
-        if difficulty and dial then
+        if difficulty then
             difficulty:ClearAllPoints()
-            difficulty:SetPoint("TOPRIGHT", dial, "BOTTOMRIGHT", 0, -2)
+            difficulty:SetPoint("TOPRIGHT", map, "TOPRIGHT", -inset, -inset)
+            difficulty:SetFrameLevel(map:GetFrameLevel() + 8)
         end
     end
 
@@ -438,10 +420,18 @@ do -- private scope
         return 1
     end
 
+    -- The game anchors it to the micro menu (out of sight here, a mouseover) from many
+    -- places, in combat too: EllesmereUI's way, it is taken out of the micro menu - its
+    -- parent the screen, out of the menu's layout - and put back after each of the game's
+    -- moves and queue changes (a place refused in combat is taken as combat ends).
     local function PlaceEye()
         local eye, map = _G.QueueStatusButton, _G.Minimap
         if not (eye and map) then return end
         if eye:IsProtected() and InCombatLockdown() then return end
+        if eye:GetParent() ~= UIParent then
+            if eye.SetIsLayoutFrame then pcall(eye.SetIsLayoutFrame, eye, false) end
+            eye:SetParent(UIParent)
+        end
         local scale = EditModeEyeScale(eye)
 
         if eye.IsInDefaultPosition and not eye:IsInDefaultPosition() then
@@ -458,11 +448,29 @@ do -- private scope
         local eyeScale = eye:GetEffectiveScale()
         if not eyeScale or eyeScale <= 0 then return end
         local offset = MinimapLook.EYE_INSET * map:GetEffectiveScale() / eyeScale + EYE_HALF
-        eye:ClearAllPoints()
+        Base(eye, "ClearAllPoints")(eye)
         Base(eye, "SetPoint")(eye, "CENTER", map, "BOTTOMLEFT", offset, offset)
     end
     -- The rescale places it through a copy of its method no hook reaches: a frame later.
     local PlaceEyeSoon = Core.Waker(PlaceEye)
+
+    -- RETAIL'S EXPANSION BUTTON, off the round frame's edge: over the eye in
+    -- its corner, as small, each time the game sets its icon and its place.
+    local function PlaceExpansion()
+        local button, eye = _G.ExpansionLandingPageMinimapButton, _G.QueueStatusButton
+        if not (Core.RETAIL and button and eye) then return end
+        button:SetScale(MinimapLook.EYE_SCALE)
+        button:ClearAllPoints()
+        button:SetPoint("BOTTOM", eye, "TOP", 0, 0)
+    end
+
+    local function PlaceCorners()
+        PlaceDial()
+        PlaceCoords()
+        PlaceFlags()
+        PlaceEye()
+        PlaceExpansion()
+    end
 
     local hooked = setmetatable({}, { __mode = "k" })
     local function FindButtons()
@@ -489,14 +497,17 @@ do -- private scope
         if not cluster or cornersBuilt then return end
         cornersBuilt = true
         if cluster.SetEditModeScale then hooksecurefunc(cluster, "SetEditModeScale", PlaceDial) end
+        -- The tracking button showing adds a point to the mail flag.
+        if MiniMapIndicatorFrame_UpdatePosition then hooksecurefunc("MiniMapIndicatorFrame_UpdatePosition", PlaceFlags) end
         local eye = _G.QueueStatusButton
-        if eye and eye.UpdateDefaultAnchor then hooksecurefunc(eye, "UpdateDefaultAnchor", PlaceEye) end
-        if eye and eye.UpdateSystemSettingSize then hooksecurefunc(eye, "UpdateSystemSettingSize", PlaceEye) end
+        for _, method in ipairs({ "UpdateDefaultAnchor", "UpdatePosition", "UpdateSystemSettingSize", "UpdateDisplay" }) do
+            if eye and eye[method] then hooksecurefunc(eye, method, PlaceEye) end
+        end
+        EventRegistry:RegisterCallback("QueueStatusButton.OnShow", PlaceEye, placed)
         EventRegistry:RegisterCallback("Minimap.OnScaleUpdated", PlaceEyeSoon, placed)
-        PlaceDial()
-        PlaceCoords()
-        PlaceFlags()
-        PlaceEye()
+        local expansion = _G.ExpansionLandingPageMinimapButton
+        if expansion and expansion.UpdateIcon then hooksecurefunc(expansion, "UpdateIcon", PlaceExpansion) end
+        PlaceCorners()
     end
 
     -- The hybrid minimap (load on demand) cuts its own canvas with a round
@@ -541,12 +552,16 @@ do -- private scope
             MinimapLook.PlaceHeader()
         end, MinimapLook)
 
-        if not (cluster and cluster.BorderTop) then return end
+        if not cluster then return end
         -- On the cluster, under everything it holds.
         local band = CreateFrame("Frame", nil, cluster)
         band:SetFrameLevel(cluster:GetFrameLevel())
         band:EnableMouse(false)
         MinimapLook.band = band
+        FadeArt(cluster.ZoneTextButton)
+        Faded(cluster.BorderTop)        -- (live retail's header frame, on the cluster)
+        -- Rotate Minimap switching: the game sets its round mask again.
+        if cluster.UpdateMinimapConfig then hooksecurefunc(cluster, "UpdateMinimapConfig", Square) end
         -- The game putting the row back on its anchors (a layout loading),
         -- the cluster laying itself out, or Edit Mode re-anchoring its box.
         if cluster.SetHeaderUnderneath then
@@ -577,31 +592,24 @@ do -- private scope
     end
     Apply()
 
-    -- The game's own rotate callback may run after ours: square again a frame later.
-    local SquareSoon = Core.Waker(Square)
-
     local watcher = CreateFrame("Frame")
     watcher:RegisterEvent("ADDON_LOADED")
     watcher:RegisterEvent("PLAYER_LOGIN")
     watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
-    watcher:RegisterEvent("CVAR_UPDATE")
-    watcher:SetScript("OnEvent", function(_, event, name)
+    watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+    local QUEUE_EVENTS = { LFG_UPDATE = true, LFG_QUEUE_STATUS_UPDATE = true, LFG_PROPOSAL_UPDATE = true,
+                           LFG_ROLE_CHECK_UPDATE = true }
+    for event in pairs(QUEUE_EVENTS) do pcall(watcher.RegisterEvent, watcher, event) end
+    watcher:SetScript("OnEvent", function(_, event)
         if event == "PLAYER_LOGIN" then return FindButtonsSoon() end
-        if event == "CVAR_UPDATE" then
-            if name == "rotateMinimap" then
-                Square()
-                SquareSoon()
-            end
-            return
-        end
+        if QUEUE_EVENTS[event] then return PlaceEye() end
+        -- (A corner piece the game moved in combat may not be moved back then: now.)
+        if event == "PLAYER_REGEN_ENABLED" then return PlaceCorners() end
         Apply()
         if event == "PLAYER_ENTERING_WORLD" and MinimapLook.border then
             Style.Refit(MinimapLook.border)
             MinimapLook.PlaceHeader()
-            PlaceDial()
-            PlaceCoords()
-            PlaceFlags()
-            PlaceEye()
+            PlaceCorners()
         end
     end)
 end

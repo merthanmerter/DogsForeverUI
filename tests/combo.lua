@@ -206,4 +206,42 @@ DogsForeverUI:Reset("combo")
 check("a reset puts it back in its row, wherever that is now (placed there once again)",
     DB.placed == true and InItsRow())
 
+Section("retail")
+-- Retail keeps the points on the player, not the target, and draws its gems
+-- in the player frame's bottom-managed stack (RogueComboPointBar.xml,
+-- DruidComboPointBar.xml); there is no ComboFrame.
+do
+    WOW_PROJECT_ID = WOW_PROJECT_MAINLINE
+    ComboFrame = nil
+    RogueComboPointBarFrame, DruidComboPointBarFrame = newWidget("Frame"), newWidget("Frame")
+    function GetComboPoints() return 0 end
+    local plainPower = UnitPower
+    function UnitPower(token, powerType)
+        if token == "player" and powerType == Enum.PowerType.ComboPoints then return combo.points end
+        return plainPower(token, powerType)
+    end
+    units.player.class, units.player.powerToken, units.target = "ROGUE", "ENERGY", nil
+    combo.points = 0
+    local ok, err = pcall(function()
+        Reload(nil)
+        Login()
+    end)
+    check("the addon loads and logs in with no error", ok, tostring(err))
+    local rbar, rsegments = DogsForeverUI.ComboPoints.bar, DogsForeverUI.ComboPoints.segments
+    check("the game's gems are faded and take no mouse, never hidden (a managed stack)",
+        RogueComboPointBarFrame.alpha == 0 and RogueComboPointBarFrame.mouseEnabled == false
+        and DruidComboPointBarFrame.alpha == 0 and DruidComboPointBarFrame.mouseEnabled == false
+        and RogueComboPointBarFrame:IsShown() and DruidComboPointBarFrame:IsShown())
+    SetPoints(3)
+    check("the player's points show, with no target needed",
+        rbar:IsShown() == true and Filled(rsegments) == "1,1,1,0,0", Filled(rsegments))
+    SetPoints(0)
+    Tick(Style.FADE_OUT + 0.05)
+    check("and go when spent", rbar:IsShown() == false)
+    ok, err = pcall(DogsForeverUI.SetUnlocked, true)
+    check("Unlock Mode shows it to place, with no error", ok and rbar:IsShown() == true, tostring(err))
+    DogsForeverUI.SetUnlocked(false)
+    UnitPower = plainPower
+end
+
 Summary()

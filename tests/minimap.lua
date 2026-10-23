@@ -5,7 +5,8 @@ assert(loadfile(ADDON_PATH .. "/tests/wow.lua"))(ADDON_PATH, TOC_TEXT)
 
 -- The game's minimap, as Blizzard_Minimap builds it before any addon loads:
 -- the map, its ring and the ring under it, and the day/night dial on the
--- cluster. The map starts with the round mask Camelot\Skin.lua gives it.
+-- cluster. The map starts with the round mask Camelot\Minimap.lua gives it,
+-- and gets it again whenever Rotate Minimap switches (UpdateMinimapConfig).
 MinimapCluster = newWidget("Frame", UIParent)
 -- The game's Rotate Minimap, as its layout applies it: the CVar, nothing else.
 function MinimapCluster:SetRotateMinimap(on) C_CVar.SetCVar("rotateMinimap", on and "1" or "0") end
@@ -14,38 +15,57 @@ Minimap:SetSize(198, 198)
 Minimap.center = { 1700, 900 }
 Minimap.mask = "ui-hud-minimap-frame-generic-mask"
 function Minimap:SetMaskTexture(mask) self.mask = mask end
+function MinimapCluster:UpdateMinimapConfig() Minimap:SetMaskTexture("ui-hud-minimap-frame-generic-mask") end
 pings = {}
 function Minimap:PingLocation(x, y) pings[#pings + 1] = { x, y } end
 MinimapCompassTexture = newWidget("Texture", Minimap)
 MinimapCompassTextureUnderlay = newWidget("Texture", Minimap)
 MinimapCluster:SetFrameLevel(4)
 Minimap:SetFrameLevel(6)
--- The header row: the strip everything hangs from, the zone name on it.
-MinimapCluster.BorderTop = newWidget("Frame", MinimapCluster)
-MinimapCluster.BorderTop:SetSize(175, 16)
-MinimapCluster.BorderTop:SetPoint("TOP", MinimapCluster, "TOP", 15, -4)
+-- The header row (Camelot): the zone name in its own framed button, the
+-- calendar's framed button beside it, tracking left of it. Each button's art
+-- is a state atlas and a hover glow over it.
+local function Art(button)
+    button.StateTexture = button:CreateTexture(nil, "BACKGROUND")
+    button.StateTexture:SetAtlas("ui-hud-minimap-header-button")
+    button.AddTexture = button:CreateTexture(nil, "BACKGROUND")
+    button.AddTexture:SetTexture("ui-hud-minimap-header-button")
+end
 MinimapCluster.ZoneTextButton = newWidget("Button", MinimapCluster)
-MinimapCluster.ZoneTextButton:SetPoint("LEFT", MinimapCluster.BorderTop, "LEFT", 4, 0)
+MinimapCluster.ZoneTextButton:SetSize(152, 23)
+MinimapCluster.ZoneTextButton:SetPoint("TOP", MinimapCluster, "TOP", 10, 0)
+Art(MinimapCluster.ZoneTextButton)
 MinimapZoneText = newWidget("FontString", MinimapCluster.ZoneTextButton)
-MinimapZoneText:SetWidth(130)
-MinimapZoneText:SetPoint("CENTER", MinimapCluster.ZoneTextButton, "CENTER", 0, 1)
+MinimapZoneText:SetSize(110, 12)
+MinimapZoneText:SetPoint("LEFT", MinimapCluster.ZoneTextButton, "LEFT", 8, -1)
 MinimapCluster.Tracking = newWidget("Frame", MinimapCluster)
-MinimapCluster.Tracking:SetPoint("RIGHT", MinimapCluster.BorderTop, "LEFT", -2, 0)
+MinimapCluster.Tracking:SetPoint("RIGHT", MinimapCluster.ZoneTextButton, "LEFT", 0, 0)
 MinimapCluster.Tracking:SetSize(17, 17)
 MinimapCluster.Tracking.Background = newWidget("Texture", MinimapCluster.Tracking)
 MinimapCluster.Tracking.Button = newWidget("Button", MinimapCluster.Tracking)
-MinimapCluster.Tracking.Button:SetSize(13, 14)
+MinimapCluster.Tracking.Button:SetSize(23, 23)
+Art(MinimapCluster.Tracking.Button)
 GameTimeFrame = newWidget("Button", MinimapCluster)
-GameTimeFrame:SetPoint("TOPLEFT", MinimapCluster.BorderTop, "TOPRIGHT", 1, 0)
-GameTimeFrame:SetSize(19, 18)
+GameTimeFrame:SetPoint("TOPLEFT", MinimapCluster.ZoneTextButton, "TOPRIGHT", -4, 0)
+GameTimeFrame:SetSize(23, 23)
+Art(GameTimeFrame)
 -- The font object the clock's time inherits.
 WhiteNormalNumberFont = {}
--- The calendar's art is set again, by name, each time the date refreshes.
+-- The calendar's date refreshed by its own method; the old global calls it.
 today = 2
 C_DateAndTime = C_DateAndTime or {}
 function C_DateAndTime.GetCurrentCalendarTime() return { monthDay = today } end
 dateSet = 0
-function GameTimeFrame_SetDate() dateSet = dateSet + 1 end
+function GameTimeFrame:SetDate() dateSet = dateSet + 1 end
+function GameTimeFrame_SetDate() GameTimeFrame:SetDate() end
+-- The game's hover (MinimapZoneTextButton.lua): the art's atlas set again -
+-- which in game brings back its colour - and the glow faded in by alpha.
+local function Hover(button)
+    button.StateTexture:SetAtlas("ui-hud-minimap-header-button")
+    button.StateTexture.vertexColor = nil
+    button.AddTexture:SetShown(true)
+    button.AddTexture:SetAlpha(0.1)
+end
 -- The clock comes later, with Blizzard_TimeManager.
 -- The cluster's rect, as the game sized it round the round frame (a
 -- ResizeLayoutFrame, 20 wider than its parts); the map inside it; the Edit
@@ -69,53 +89,25 @@ function MinimapCluster:SetEditModeScale(scale)
     self.DielFrame:SetScale(math.max(1, scale))
     self.DielFrame:SetPoint("CENTER", 63 * math.min(1, scale), 72 * math.min(1, scale))
 end
--- Edit Mode's "header underneath": the strip back on the game's anchors.
+-- Edit Mode's "header underneath": the zone button and the mail flag back on
+-- the game's anchors (Camelot\Minimap.lua).
+-- The mail flag under the zone name; the game adds a point to it as tracking
+-- shows (MiniMapIndicatorFrame_UpdatePosition). No difficulty flag in Camelot.
+MinimapCluster.IndicatorFrame = newWidget("Frame", MinimapCluster)
+MinimapCluster.IndicatorFrame:SetPoint("TOPLEFT", MinimapCluster.ZoneTextButton, "BOTTOMLEFT", 0, 0)
 function MinimapCluster:SetHeaderUnderneath(below)
-    self.BorderTop:ClearAllPoints()
+    self.ZoneTextButton:ClearAllPoints()
+    self.IndicatorFrame:ClearAllPoints()
     if below then
-        self.BorderTop:SetPoint("BOTTOM", self, "BOTTOM", 15, 2)
+        self.ZoneTextButton:SetPoint("BOTTOM", self, "BOTTOM", -1, 8)
+        self.IndicatorFrame:SetPoint("BOTTOMLEFT", self.ZoneTextButton, "TOPLEFT", 0, 0)
     else
-        self.BorderTop:SetPoint("TOP", self, "TOP", 15, -4)
+        self.ZoneTextButton:SetPoint("TOP", self, "TOP", 10, 0)
+        self.IndicatorFrame:SetPoint("TOPLEFT", self.ZoneTextButton, "BOTTOMLEFT", 0, 0)
     end
 end
--- The mail flag under the tracking button, the difficulty flag under the
--- header's right end.
-MinimapCluster.IndicatorFrame = newWidget("Frame", MinimapCluster)
-MinimapCluster.IndicatorFrame:SetPoint("TOPRIGHT", MinimapCluster, "TOPLEFT", 0, 0)
-MinimapCluster.InstanceDifficulty = newWidget("Frame", MinimapCluster)
-MinimapCluster.InstanceDifficulty:SetPoint("TOPRIGHT", MinimapCluster.BorderTop, "TOPRIGHT", 0, -15)
--- Its modes (InstanceDifficulty.xml): each with a banner behind it; the
--- default one and the guild one's Instance row hold the skulls and the count,
--- which their layout frame lays under the skull.
-do
-    local flag = MinimapCluster.InstanceDifficulty
-    local function Holder(parent)
-        local h = newWidget("Frame", parent)
-        h.DifficultyTextures = {}
-        for i, key in ipairs({ "NormalTexture", "HeroicTexture", "MythicTexture" }) do
-            local t = h:CreateTexture(nil, "ARTWORK")
-            t.shown = (i == 1)
-            h[key] = t
-            h.DifficultyTextures[i] = t
-        end
-        h.Text = h:CreateFontString()
-        h.Text:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
-        function h:Layout()
-            local above = self.DifficultyTextures[1]
-            for _, t in ipairs(self.DifficultyTextures) do if t.shown then above = t end end
-            self.Text:ClearAllPoints()
-            self.Text:SetPoint("TOP", above, "BOTTOM", 0, 0)
-        end
-        return h
-    end
-    for _, key in ipairs({ "Default", "Guild", "ChallengeMode" }) do
-        local mode = key == "Default" and Holder(flag) or newWidget("Frame", flag)
-        mode.Background = mode:CreateTexture(nil, "BACKGROUND")
-        mode.Border = mode:CreateTexture(nil, "ARTWORK")
-        flag[key] = mode
-    end
-    flag.Guild.Instance = Holder(flag.Guild)
-    flag.Default:Layout()
+function MiniMapIndicatorFrame_UpdatePosition()
+    MinimapCluster.IndicatorFrame:SetPoint("TOPRIGHT", MinimapCluster.Tracking, "BOTTOMRIGHT", 2, -1)
 end
 -- The children the map holds, as GetChildren gives them.
 mapChildren = {}
@@ -133,6 +125,13 @@ function QueueStatusButton:UpdateDefaultAnchor()
 end
 -- Edit Mode putting its Size setting on it, through its own SetScale.
 function QueueStatusButton:UpdateSystemSettingSize() self:SetScale(1) end
+-- Live retail's other way: on the micro menu, as its child.
+MicroMenuContainer = MicroMenuContainer or newWidget("Frame", UIParent)
+function QueueStatusButton:UpdatePosition()
+    self:SetParent(MicroMenuContainer)
+    self:ClearAllPoints()
+    self:SetPoint("BOTTOMLEFT", MicroMenuContainer, "BOTTOMRIGHT", 15, 12)
+end
 QueueStatusButton:UpdateDefaultAnchor()
 -- The copy of that method the game hands the rescale callback at load.
 local gameRescale = QueueStatusButton.UpdateDefaultAnchor
@@ -143,6 +142,11 @@ coords.CoordText = newWidget("FontString", coords)
 coords.CoordText:SetFont("Interface\\AddOns\\DogsForeverUI\\Media\\Dog.ttf", 10, "")
 coords:SetPoint("BOTTOM", Minimap, "BOTTOM", 0, -18)
 MinimapCluster.MinimapContainer.PlayerCoords = coords
+-- The expansion button (Minimap.xml, on both clients; shown on retail only): on
+-- the round frame's edge, placed again - a point added - as the game sets its icon.
+ExpansionLandingPageMinimapButton = newWidget("Button", Minimap)
+function ExpansionLandingPageMinimapButton:UpdateIcon() self:SetPoint("TOPLEFT", -3, -150) end
+ExpansionLandingPageMinimapButton:UpdateIcon()
 
 -- The game's own event registry, as far as the minimap's rescale goes.
 EventRegistry = { callbacks = {} }
@@ -192,6 +196,7 @@ local beforeEye = Keys(QueueStatusButton)
 local beforeCluster = Keys(MinimapCluster)
 local beforeDial = Keys(MinimapCluster.DielFrame)
 local beforeCoords = Keys(coords)
+local beforeLanding = Keys(ExpansionLandingPageMinimapButton)
 
 LoadAddon()
 
@@ -223,9 +228,20 @@ Section("square")
 check("the round mask swapped for a plain square", Minimap.mask == Style.FLAT_TEXTURE, tostring(Minimap.mask))
 check("the game's ring faded", MinimapCompassTexture.alpha == 0)
 check("the ring under it (rotating mode) faded", MinimapCompassTextureUnderlay.alpha == 0)
-check("the header's bronze strip faded", MinimapCluster.BorderTop.alpha == 0)
 check("none of them hidden: shown and hidden by the game alone",
-    MinimapCompassTexture.shown and MinimapCompassTextureUnderlay.shown and MinimapCluster.BorderTop.shown)
+    MinimapCompassTexture.shown and MinimapCompassTextureUnderlay.shown)
+do
+    local buttons = { MinimapCluster.ZoneTextButton, GameTimeFrame, MinimapCluster.Tracking.Button }
+    local function Clear()
+        for _, button in ipairs(buttons) do
+            if button.StateTexture.alpha ~= 0 or button.AddTexture.texture ~= nil then return false end
+        end
+        return true
+    end
+    check("the header buttons' framed art faded, their hover glow emptied", Clear())
+    for _, button in ipairs(buttons) do Hover(button) end
+    check("and both stay so as the game sets them again on hover", Clear())
+end
 
 Section("the frames' border")
 check("on a frame of the addon's, a child of the map", NS.frame ~= nil and NS.frame.parent == Minimap)
@@ -241,7 +257,6 @@ check("laid out again when Edit Mode rescales the minimap", ok)
 
 Section("the title, on the map")
 local band = NS.band
-local strip = MinimapCluster.BorderTop
 local function Anchor(frame, i) return frame.anchors and frame.anchors[i] or {} end
 -- Under the map by default - the addon's own setting (the player, 2026-10-03).
 local Game = DogsForeverUI.GameFrames
@@ -287,7 +302,7 @@ check("its label filling it, with no offset of its own",
 
 -- The clock arrives with Blizzard_TimeManager.
 TimeManagerClockButton = newWidget("Button", MinimapCluster)
-TimeManagerClockButton:SetPoint("TOPRIGHT", strip, "TOPRIGHT", -4, 0)
+TimeManagerClockButton:SetPoint("RIGHT", MinimapCluster.ZoneTextButton, "RIGHT", -3, -1)
 TimeManagerClockTicker = newWidget("FontString", TimeManagerClockButton)
 TimeManagerClockTicker:SetPoint("CENTER", TimeManagerClockButton, "CENTER", 3, 1)
 Fire("ADDON_LOADED", "Blizzard_TimeManager")
@@ -333,6 +348,19 @@ check("a pixel down while pressed", OnLine(calendarIcon, GameTimeFrame, "CENTER"
 for _, hook in ipairs(GameTimeFrame.hooks.OnMouseUp) do hook(GameTimeFrame) end
 for _, hook in ipairs(GameTimeFrame.hooks.OnLeave) do hook(GameTimeFrame) end
 check("and back", calendarIcon.alpha == NS.ICON_ALPHA and OnLine(calendarIcon, GameTimeFrame, "CENTER", "CENTER", 0, 0))
+do
+    -- Live retail draws the picture its own way: a texture of the button's,
+    -- or one on a frame inside it. Faded too, at the next state change.
+    local own = GameTimeFrame:CreateTexture(nil, "ARTWORK")
+    local inside = CreateFrame("Frame", nil, GameTimeFrame)
+    local insideArt = inside:CreateTexture(nil, "ARTWORK")
+    own:SetAlpha(1)
+    insideArt:SetAlpha(1)
+    for _, hook in ipairs(GameTimeFrame.hooks.OnEnter) do hook(GameTimeFrame) end
+    check("any picture of the game's on the calendar faded, ours kept",
+        own.alpha == 0 and insideArt.alpha == 0 and calendarIcon.alpha == 1)
+    for _, hook in ipairs(GameTimeFrame.hooks.OnLeave) do hook(GameTimeFrame) end
+end
 today = 3
 GameTimeFrame_SetDate()
 check("the day written again after the game refreshes the date", calendarIcon.label.text == 3 and dateSet == 1)
@@ -381,15 +409,14 @@ Game.db.minimapHeaderBelow = true
 Game.Refresh()
 check("switched on: the band under the map", Anchor(band, 1)[1] == "TOPLEFT" and Anchor(band, 1)[3] == "BOTTOMLEFT")
 check("the row in it, on the part the border leaves",
-    Anchor(strip, 1)[2] == band and Anchor(strip, 1)[5] == -lift and #strip.anchors == 2
-    and OnLine(zone, band, "LEFT", "LEFT", inset, -lift) and OnLine(tracking, band, "RIGHT", "RIGHT", -inset, -lift))
+    OnLine(zone, band, "LEFT", "LEFT", inset, -lift) and OnLine(tracking, band, "RIGHT", "RIGHT", -inset, -lift))
 check("still the minimap's width", Anchor(band, 1)[4] == -out and Anchor(band, 2)[4] == out)
 MinimapCluster:SetHeaderUnderneath(false)
 check("the game's own Header Underneath applied: the row moved back in, the side the addon's",
-    Anchor(band, 1)[1] == "TOPLEFT" and Anchor(strip, 1)[2] == band)
+    Anchor(band, 1)[1] == "TOPLEFT" and Anchor(zone, 1)[2] == band and #zone.anchors == 2)
 Game.db.minimapHeaderBelow = false
 Game.Refresh()
-check("switched off: back on top", Anchor(band, 1)[1] == "BOTTOMLEFT" and Anchor(strip, 1)[2] == band
+check("switched off: back on top", Anchor(band, 1)[1] == "BOTTOMLEFT"
     and OnLine(zone, band, "LEFT", "LEFT", inset, lift) and OnLine(tracking, band, "RIGHT", "RIGHT", -inset, lift))
 MinimapCluster:SetHeaderUnderneath(true)
 check("and the game's own Header Underneath does not take it down", Anchor(band, 1)[1] == "BOTTOMLEFT")
@@ -430,47 +457,18 @@ do
     check("placed again: outlined once, nothing else changed", size == 10 and flags == "OUTLINE")
 end
 
-Section("the mail and difficulty flags")
-local mail, difficulty = MinimapCluster.IndicatorFrame, MinimapCluster.InstanceDifficulty
+Section("the mail flag")
+local mail = MinimapCluster.IndicatorFrame
 local function Mail()
     return #mail.anchors == 1 and Anchor(mail, 1)[1] == "TOPLEFT" and Anchor(mail, 1)[2] == Minimap
         and Anchor(mail, 1)[3] == "TOPLEFT" and Anchor(mail, 1)[4] == NS.MAIL_INSET
 end
-local function Difficulty()
-    return #difficulty.anchors == 1 and Anchor(difficulty, 1)[1] == "TOPRIGHT"
-        and Anchor(difficulty, 1)[2] == MinimapCluster.DielFrame and Anchor(difficulty, 1)[3] == "BOTTOMRIGHT"
-end
 check("mail in the map's top left corner, the dial's mirror", Mail())
-check("difficulty under the dial, not over it", Difficulty())
 MinimapCluster:SetHeaderUnderneath(true)
-check("still there with the header under the map", Mail() and Difficulty())
+check("still there with the header under the map", Mail())
 MinimapCluster:SetHeaderUnderneath(false)
-
-Section("the difficulty flag")
-do
-    local flag = MinimapCluster.InstanceDifficulty
-    local D = flag.Default
-    local function OnSkull(holder, skull)
-        local a = Anchor(holder.Text, 1)
-        return #holder.Text.anchors == 1 and a[1] == "BOTTOMRIGHT" and a[2] == skull and a[3] == "BOTTOMRIGHT"
-            and a[4] == NS.COUNT_OFFSET.x and a[5] == NS.COUNT_OFFSET.y and holder.Text.justifyH == "RIGHT"
-    end
-    check("no banner behind it, in any of its modes",
-        D.Background.alpha == 0 and D.Border.alpha == 0 and flag.Guild.Background.alpha == 0
-        and flag.Guild.Border.alpha == 0 and flag.ChallengeMode.Background.alpha == 0
-        and flag.ChallengeMode.Border.alpha == 0)
-    check("the skull itself left alone", D.NormalTexture.alpha == nil and D.NormalTexture.shown)
-    check("the player count on the skull's bottom right corner, like a stack count", OnSkull(D, D.NormalTexture))
-    local _, _, flags = D.Text:GetFont()
-    check("outlined, as stack counts are", flags == "OUTLINE")
-    D.NormalTexture.shown, D.HeroicTexture.shown = false, true
-    D:Layout()
-    check("the game lays it out again (heroic): back on the corner of the skull shown", OnSkull(D, D.HeroicTexture))
-    D.NormalTexture.shown, D.HeroicTexture.shown = true, false
-    D:Layout()
-    flag.Guild.Instance:Layout()
-    check("the guild mode's count on its skull's corner too", OnSkull(flag.Guild.Instance, flag.Guild.Instance.NormalTexture))
-end
+MiniMapIndicatorFrame_UpdatePosition()
+check("and when the game hangs it under tracking again", Mail())
 
 Section("buttons round the edge")
 local function At(frame)
@@ -535,6 +533,27 @@ Tick(0)
 check("and it goes to the corner a frame later", InCorner())
 eye:UpdateSystemSettingSize()
 check("Edit Mode setting its size: made small again", eye.scale == NS.EYE_SCALE, eye.scale)
+-- (The player, 2026-10-20: in an instance it sat "in some weird place" - the game
+-- anchored it to the out-of-sight micro menu in combat, where it may not be moved.)
+eye.IsProtected = function() return true end
+inCombat = true
+eye:UpdateDefaultAnchor()
+check("re-anchored by the game in combat: left there (the move is refused then)", not InCorner())
+inCombat = false
+Fire("PLAYER_REGEN_ENABLED")
+check("and in its corner as combat ends", InCorner())
+eye.IsProtected = nil
+eye:ClearAllPoints()
+EventRegistry:TriggerEvent("QueueStatusButton.OnShow")
+check("in its corner again each time it shows", InCorner())
+-- (The player: "this keeps going back to another place" - live retail also moves it
+-- through UpdatePosition, onto the micro menu, as its child. EllesmereUI's way.)
+eye:UpdatePosition()
+check("moved onto the micro menu by the game: back in its corner, out of the menu (the screen its parent)",
+    InCorner() and eye.parent == UIParent)
+eye:ClearAllPoints()
+Fire("LFG_QUEUE_STATUS_UPDATE")
+check("and on every change of the queue", InCorner())
 eyeDefault = false
 eye:ClearAllPoints()
 eye:SetPoint("CENTER", UIParent, "CENTER", 300, 200)
@@ -543,18 +562,13 @@ Fire("PLAYER_ENTERING_WORLD")
 check("moved in Edit Mode: left where the player put it",
     Anchor(eye, 1)[2] == UIParent and Near(Anchor(eye, 1)[4], 300))
 check("at Edit Mode's size again", eye.scale == 1, eye.scale)
+local landing = ExpansionLandingPageMinimapButton
+check("the expansion button, never shown on Forever, left as the game has it",
+    #landing.anchors == 1 and Anchor(landing, 1)[1] == "TOPLEFT" and landing.scale == 1)
 
 Section("rotate minimap switched")
-Minimap.mask = "ui-hud-minimap-frame-generic-mask"     -- the game's callback
-Fire("CVAR_UPDATE", "rotateMinimap", "1")
-check("square again at once", Minimap.mask == Style.FLAT_TEXTURE)
-Minimap.mask = "ui-hud-minimap-frame-generic-mask"     -- the game's ran after ours
-Tick(0)
-check("and again on the next frame, so it stays square whichever ran last", Minimap.mask == Style.FLAT_TEXTURE)
-Minimap.mask = "kept"
-Fire("CVAR_UPDATE", "cameraDistanceMaxZoomFactor", "2")
-check("other settings left alone", Minimap.mask == "kept")
-Minimap.mask = Style.FLAT_TEXTURE
+MinimapCluster:UpdateMinimapConfig()      -- the game's rotateMinimap callback
+check("square again at once, after the game's round mask", Minimap.mask == Style.FLAT_TEXTURE)
 
 Section("a click in the map")
 local function Click(x, y)
@@ -830,6 +844,51 @@ LibStub = nil
 Section("other addons asking")
 check("GetMinimapShape says square", GetMinimapShape() == "SQUARE")
 
+Section("Unlock Mode's place: the cluster hung on it again when the game lays it out")
+do
+    local GF = DogsForeverUI.GameFrames
+    GF.db.minimapPlaced, GF.db.minimapLeft, GF.db.minimapTop = true, 1600, -40
+    local place = GF.places.minimap
+    place.left, place.width, place.top, place.bottom = 1600, 210, 1040, 820
+    for _, method in ipairs({ "Layout", "UpdateMinimapConfig", "SetHeaderUnderneath" }) do
+        MinimapCluster:ClearAllPoints()
+        MinimapCluster:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+        MinimapCluster[method](MinimapCluster, false)
+        Tick(0)
+        check("after the game's " .. method, Anchor(MinimapCluster, 1)[2] == place, tostring(Anchor(MinimapCluster, 1)[2]))
+    end
+    GF.db.minimapPlaced = nil
+    MinimapCluster:ClearAllPoints()
+    MinimapCluster.anchors = nil
+end
+
+Section("retail: its own corner pieces")
+do
+    -- (The player, 2026-10-20: retail's eye, by the micro menu, was out of place.)
+    DogsForeverUI.RETAIL = true
+    eyeDefault = true
+    eye:UpdateDefaultAnchor()
+    Fire("PLAYER_ENTERING_WORLD")
+    check("the group finder's eye in the map's bottom left corner, as on Forever", InCorner()
+        and eye.scale == NS.EYE_SCALE)
+    landing:UpdateIcon()
+    local point, relative, relativePoint, x, y = unpack(Anchor(landing, 1))
+    check("the expansion button just over the eye, as small",
+        #landing.anchors == 1 and point == "BOTTOM" and relative == eye and relativePoint == "TOP"
+        and landing.scale == NS.EYE_SCALE)
+    -- The instance difficulty flag, hung by the game under its zone name.
+    local difficulty = newWidget("Frame", MinimapCluster)
+    difficulty:SetPoint("TOPRIGHT", MinimapCluster.ZoneTextButton, "BOTTOMRIGHT", 0, 0)
+    MinimapCluster.InstanceDifficulty = difficulty
+    MinimapCluster:SetHeaderUnderneath(true)
+    point, relative, relativePoint, x, y = unpack(Anchor(difficulty, 1))
+    check("the instance difficulty flag in the top right corner, over the map (no dial there)",
+        #difficulty.anchors == 1 and point == "TOPRIGHT" and relative == Minimap and relativePoint == "TOPRIGHT"
+        and Near(x, -NS.MAIL_INSET) and Near(y, -NS.MAIL_INSET) and difficulty:GetFrameLevel() > Minimap:GetFrameLevel())
+    MinimapCluster.InstanceDifficulty = nil
+    DogsForeverUI.RETAIL = false
+end
+
 Section("nothing written into the game's tables")
 do
     local function Added(t, was, allowed)
@@ -855,6 +914,8 @@ do
     check("no field added to the coordinates", #onCoords == 0, table.concat(onCoords, ", "))
     local onEye = Added(QueueStatusButton, beforeEye, stub)
     check("no field added to the eye", #onEye == 0, table.concat(onEye, ", "))
+    local onLanding = Added(ExpansionLandingPageMinimapButton, beforeLanding, stub)
+    check("no field added to the expansion button", #onLanding == 0, table.concat(onLanding, ", "))
     local onHybrid = Added(HybridMinimap, hybridKeys)
     check("no field added to the hybrid minimap", #onHybrid == 0, table.concat(onHybrid, ", "))
 end

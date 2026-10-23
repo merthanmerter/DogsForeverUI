@@ -305,7 +305,9 @@ do -- private scope
             return
         end
         local under = LightAll(AB.all)
-        for _, key in ipairs(SMALL_BARS) do under = LightAll(AB.buttons[key] or {}, under) end
+        for _, key in ipairs(SMALL_BARS) do
+            if AB.buttons[key] then under = LightAll(AB.buttons[key], under) end
+        end
         Point(under)
     end
 
@@ -383,7 +385,6 @@ do -- private scope
         window.defaults.disarm()
     end
 
-    -- Where Unlock Mode's bar opens: centred, under the micro menu's place.
     ---------------------------------------------------------------------------
     -- The game's own mode comes here: its window out of sight and deaf, ours
     -- over it. Our Okay and Cancel are secure buttons clicking the game's,
@@ -503,7 +504,7 @@ do -- private scope
         ShowGameButtons(false)
     end
 
-    -- The game's mode is LoadOnDemand (Blizzard_QuickKeybind).
+    -- The game's mode (Blizzard_QuickKeybind) may load after the addon.
     local function FollowGame()
         QuickKeybindFrame:HookScript("OnShow", OpenForGame)
         QuickKeybindFrame:HookScript("OnHide", GameClosed)

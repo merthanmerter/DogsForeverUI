@@ -1,6 +1,7 @@
 -- MODULE: Castbar  (DogsForeverUI.Castbar, settings section "castbar")
 -- The player's casting bar, in place of the game's (hidden, never edited).
--- Casts and channels only: a GCD bar would have to branch on a secret boolean.
+-- Casts, channels and retail's empowered casts only: a GCD bar would have to
+-- branch on a secret boolean.
 -- Leads the castbar group: the row (Rows.lua) and the swing bars sit above it.
 
 DogsForeverUI.Castbar = CreateFrame("Frame")
@@ -78,6 +79,15 @@ do -- private scope
     function NS.OverCastbar(width, height, above)
         local db = NS.db
         return db.barLeft + (db.barWidth - width) / 2, db.barTop + above + height
+    end
+
+    -- Where a row module's bar is, from the saved places (shown or not):
+    -- left, width, top. Its own place, or over the castbar (JoinRow).
+    function NS.RowPlace(module)
+        local db = module.db
+        if db.placed then return db.barLeft, db.barWidth, db.barTop end
+        local left, top = NS.OverCastbar(db.barWidth, db.barHeight, NS.STACK_GAP)
+        return left, db.barWidth, top
     end
 
     function NS.GroupSettled() return settled end
@@ -207,8 +217,17 @@ do -- private scope
         local name, text, _, startMS, endMS, _, castID, notInterruptible = UnitCastingInfo("player")
         if name then return name, startMS, endMS, notInterruptible, false, castID, text end
         -- A channel has no cast ID: its flag sits one place earlier.
-        name, text, _, startMS, endMS, _, notInterruptible = UnitChannelInfo("player")
-        if name then return name, startMS, endMS, notInterruptible, true, nil, text end
+        local stages
+        name, text, _, startMS, endMS, _, notInterruptible, _, _, stages = UnitChannelInfo("player")
+        if not name then return end
+        -- An empowered one (retail's Evoker) has stages: it fills like a cast,
+        -- to the end of its hold at the last stage, as the game's bar does.
+        local empowered = not IsSecret(stages) and type(stages) == "number" and stages > 0
+        if empowered and not IsSecret(endMS) then
+            local hold = GetUnitEmpowerHoldAtMaxTime("player")
+            if not IsSecret(hold) then endMS = endMS + hold end
+        end
+        return name, startMS, endMS, notInterruptible, not empowered, nil, text
     end
 
     -- Whether a stop or failure is about the cast on the bar: a refused second
@@ -261,11 +280,16 @@ do -- private scope
         Style.FadeIn(castbar)
     end
 
+    -- A pushback, tick or stage is re-read too.
+    local BEGINS = {
+        UNIT_SPELLCAST_START = true, UNIT_SPELLCAST_CHANNEL_START = true, UNIT_SPELLCAST_EMPOWER_START = true,
+        UNIT_SPELLCAST_DELAYED = true, UNIT_SPELLCAST_CHANNEL_UPDATE = true, UNIT_SPELLCAST_EMPOWER_UPDATE = true,
+    }
+
     local function OnCastEvent(event, ...)
         local _, castID, _, interruptedBy = ...
-        if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
-           or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
-            BeginCast()   -- a pushback or tick is re-read too
+        if BEGINS[event] then
+            BeginCast()
         elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_FAILED_QUIET"
                or event == "UNIT_SPELLCAST_INTERRUPTED" then
             -- A channel's interruption comes as CHANNEL_STOP.
@@ -275,6 +299,10 @@ do -- private scope
         elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
             -- Nil when it ran its course; a secret interrupter is still one.
             EndCast(IsSecret(interruptedBy) or interruptedBy ~= nil)
+        elseif event == "UNIT_SPELLCAST_EMPOWER_STOP" then
+            -- Failed only when it says it was cut short.
+            local complete = select(4, ...)
+            EndCast(not IsSecret(complete) and complete == false)
         elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
             cast.notInterruptible = event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"
             Paint()
@@ -327,6 +355,7 @@ do -- private scope
         "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
         "UNIT_SPELLCAST_FAILED_QUIET", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
         "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_CHANNEL_STOP",
+        "UNIT_SPELLCAST_EMPOWER_START", "UNIT_SPELLCAST_EMPOWER_UPDATE", "UNIT_SPELLCAST_EMPOWER_STOP",
         "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
     }) do
         NS:RegisterUnitEvent(event, "player")

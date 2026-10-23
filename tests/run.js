@@ -12,8 +12,8 @@ const { lua, lauxlib, lualib, to_luastring } = require('fengari');
 const addonPath = path.resolve(__dirname, '..');
 const toc = fs.readFileSync(path.join(addonPath, 'DogsForeverUI.toc'), 'utf8');
 
-const ALL = ['core', 'fonts', 'frames', 'party', 'nameplates', 'castbar', 'fsr', 'combo', 'xp', 'mirror', 'flight', 'loot', 'minimap', 'objectives', 'cooldowns', 'threat', 'toasts', 'totems', 'chat', 'menus', 'bagsort', 'buttons', 'reporter', 'fishing', 'skinning',
-  'options', 'snap', 'layouts', 'actionbars', 'places', 'chatlook', 'keybinds', 'gamedefaults', 'install'];
+const ALL = ['core', 'fonts', 'frames', 'party', 'nameplates', 'castbar', 'fsr', 'combo', 'xp', 'mirror', 'flight', 'loot', 'minimap', 'objectives', 'cooldowns', 'threat', 'toasts', 'totems', 'chat', 'menus', 'buttons', 'reporter', 'fishing', 'skinning',
+  'options', 'snap', 'layouts', 'actionbars', 'places', 'chatlook', 'keybinds', 'gamedefaults', 'install', 'retail', 'classpower'];
 const wanted = process.argv.slice(2);
 const names = wanted.length ? wanted : ALL;
 

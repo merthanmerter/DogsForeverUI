@@ -1,5 +1,6 @@
 -- The game's nameplates in the addon's look (DogsForeverUI.Frames.NamePlates): flat
--- bars, the level inside, a party mark, the target grown, the game's options set once.
+-- bars, the level inside (Forever), casters in light blue, a party mark, the target grown, the
+-- game's options set once.
 -- Post-hooks only; nothing written on game tables; plate regions never measured.
 
 local NamePlates = {}
@@ -41,18 +42,33 @@ do -- private scope
         made.border:Show()
     end
 
-    -- The same texture object: other plate parts are anchored to it.
+    -- The same texture object: other plate parts are anchored to it. Square,
+    -- whatever mask the game rounds its fill with.
+    local flatFile          -- what a flat fill's GetTexture answers (a plain answer only)
     local function FlatFill(fill)
         fill:SetTexture(Style.FLAT_TEXTURE)
+        if flatFile == nil then
+            local file = fill:GetTexture()
+            if not issecretvalue(file) then flatFile = file end
+        end
         fill:SetHorizTile(false)
         fill:SetVertTile(false)
+        for index = (fill.GetNumMaskTextures and fill:GetNumMaskTextures() or 0), 1, -1 do
+            fill:RemoveMaskTexture(fill:GetMaskTexture(index))
+        end
     end
+
+    -- Forever's level box (Camelot NameplateLevelFrame), right of the bar, becomes
+    -- plain text inside it. Retail's is a ring left of the plate, shown only in
+    -- Plunderstorm, with no skull or border: left to the game.
+    local LEVEL_INSIDE = not Core.RETAIL
 
     -- The game never sets these alphas, so fading them sticks.
     local function FadeGameArt(unitFrame, bar)
-        local level = unitFrame.PlayerLevelDiffFrame
         Core.Fade(bar.bgTexture)
         Core.Fade(bar.selectedBorder)          -- a second border round ours
+        if not LEVEL_INSIDE then return end
+        local level = unitFrame.PlayerLevelDiffFrame
         Core.Fade(level.playerLevelDiffIcon)   -- the level's box: plain text instead
         Core.Fade(level.selectedBorder)
     end
@@ -87,11 +103,14 @@ do -- private scope
         local c = Style.CAST_COLOR[key]
         return c[1], c[2], c[3], 1
     end
+    -- The colours a secret "locked" picks between, made once.
+    local LOCKED = CreateColor(Colour("uninterruptible"))
+    local UNLOCKED = { casting = CreateColor(Colour("casting")), channel = CreateColor(Colour("channel")) }
 
     -- barType is usually secret: then the kind comes from the bar's own flags,
     -- the interrupt animation, and the secret "locked" handed untested to
     -- SetVertexColorFromBoolean. A bar that never cast has no fill yet.
-    local function PaintCast(castBar)
+    local function Paint(castBar)
         local fill = castBar:GetStatusBarTexture()
         if not fill then return end
         FlatFill(fill)
@@ -107,10 +126,20 @@ do -- private scope
         if key == "failed" then return end
         local locked = castLocked[castBar]
         if issecretvalue(locked) then
-            fill:SetVertexColorFromBoolean(locked, CreateColor(Colour("uninterruptible")), CreateColor(Colour(key)))
+            fill:SetVertexColorFromBoolean(locked, LOCKED, UNLOCKED[key])
         elseif locked == true then
             castBar:SetStatusBarColor(Colour("uninterruptible"))
         end
+    end
+
+    -- Painted again after the bar's own fill and colour setters (StyleCast), so not
+    -- from inside a paint, which uses one.
+    local painting = false
+    local function PaintCast(castBar)
+        if painting then return end
+        painting = true
+        Core.Safely(Paint, castBar)
+        painting = false
     end
 
     -- The game sets the cast's flags, then shows or hides the icon.
@@ -145,7 +174,7 @@ do -- private scope
     local SKULL_SCALE = 1.6     -- the skull art has empty margins
 
     local function PlaceBar(unitFrame)
-        if NamePlateSetupOptions.useClassicHealthBar then return end
+        if NamePlateSetupOptions.useClassicHealthBar or not LEVEL_INSIDE then return end
         local bar, container = HealthBar(unitFrame), unitFrame.HealthBarsContainer
         local widen = unitFrame.PlayerLevelDiffFrame:ShouldDisplay(unitFrame.unit)
             and NamePlateSetupOptions.playerLevelDiffWidth or 0
@@ -179,7 +208,7 @@ do -- private scope
     -- The level's number, or the skull for a unit too high to tell.
     local function ShownLevel(unitFrame)
         local level = unitFrame.PlayerLevelDiffFrame
-        if not level:IsShown() then return nil end
+        if not (LEVEL_INSIDE and level:IsShown()) then return nil end
         if level.highLevelTexture:IsShown() then return level.highLevelTexture end
         return level.playerLevelDiffText
     end
@@ -198,7 +227,7 @@ do -- private scope
     end
 
     local function PlaceLevelAndName(unitFrame)
-        PlaceLevel(unitFrame, not unitFrame:IsShowOnlyName())
+        if LEVEL_INSIDE then PlaceLevel(unitFrame, not unitFrame:IsShowOnlyName()) end
         PlaceName(unitFrame)
     end
 
@@ -217,7 +246,7 @@ do -- private scope
     local function SizeTexts(unitFrame)
         local size, outlined = NamePlateSetupOptions.levelFontHeight, SystemFont_NamePlate_Outlined
         local bar, castBar = HealthBar(unitFrame), unitFrame.CastBarsContainer.castBar
-        SizeText(unitFrame.PlayerLevelDiffFrame.playerLevelDiffText, size, outlined)
+        if LEVEL_INSIDE then SizeText(unitFrame.PlayerLevelDiffFrame.playerLevelDiffText, size, outlined) end
         SizeText(bar.LeftText, size, outlined)
         SizeText(bar.RightText, size, outlined)
         SizeText(bar.Text, size, outlined)
@@ -360,17 +389,72 @@ do -- private scope
         end
     end
 
-    -- The game puts its fill art back on every change of kind: followed once per cast bar.
+    local function Follow(castBar, method, post)
+        if castBar[method] then hooksecurefunc(castBar, method, post) end
+    end
+
+    -- Every texture the game has on a cast bar - its regions and its own frames' - but its
+    -- fill and icon: backgrounds, borders, glows, wisps, sparks, shields and masks, whatever
+    -- a client adds. Taken before anything of ours is made on it.
+    local function GameArt(castBar)
+        local art = {}
+        local function Take(frame)
+            for _, region in ipairs({ frame:GetRegions() }) do
+                if region ~= castBar.Icon and (region:IsObjectType("Texture") or region:IsObjectType("MaskTexture")) then
+                    art[#art + 1] = region
+                end
+            end
+        end
+        Take(castBar)
+        for _, child in ipairs({ castBar:GetChildren() }) do Take(child) end
+        return art
+    end
+
+    -- Whether a texture's file may be other than `file`: a secret one (in combat) is never
+    -- compared - it may be anything.
+    local function MayDiffer(texture, file)
+        local now = texture:GetTexture()
+        return issecretvalue(now) or now ~= file
+    end
+
+    -- Blank, and blank again whenever the game sets one back (its finish glow, its spark, a
+    -- channel's wisps): asked every frame the bar shows.
+    local function BlankArt(castBar, art)
+        local fill = castBar:GetStatusBarTexture()
+        for _, texture in ipairs(art) do
+            if texture ~= fill and MayDiffer(texture, nil) then texture:SetTexture(nil) end
+        end
+    end
+
+    -- The game puts its fill art and colour back on every change of kind, from many paths,
+    -- some live retail's own (a finished cast, from its OnUpdate): painted again after the
+    -- bar's two setters and its every event, and - should any path still slip by - on any
+    -- frame its fill is not the flat one; its other art blanked on every frame it shows.
+    local CAST_STARTS = { UNIT_SPELLCAST_START = true, UNIT_SPELLCAST_CHANNEL_START = true,
+                          UNIT_SPELLCAST_EMPOWER_START = true }
     local function StyleCast(unitFrame)
         local castBar = unitFrame.CastBarsContainer.castBar
         if not castParts[castBar] then
+            local art = GameArt(castBar)
             castParts[castBar] = MakeParts(castBar)
-            hooksecurefunc(castBar, "UpdateBarFillTexture", PaintCast)
-            hooksecurefunc(castBar, "UpdateIconShown", OnCastIcon)
-            hooksecurefunc(castBar, "PlayInterruptAnims", OnCastInterrupted)
+            castParts[castBar].art = art
+            Follow(castBar, "SetStatusBarTexture", PaintCast)
+            Follow(castBar, "SetStatusBarColor", PaintCast)
+            Follow(castBar, "PlayInterruptAnims", OnCastInterrupted)
+            -- The cast's flags, then whether its icon shows; without that method, at its start.
+            local iconFollowed = castBar.UpdateIconShown ~= nil
+            Follow(castBar, "UpdateIconShown", OnCastIcon)
+            castBar:HookScript("OnEvent", function(self, event)
+                if CAST_STARTS[event] and not iconFollowed then OnCastIcon(self) else PaintCast(self) end
+            end)
+            castBar:HookScript("OnUpdate", function(self)
+                local fill = self:GetStatusBarTexture()
+                if fill and MayDiffer(fill, flatFile) then PaintCast(self) end
+                BlankArt(self, castParts[self].art)
+            end)
         end
         Show(castParts[castBar])
-        castBar.Background:SetAlpha(0)
+        BlankArt(castBar, castParts[castBar].art)
         PaintCast(castBar)
         PlaceCast(unitFrame, castBar)
     end
@@ -442,9 +526,19 @@ do -- private scope
     -- Plates
     ---------------------------------------------------------------------------
 
+    -- Its shield in the raid frames' look, as the unit frames' (the game gives plates its old
+    -- art, stretched); set once - the game sets its own only as the plate is made.
+    local function PlateShield(bar)
+        if bar.totalAbsorb then Style.ShieldArt(bar.totalAbsorb, Style.SHIELD_FILL) end
+        if bar.totalAbsorbOverlay then Style.ShieldArt(bar.totalAbsorbOverlay, Style.SHIELD_LINES) end
+    end
+
     local function Apply(unitFrame)
         local bar = HealthBar(unitFrame)
-        parts[bar] = parts[bar] or MakeParts(bar)
+        if not parts[bar] then
+            parts[bar] = MakeParts(bar)
+            PlateShield(bar)
+        end
         Show(parts[bar])
         FlatFill(bar:GetStatusBarTexture())
         FadeGameArt(unitFrame, bar)
@@ -505,6 +599,7 @@ do -- private scope
     ---------------------------------------------------------------------------
 
     local STYLE_CVAR, INFO_CVAR = "nameplateStyle", "nameplateInfoDisplay"
+    local SIMPLIFIED_CVAR = "nameplateSimplifiedTypes"
     local CLASS_COLOUR_CVARS = { "nameplateShowFriendlyClassColor", "nameplateUseClassColorForFriendlyPlayerUnitNames" }
     local DISTANCE_CVARS = { "nameplateMinScale", "nameplateMaxScale" }
     local CVAR_DATA_MARK = 0x40     -- every data byte: 0b01xxxxxx (CvarUtil.lua)
@@ -522,9 +617,21 @@ do -- private scope
         return value:sub(1, at - 1) .. string.char(byte + bitValue) .. value:sub(at + 1)
     end
 
+    -- One box of a game option kept as a bit field ticked, the others kept.
+    local function TickBit(cvar, enum, key)
+        local index, value = Core.EnumValue(enum, key), ReadCVar(cvar)
+        if not index or value == nil then return end
+        if value == "" then value = Core.Try(C_CVar.GetCVarDefault, cvar) end
+        local wanted = NamePlates.WithBit(value, index)
+        if wanted and wanted ~= value then WriteCVar(cvar, wanted) end
+    end
+
     -- The game's default, not the value now: a reset must not compound it.
+    -- Forever's selected size is its plates'; retail's is larger than its
+    -- plates' own (nameplateMaxScale), which made every plate too large there.
+    local BASE_CVAR = Core.RETAIL and OTHERS_CVAR or SELECTED_CVAR
     local function GameSelectedScale()
-        local size = tonumber((Core.Try(C_CVar.GetCVarDefault, SELECTED_CVAR)))
+        local size = tonumber((Core.Try(C_CVar.GetCVarDefault, BASE_CVAR)))
         return (size and size > 0) and size or SELECTED_DEFAULT
     end
 
@@ -532,12 +639,7 @@ do -- private scope
         function() -- Large, Health Percentage (whatever else is ticked kept)
             local large = Core.EnumValue("NamePlateStyle", "Modern")
             if large and ReadCVar(STYLE_CVAR) ~= nil then WriteCVar(STYLE_CVAR, tostring(large)) end
-            local percent = Core.EnumValue("NamePlateInfoDisplay", "CurrentHealthPercent")
-            local info = ReadCVar(INFO_CVAR)
-            if not percent or info == nil then return end
-            if info == "" then info = Core.Try(C_CVar.GetCVarDefault, INFO_CVAR) end
-            local wanted = NamePlates.WithBit(info, percent)
-            if wanted and wanted ~= info then WriteCVar(INFO_CVAR, wanted) end
+            TickBit(INFO_CVAR, "NamePlateInfoDisplay", "CurrentHealthPercent")
         end,
         function() -- friendly players in class colours: the bar and the name
             for _, name in ipairs(CLASS_COLOUR_CVARS) do
@@ -556,6 +658,14 @@ do -- private scope
             if ReadCVar(SELECTED_CVAR) == nil then return end
             WriteCVar(SELECTED_CVAR, tostring(GameSelectedScale() * NamePlates.TARGET_GROW))
         end,
+        function(steps) -- retail: the two sizes again, off its plates' own size
+            if not Core.RETAIL then return end
+            steps[3]()
+            steps[4]()
+        end,
+        function() -- Simplified Nameplates: Friendly NPCs (smaller, the name only when targeted)
+            TickBit(SIMPLIFIED_CVAR, "NamePlateSimplifiedType", "FriendlyNpc")
+        end,
     }
     NamePlates.DEFAULT_STEPS = #STEPS
 
@@ -567,7 +677,7 @@ do -- private scope
         if not (waited or Core.SettingsSettled()) or InCombatLockdown() or running then return false end
         running = true
         for index = done + 1, #STEPS do
-            Core.Safely(STEPS[index])
+            Core.Safely(STEPS[index], STEPS)
             db.nameplateDefaults = index
         end
         running = false
@@ -611,6 +721,32 @@ do -- private scope
         end
     end)
 
+    ---------------------------------------------------------------------------
+    -- CASTERS: a hostile NPC that uses mana (Platynator's rule) in light blue
+    -- over the game's red, after the game colours it. A neutral one keeps its
+    -- yellow; grey (tapped, dead) and the game's threat colours stay the game's.
+    ---------------------------------------------------------------------------
+
+    NamePlates.CASTER_COLOR = { 0.35, 0.7, 1 }
+    local MANA = Enum.PowerType.Mana
+
+    local function ThreatColoured(unitFrame)
+        if not (unitFrame.displayThreatHealthBarColor and GetAggroHighlightThreatSituation) then return false end
+        local situation = GetAggroHighlightThreatSituation(unitFrame)
+        return issecretvalue(situation) or (situation or 0) > 0
+    end
+
+    local function OnHealthColour(unitFrame)
+        local unit = unitFrame.unit
+        if not (unit and followed[unitFrame]) or UnitIsPlayer(unit) or not UnitIsEnemy("player", unit)
+           or UnitIsDead(unit) or not UnitHasPowerType(unit, MANA)
+           or CompactUnitFrame_IsTapDenied(unitFrame) or ThreatColoured(unitFrame) then
+            return
+        end
+        local c = NamePlates.CASTER_COLOR
+        HealthBar(unitFrame):SetStatusBarColor(c[1], c[2], c[3])
+    end
+
     -- Every plate on screen, after a setting changed, the saved file came in, or a reset.
     function NamePlates.Refresh()
         HoldNamesOnly()
@@ -623,7 +759,8 @@ do -- private scope
         driverFollowed = true
         hooksecurefunc(NamePlateDriverFrame, "OnNamePlateAdded", OnAdded)
         hooksecurefunc(NamePlateDriverFrame, "UpdateNamePlateOptions", NamePlates.Refresh)
-        hooksecurefunc("CompactUnitFrame_UpdatePlayerLevelDiff", OnLevel)
+        if LEVEL_INSIDE then hooksecurefunc("CompactUnitFrame_UpdatePlayerLevelDiff", OnLevel) end
         hooksecurefunc("CompactUnitFrame_UpdateName", OnName)
+        hooksecurefunc("CompactUnitFrame_UpdateHealthColor", OnHealthColour)
     end
 end
