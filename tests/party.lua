@@ -955,10 +955,11 @@ do
         + 2 * Style.BORDER_INSET)
     local gap = 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP
     -- (The player, 2026-10-23: the pets above the frames, the buffs right below.)
-    check("each pet over its owner, as wide, a fifth of that tall, its border clear of the owner's",
+    -- (The player, 2026-10-23: half as thin.)
+    check("each pet over its owner, as wide, a tenth of that tall, its border clear of the owner's",
         pet.points[1] == "BOTTOMLEFT" and pet.points[2] == plates[1] and pet.points[3] == "TOPLEFT"
         and pet.points[4] == 0 and pet.points[5] == gap
-        and pet.width == plates[1].width and pet.height == math.floor(DB.partyWidth / 5 + 0.5))
+        and pet.width == plates[1].width and pet.height == math.floor(DB.partyWidth / 10 + 0.5))
     check("its fill turned: rightwards, the heals and shields with it, the sheen over its top half",
         pet.health.orientation == "HORIZONTAL" and pet.prediction.orientation == "HORIZONTAL"
         and pet.healAbsorb.orientation == "HORIZONTAL" and pet.shield.orientation == "HORIZONTAL"

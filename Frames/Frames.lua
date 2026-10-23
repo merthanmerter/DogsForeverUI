@@ -30,6 +30,7 @@ do -- private scope
         partyWidth = 120,
         partyRaidHealth = 40,
         partyPower = 8,
+        partyPowerText = false,  -- the party's own Resource text
         partyStrata = "MEDIUM",
         partySort = "role",      -- "role", "group" or "alphabetical"
         partyLayout = "column",  -- "column" (party1 on top) or "row" (party1 at the left)

@@ -347,7 +347,7 @@ do
     Click(first.look.segments[2])
     check("Icon picked: that one on the rings, the other still a bar",
         db.tracked[1].display == "icon" and db.tracked[2].display == nil
-        and first.look.segments[2].style == "active" and Core.Cooldowns.iconHolder:IsShown())
+        and first.look.segments[2].style == "active" and Core.Cooldowns.icons[1]:IsShown())
     Click(first.look.segments[1])
     check("and back to a bar", db.tracked[1].display == nil and not Core.Cooldowns.iconHolder:IsShown())
 
@@ -360,12 +360,16 @@ do
     -- cooldown told of out of its spec, never cast) another's too; anything else this spec's,
     -- or not in the book (a buff or proc: 20375).
     local OFF_SPEC = { [7620] = true, [2050] = true }
+    -- In no spellbook: a buff (20375), and talents not taken - Dominate Mind (205364), and
+    -- Benediction (193157), a Holy talent out of Holy.
+    local DOMINATE, BENEDICTION, TAKEN = 205364, 193157, 34433
+    local NOT_IN_BOOK = { [20375] = true, [DOMINATE] = true, [BENEDICTION] = true }
     local wasBook = C_SpellBook
     C_SpellBook = C_SpellBook or {}
     local wasFind = C_SpellBook.FindSpellBookSlotForSpell
     C_SpellBook.FindSpellBookSlotForSpell = function(id, _, _, _, includeOffSpec)
         if OFF_SPEC[id] then return includeOffSpec and 40 or nil, includeOffSpec and 0 or nil end
-        if id ~= 20375 then return 12, 0 end
+        if not NOT_IN_BOOK[id] then return 12, 0 end
     end
     Core.RefreshOptions()
     -- (The player, on Forever: "classic has no different spec structure - I DO have these".)
@@ -381,7 +385,8 @@ do
     check("the saved order left as it is", db.tracked[1].id == 7620 and db.tracked[2].kind == "item")
     -- (The player: what it tracks showed wrong out of its spec.)
     check("another spec's: no choice and no Cooldown or Duration that could be wrong - said so",
-        not second.choice:IsShown() and second.fixed:IsShown() and second.fixed.text == "Set in its spec")
+        not second.choice:IsShown() and second.fixed:IsShown() and second.fixed.text == "Set once learned"
+        and list.divider.text == "Not learned in your current spec")
     -- (Clearcasting and the like: a buff, no spell in the book - in any spec.)
     check("a buff or proc (not in the spellbook) is never another spec's",
         Core.Cooldowns.IsCurrent({ kind = "spell", id = 20375 }))
@@ -392,6 +397,28 @@ do
     check("another spec's spell with no cooldown told of, never cast: the spellbook says another spec's",
         not Core.Cooldowns.IsCurrent({ kind = "spell", id = 2050 }))
     GetSpellBaseCooldown = baseCooldown
+    -- (The player, 2026-10-23: "dominate mind is not learned and benediction isnt available in
+    -- current spec but it still shows in active spells" - in no spellbook, they passed as procs.)
+    -- The class's talent tree, every spec's nodes in it: one entry a node, its spell.
+    local TALENTS = { DOMINATE, BENEDICTION, TAKEN }
+    local was = {}
+    for _, name in ipairs({ "GetTreeNodes", "GetNodeInfo", "GetEntryInfo", "GetDefinitionInfo" }) do
+        was[name] = C_Traits[name]
+    end
+    C_Traits.GetTreeNodes = function(tree) return tree == 55 and { 1, 2, 3 } or nil end
+    C_Traits.GetNodeInfo = function(_, node) return { entryIDs = { node } } end
+    C_Traits.GetEntryInfo = function(_, entryID) return { definitionID = entryID } end
+    C_Traits.GetDefinitionInfo = function(definitionID) return { spellID = TALENTS[definitionID] } end
+    local wasPlayerSpell = IsPlayerSpell
+    IsPlayerSpell = function(id) return id == TAKEN end
+    check("a talent not taken: not learned in this spec, not a proc",
+        not Core.Cooldowns.IsCurrent({ kind = "spell", id = DOMINATE }))
+    check("another spec's talent: not learned in this one",
+        not Core.Cooldowns.IsCurrent({ kind = "spell", id = BENEDICTION }))
+    check("a talent taken: this spec's", Core.Cooldowns.IsCurrent({ kind = "spell", id = TAKEN }))
+    check("a buff or proc still always this spec's", Core.Cooldowns.IsCurrent({ kind = "spell", id = 20375 }))
+    IsPlayerSpell = wasPlayerSpell
+    for name, fn in pairs(was) do C_Traits[name] = fn end
     Core.RETAIL = false
     C_SpellBook.FindSpellBookSlotForSpell = wasFind
     C_SpellBook = wasBook

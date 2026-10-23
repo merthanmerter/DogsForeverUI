@@ -265,7 +265,7 @@ do -- private scope
             end
             if unit == "target" or unit == "focus" then Toggle(unit, Frames, "showCastbar", "Castbar") end
             Toggle(unit, Frames, "showHealthText", "Health text")
-            Toggle(unit, Frames, "showPowerText", "Resource text")
+            Toggle(unit, Frames, unit == "party" and "partyPowerText" or "showPowerText", "Resource text")
             Toggle(unit, Frames, "classColors", "Class colours")
             if unit == "player" then Toggle(unit, Frames, "playerDispel", "Dispel marks") end
             if unit == "party" then
@@ -296,6 +296,7 @@ do -- private scope
         Slider("cooldownicons", Cooldowns, "iconsPerRow", "Icons per row", 1, Cooldowns.PER_ROW_MAX, 1, Whole)
         Choice("cooldownicons", Cooldowns, "iconGrow", "Icons grow", Cooldowns.ICON_GROW)
         Choice("cooldownicons", Cooldowns, "iconRowsGrow", "Rows grow", Cooldowns.GROW)
+        Toggle("cooldownicons", Cooldowns, "hideIconsOutOfCombat", "Hide out of combat")
         Choice("toasts", Core.LootToasts, "growDirection", "Toasts grow", Cooldowns.GROW)
         Toggle("micro", Menus, "quietMicroMenu", "Auto-hide")
         Toggle("xp", Menus, "fadeXPBar", "Auto-hide")

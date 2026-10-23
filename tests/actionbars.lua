@@ -17,7 +17,14 @@ Section("the game's bars, out of sight as the addon loads")
 do
     check("the game's bar 1 kept where it is, at no opacity, taking no mouse",
         MainActionBar.alpha == 0 and MainActionBar.mouse == false and MainActionBar.parent ~= Bars.hidden)
-    check("its Leave Vehicle button still seen", MainActionBar.VehicleLeaveButton.ignoreParentAlpha == true)
+    local leave = MainActionBar.VehicleLeaveButton
+    local normal, pushed, highlight = leave:GetNormalTexture(), leave:GetPushedTexture(), leave:GetHighlightTexture()
+    check("its Leave Vehicle button still seen", leave.ignoreParentAlpha == true)
+    check("an arrow only, whole in its square", normal.atlas == "NPE_ArrowDown" and pushed.atlas == "NPE_ArrowDown"
+        and normal.width == 16 and normal.height == 32 and pushed.vertexColor[1] < 1)
+    local glow = leave.regions[#leave.regions]
+    check("the game's square highlight unseen, an arrow glowing instead", highlight.alpha == 0
+        and glow.layer == "HIGHLIGHT" and glow.atlas == "NPE_ArrowDown" and glow.blendMode == "ADD")
     local all = true
     for _, name in ipairs({ "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft",
                             "MultiBar5", "MultiBar6", "MultiBar7" }) do

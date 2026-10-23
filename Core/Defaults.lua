@@ -25,7 +25,7 @@ do -- private scope
     -- Position puts one piece back.
     ---------------------------------------------------------------------------
 
-    Places.VERSION = 36
+    Places.VERSION = 37
     Places.EDGE_GAP = 15            -- the chat and the tooltip from the screen's edges
     Places.CHAT_SIZE = { 502, 200 } -- 400 wide plus the tabs' sidebar (Chat\ChatLook.lua)
     Places.SIDE_GAP = 28            -- the player and target frames from Action Bar 1
@@ -372,6 +372,14 @@ do -- private scope
             local size = cooldowns.db.iconSize
             if size == 26 or size == 30 then
                 cooldowns.db.iconSize = cooldowns.defaults.iconSize
+                cooldowns.Refresh()
+            end
+        end,
+        -- The cooldown icons 6 to a row, from the older default 5; one the player set stays.
+        [37] = function()
+            local cooldowns = Core.Cooldowns
+            if cooldowns.db.iconsPerRow == 5 then
+                cooldowns.db.iconsPerRow = cooldowns.defaults.iconsPerRow
                 cooldowns.Refresh()
             end
         end,

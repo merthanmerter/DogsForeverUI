@@ -167,10 +167,9 @@ function Widget:SetPoint(point, a, b, c, d)
     -- UntrustedLayoutScriptExecution, which reaches "anything anchored to
     -- this object" (ForbiddenAspectConstantsDocumentation): an add-on frame
     -- may not be anchored to it (Blizzard_CustomAuraContainer.lua says so) -
-    -- unless made with DisableUntrustedLayoutScriptsTemplate, opted in to that
-    -- aspect (set `refuseJoinable` to model a client that still refuses one).
+    -- unless made with DisableUntrustedLayoutScriptsTemplate, opted in to that aspect.
     if type(a) == "table" and a.auraGroupOrder and #a.auraGroupOrder > 0
-       and (self.template ~= "DisableUntrustedLayoutScriptsTemplate" or refuseJoinable) then
+       and self.template ~= "DisableUntrustedLayoutScriptsTemplate" then
         error(tostring(self.kind) .. ":SetPoint(): may not anchor to an aura container with groups", 2)
     end
     if type(a) == "number" or a == nil then
@@ -298,6 +297,9 @@ end
 function Widget:SetTexCoord(...) self.texCoord = { ... } end
 function Widget:SetBlendMode(mode) self.blendMode = mode end
 function Widget:SetDesaturated(v) self.desaturated = v and true or false end
+function Widget:SetDesaturation(v) self.desaturation = v end
+-- A frame's layers drawn as one image before its alpha applies.
+function Widget:SetFlattensRenderLayers(v) self.flattensRenderLayers = v end
 -- Kept off the widget, as the game keeps them (no Lua field on a game texture).
 tiling = setmetatable({}, { __mode = "k" })     -- region -> { horiz =, vert =, modes = }
 local function Tiling(region)
@@ -1084,6 +1086,11 @@ C_CurveUtil = {
         end
         return curve
     end,
+    -- The client's own: it may look at a secret boolean, the addon may not.
+    EvaluateColorValueFromBoolean = function(v, ifTrue, ifFalse)
+        if v == SECRET_TRUE or v == true then return ifTrue end
+        return ifFalse
+    end,
 }
 Enum = Enum or {}
 Enum.LuaCurveType = { Linear = 0, Step = 1, Cosine = 2, Cubic = 3 }
@@ -1419,6 +1426,7 @@ function Animation:SetDuration(v) self.duration = v end
 function Animation:SetStartDelay(v) self.startDelay = v end
 function Animation:SetFromAlpha(v) self.fromAlpha = v end
 function Animation:SetToAlpha(v) self.toAlpha = v end
+function Animation:SetTarget(v) self.target = v end
 function Animation:SetFlipBookRows(v) self.rows = v end
 function Animation:SetFlipBookColumns(v) self.columns = v end
 function Animation:SetFlipBookFrames(v) self.frames = v end
@@ -1752,7 +1760,6 @@ for _, method in ipairs(FORBIDDEN) do
 end
 function Blizzard:SetAlpha(a) self.alpha = a end
 function Blizzard:GetAlpha() return self.alpha end
-function Blizzard:SetIgnoreParentAlpha(v) self.ignoreParentAlpha = v end
 function Blizzard:EnableMouse(v) self.mouse = v and true or false end
 function Blizzard:IsMouseEnabled() return self.mouse end
 function Blizzard:IsShown() return self.shown end
@@ -2522,7 +2529,13 @@ end
 -- The main bar's own art (Mainline MainActionBar.xml) and, on Camelot, its end
 -- caps: Edit Mode systems of their own (Camelot MainMenuBarEndCaps.xml).
 MainActionBar.BorderArt = NewBlizzard("MainActionBar.BorderArt")
-MainActionBar.VehicleLeaveButton = NewBlizzard("MainMenuBarVehicleLeaveButton")
+-- Its Leave Vehicle button (Shared\VehicleLeaveButton.xml): 32 square, three state textures.
+MainActionBar.VehicleLeaveButton = newWidget("Button", MainActionBar)
+MainActionBar.VehicleLeaveButton.width, MainActionBar.VehicleLeaveButton.height = 32, 32
+for _, state in ipairs({ "Normal", "Pushed", "Highlight" }) do
+    local texture = MainActionBar.VehicleLeaveButton:CreateTexture(nil, state == "Highlight" and "HIGHLIGHT" or "ARTWORK")
+    MainActionBar.VehicleLeaveButton["Get" .. state .. "Texture"] = function() return texture end
+end
 MainActionBar.EndCaps = NewBlizzard("MainActionBar.EndCaps")
 MainActionBar.EndCaps.LeftEndCap = NewBlizzard("MainActionBar.EndCaps.LeftEndCap")
 MainActionBar.EndCaps.RightEndCap = NewBlizzard("MainActionBar.EndCaps.RightEndCap")
@@ -2916,8 +2929,13 @@ do
                 function sample:SetApplicationCount(fs) self.count = fs end
                 function sample:SetDurationText(fs, opts) self.durationText, self.durationTextOptions = fs, opts end
                 function sample:SetDurationBar(bar, opts) self.durationBar, self.durationBarOptions = bar, opts end
-                -- Played by the game each time it shows the frame for an aura.
-                function sample:AddAuraShownAnimation(group) self.shownAnimation = group end
+                -- Played by the game each time it shows the frame for an aura, every one
+                -- handed to it (the first as `shownAnimation`).
+                function sample:AddAuraShownAnimation(group)
+                    self.shownAnimation = self.shownAnimation or group
+                    self.shownAnimations = self.shownAnimations or {}
+                    table.insert(self.shownAnimations, group)
+                end
                 -- Every dispel-type texture and its options, the first as `dispel`.
                 function sample:AddDispelTypeTexture(tex, opts)
                     self.dispel, self.dispelOptions = self.dispel or tex, self.dispelOptions or opts
@@ -2974,6 +2992,9 @@ do
         return f
     end
 end
+-- The aura container's sort enums (Blizzard_AuraContainerShared.lua).
+AuraContainerSortMethod = { Default = 0, AuraInstanceIDOnly = 8 }
+AuraContainerSortDirection = { Normal = 0, Reverse = 1 }
 AnchorUtil = AnchorUtil or {}
 AnchorUtil.FlowDirection = { Left = 1, Right = 2, Up = 3, Down = 4 }
 AnchorUtil.FlowLayoutAxis = { Horizontal = 0, Vertical = 1 }
@@ -3031,7 +3052,8 @@ end
 function Widget:SetSwipeTexture(v) self.swipeTexture = v end
 function Widget:SetSwipeColor(r, g, b, a) self.swipeColor = { r, g, b, a } end
 function Widget:SetTexCoordRange(low, high) self.texCoordRange = { low, high } end
-atlases.CircleMask = { width = 64, height = 64, file = "circle-mask-file",
+atlases.NPE_ArrowDown = { width = 64, height = 128 }
+atlases.CircleMask ={ width = 64, height = 64, file = "circle-mask-file",
     leftTexCoord = 0.1, rightTexCoord = 0.2, topTexCoord = 0.3, bottomTexCoord = 0.4 }
 
 totems = {}

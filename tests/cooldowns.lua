@@ -489,56 +489,44 @@ do
         NS.rows[2].points[5] == 0 and NS.rows[3].points[5] == step, tostring(NS.rows[2].points[5]))
 end
 
-Section("bars glide to a new place rather than jump")
+Section("a new bar on top; one gone, those above glide down onto its place")
 do
-    -- Charge cools down again: its bar takes the first place at once (it was
-    -- not on screen, nothing to glide from); the two above glide up.
+    -- (The player, 2026-10-23: "some spells are adding in to middle of bars. all new bar
+    -- should have been aded to top instead and when one bar is gone all bars properly take
+    -- its place decending down".) In the list's order, Charge (first in it) came in under the two.
     cooldowns[100] = { start = now, length = 12 }
     Fire("SPELL_UPDATE_COOLDOWN")
     Tick(0.02)
-    local y2, y3 = NS.rows[2].points[5], NS.rows[3].points[5]
-    check("a bar coming on screen is put in its place at once",
-        NS.rows[1]:IsShown() and NS.rows[1].points[5] == 0, tostring(NS.rows[1].points[5]))
-    check("the one above it on its way up, not there yet", y2 > 0 and y2 < step, tostring(y2))
-    check("and the next one too", y3 > step and y3 < 2 * step, tostring(y3))
-    Tick(0.02)
-    check("still rising", NS.rows[2].points[5] > y2 and NS.rows[2].points[5] < step,
-        tostring(NS.rows[2].points[5]))
+    check("a new bar goes on top, put there at once; the others stay where they are",
+        NS.rows[1]:IsShown() and NS.rows[1].points[5] == 2 * step
+        and NS.rows[2].points[5] == 0 and NS.rows[3].points[5] == step, tostring(NS.rows[1].points[5]))
+
+    -- The middle one ends: it fades out where it is, then the one above glides down.
+    cooldowns[200] = nil
+    Tick(0.2)
+    check("the one ending fades out in its place, the one above waiting",
+        NS.rows[3]:IsShown() and NS.rows[1].points[5] == 2 * step)
+    for _ = 1, 30 do
+        if not NS.rows[3]:IsShown() then break end
+        Tick(0.02)
+    end
+    Tick(0.1)
+    local y = NS.rows[1].points[5]
+    check("gone: the one above on its way down onto its place, not there yet", y < 2 * step and y > step, tostring(y))
     check("kept to its side of the holder while it moves",
-        NS.rows[2].points[1] == "BOTTOMLEFT" and NS.rows[2].points[2] == holder)
+        NS.rows[1].points[1] == "BOTTOMLEFT" and NS.rows[1].points[2] == holder)
     for _ = 1, 10 do Tick(0.05) end
-    check("arrives exactly on its place",
-        NS.rows[2].points[5] == step and NS.rows[3].points[5] == 2 * step,
-        tostring(NS.rows[2].points[5]) .. " " .. tostring(NS.rows[3].points[5]))
+    check("arrives exactly on its place, the oldest still lowest",
+        NS.rows[1].points[5] == step and NS.rows[2].points[5] == 0, tostring(NS.rows[1].points[5]))
 
-    -- The same at a slow frame rate: one long frame lands it, never past it.
-    cooldowns[100] = nil
-    Tick(0.2)
-    Tick(Core.Style.FADE_OUT + 0.1)
-    Tick(2)
-    check("a long frame: there, not beyond",
-        NS.rows[2].points[5] == 0 and NS.rows[3].points[5] == step, tostring(NS.rows[2].points[5]))
-
-    -- A new place set half way: it turns towards that one.
-    cooldowns[100] = { start = now, length = 12 }
-    Fire("SPELL_UPDATE_COOLDOWN")
-    Tick(0.02)
-    cooldowns[100] = nil
-    Fire("SPELL_UPDATE_COOLDOWN")
-    Tick(0.2)
-    Tick(Core.Style.FADE_OUT + 0.1)
-    for _ = 1, 10 do Tick(0.05) end
-    check("sent back half way, it settles where it now belongs",
-        NS.rows[2].points[5] == 0 and NS.rows[3].points[5] == step, tostring(NS.rows[2].points[5]))
-
-    -- A setting changed: everything at once, no glide.
-    cooldowns[100] = { start = now, length = 12 }
+    -- A setting changed: everything at once, no glide - in the same order.
+    cooldowns[200] = { start = now, length = 8 }
     Fire("SPELL_UPDATE_COOLDOWN")
     Tick(0.02)
     NS.Refresh()
-    check("a refresh puts every bar in its place at once",
-        NS.rows[1].points[5] == 0 and NS.rows[2].points[5] == step and NS.rows[3].points[5] == 2 * step,
-        tostring(NS.rows[2].points[5]))
+    check("a refresh puts every bar in its place at once, in the order they came",
+        NS.rows[2].points[5] == 0 and NS.rows[1].points[5] == step and NS.rows[3].points[5] == 2 * step,
+        tostring(NS.rows[3].points[5]))
     cooldowns[100] = nil
     Tick(0.2)
     Tick(Core.Style.FADE_OUT + 0.1)
@@ -568,26 +556,32 @@ do
         local fx, fy = At(frame)
         return frame.points[2] == iconHolder and frame.points[1] == "CENTER" and Near(fx, x) and Near(fy, y)
     end
-    -- (A buff button's pieces are a table of their own: its border found as its child.)
-    local function BorderOf(frame)
-        for _, f in ipairs(allFrames) do
-            if f.parent == frame and f.spec then return f end
-        end
-    end
+    -- The game's Cooldown Manager icon shape, which the proc glow is drawn round.
+    local MASK = "UI-HUD-CoolDownManager-Mask"
+    -- (The player, 2026-10-23: "the glow radius and border radius doesnt match".) One real
+    -- pixel of `colour` round the picture, cut to the same shape: a texture under it, the
+    -- game's mask on both. (A buff button's pieces are a table of their own: found among
+    -- its regions.)
     local function Bordered(frame, colour)
-        local border = BorderOf(frame)
-        local spec = border and border.spec
-        local line = spec and spec.lines[1]
-        return spec ~= nil and spec.radius == Style.DEFAULT_BORDER.radius and #spec.lines == 1
-            and line[1] == colour[1] and line[2] == colour[2] and line[3] == colour[3]
-            and border.unitPixels == 1
+        for _, r in ipairs(frame.regions) do
+            local c, first = r.vertexColor, r.anchors and r.anchors[1]
+            if r.layer == "BACKGROUND" and r.mask and r.mask.atlas == MASK and c
+               and c[1] == colour[1] and c[2] == colour[2] and c[3] == colour[3]
+               and first and first[2] == frame and first[4] < 0 and first[5] == -first[4] then
+                return true
+            end
+        end
+        return false
     end
     -- (The player, 2026-10-22: both sides from the middle, by default.)
-    -- (The player, 2026-10-23: the default icon size 30; then 32.)
-    check("a bar to start; icons 32 across, 5 to a row, both sides, rows growing up",
+    -- (The player, 2026-10-23: the default icon size 30; then 32; 6 to a row.)
+    check("a bar to start; icons 32 across, 6 to a row, both sides, rows growing up",
         NS.DisplayOf(DB.tracked[1]) == "bar" and DB.tracked[1].display == nil
-        and NS.defaults.iconSize == 32 and NS.defaults.iconsPerRow == 5
+        and NS.defaults.iconSize == 32 and NS.defaults.iconsPerRow == 6
         and NS.defaults.iconGrow == "center" and NS.defaults.iconRowsGrow == "up")
+    -- (The player, 2026-10-23: an option to hide them out of combat, on by default.)
+    check("the icons hidden out of combat, to start", NS.defaults.hideIconsOutOfCombat == true)
+    DB.hideIconsOutOfCombat = false
     DB.iconGrow = "right"
     cooldowns[100] = { start = now, length = 12 }
     cooldowns[200] = { start = now, length = 90 }
@@ -602,14 +596,20 @@ do
         and not rows[1]:IsShown() and not rows[3]:IsShown())
     check("the first icon's place an icon's size", iconHolder.width == size and iconHolder.height == size)
     local charge = icons[1]
-    check("a square icon, the picture's baked edge cut off",
+    check("a square icon, the picture's baked edge cut off, its corners the game's Cooldown Manager's",
         charge:IsShown() and charge.width == size and charge.icon.texture == "icon100"
-        and charge.icon.allPointsTo == charge and charge.icon.mask == nil)
-    check("the action buttons' corners, one line a real pixel wide, a cooldown's gold",
+        and charge.icon.allPointsTo == charge and charge.icon.texCoord[1] == 0.08
+        and charge.icon.mask ~= nil and charge.icon.mask.atlas == MASK
+        and charge.icon.mask.allPointsTo == charge.icon)
+    check("a border one real pixel round it, the same shape, a cooldown's gold",
         Bordered(charge, Style.COOLDOWN_COLOR))
     local swipe = charge.swipe
-    check("its time a dark swipe over the picture, the part still to go",
+    check("its time a dark swipe over the picture, the part still to go, rounded as the game's",
         swipe.allPointsTo == charge and not swipe.reverse and swipe.drawEdge == false
+        and swipe.swipeTexture == "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe"
+        -- (The player, 2026-10-23: "cooldowns are fucking white textured" - the file is white.)
+        and swipe.swipeColor[1] == 0 and swipe.swipeColor[2] == 0 and swipe.swipeColor[3] == 0
+        and swipe.swipeColor[4] == 0.7
         and swipe.durationObject ~= nil and swipe.durationObject.remaining > 11)
     check("the time inside it, in one unit (the bars' two)",
         charge.timeText.points[1] == "CENTER" and charge.timeText.points[2] == charge
@@ -634,102 +634,100 @@ do
     DB.iconGrow = "right"
     NS.Refresh()
 
-    -- Duration only (a spell with no cooldown): the game's group, which closes up
-    -- by itself over a buff not on you - whether one is up is secret.
+    -- (The player, 2026-10-23: icons overlapping as cooldowns and buffs came and went - "show
+    -- all icons at once ... that way we dont have to deal with buffs randomly jumping
+    -- around".) Every icon entry on its own spot for good: lit while it cools down, faint
+    -- and grey while it doesn't. (The player, 2026-10-23: "dont glow cooldowns only glow
+    -- durations".)
+    check("lit while it cools down: in colour, no glow (only a buff's glows)",
+        charge:GetAlpha() == 1 and charge.icon.desaturated == false and charge.glow == nil)
+    cooldowns[200] = nil
+    Tick(0.2)
+    local mocking = icons[3]
+    -- (The player, 2026-10-23: "passive auras are too visible" at 30%, then too invisible at
+    -- 15% and 25%; "should have their borders too with same transparency".)
+    check("one cooling down no more: on its spot all the same, faint and grey, border and all, no time",
+        mocking:IsShown() and Spot(mocking, step, 0) and mocking:GetAlpha() == 0.35
+        and mocking.icon.desaturated == true and mocking.border.alpha == nil
+        and mocking.timeText.text == "" and mocking.swipe.durationObject == nil)
+    -- (Each layer faint on its own, the border's square under the picture tinted it gold.)
+    check("its layers drawn as one before it is made faint: the picture still hides the border's square",
+        mocking.flattensRenderLayers == true)
+    check("and none of the others moves", Spot(charge, 0, 0) and Spot(icons[4], 0, step))
+    cooldowns[200] = { start = now, length = 90 }
+    Tick(0.2)
+    check("cooling down again: lit, in colour", mocking:GetAlpha() == 1 and mocking.icon.desaturated == false)
+    secretActive = true
+    local ok, err = pcall(Tick, 0.2)
+    check("isActive secret: handed to the game, which lights it and colours it",
+        ok and mocking.alphaFrom ~= nil and mocking.alpha == 1 and mocking.icon.desaturation == 0, tostring(err))
+    secretActive = false
+
+    -- Duration only (a spell with no cooldown): its buff the game's aura slot over its own
+    -- faint icon, never a group the game closes up.
     NS.Add("spell", 20375)
     NS.SetDisplay(5, "icon")
-    local group = NS.Durations.groups.icon
-    local tracked = group and group.auraGroups.tracked
-    check("a duration-only icon: the game's group on the icons' piece, every rank its filter",
-        tracked ~= nil and group.parent == iconHolder and group.unit == "player" and group.aurasEnabled == true
-        and tracked.candidateFilters.includeSpellIDs[20375] and tracked.candidateFilters.includeSpellIDs[20918])
+    local slots
+    for _, f in ipairs(allFrames) do
+        if f.auraSlots and f.auraSlots.icon5 then slots = f end
+    end
+    local seal = slots and slots.auraSlots.icon5
+    local sealIcon = icons[5]
+    check("a duration-only icon on its own spot, the next after the others, faint and grey",
+        sealIcon:IsShown() and Spot(sealIcon, step, step) and sealIcon:GetAlpha() == 0.35
+        and sealIcon.icon.desaturated == true and sealIcon.border.alpha == nil
+        and sealIcon.icon.texture == "icon20375")
+    check("its buff the game's aura slot over it, every rank its filter",
+        seal ~= nil and seal.enabled and seal.sample.allPointsTo == sealIcon
+        and seal.sample:GetFrameLevel() > sealIcon.front:GetFrameLevel()
+        and seal.candidateFilters.includeSpellIDs[20375] and seal.candidateFilters.includeSpellIDs[20918])
     local bars = NS.Durations.groups.bar
-    check("and not in the bars' group",
-        bars == nil or bars.aurasEnabled == false
-        or not bars.auraGroups.tracked.candidateFilters.includeSpellIDs[20375])
-    local anchor = NS.Durations.anchors.icon
-    -- (The player, 2026-10-17: a duration icon started a new row after a part-full one.)
-    check("laid out as the cooldown icons, rightward, up, carrying on their row: the spot after the third, one column left",
-        group.flowAxis == AnchorUtil.FlowLayoutAxis.Horizontal and group.flowPoint == "BOTTOMLEFT"
-        and group.flowH == AnchorUtil.FlowDirection.Right and group.flowV == AnchorUtil.FlowDirection.Up
-        and group.lineSize == size and tracked.layout.elementSpacing == 6
-        and group.points[2] == anchor and Spot(anchor, step, step))
-    DB.iconGrow = "center"
-    NS.Refresh()
-    -- (The player, 2026-10-22: "why some icons appear on 2nd row when there is room in 1st
-    -- row"; 2026-10-23: "it should be completely centered, not one side growing longer".)
-    check("both sides: the part-full last row shared, the game's group hung by its middle right of the row's",
-        group.flowPoint == "BOTTOMLEFT" and group.points[1] == "BOTTOM" and group.points[3] == "BOTTOM"
-        and group.lineSize == size and Spot(anchor, step / 2, step))
-    local last = icons[4]
-    check("that row's cooldown icon hung off the group's left edge, a gap clear: the whole row centred as one",
-        last.points[1] == "BOTTOMLEFT" and last.points[2] == group and last.points[3] == "BOTTOMLEFT"
-        and Near(last.points[4], -step) and Near(last.points[5], 0))
-    check("made to be allowed there (the game refuses any other add-on frame)",
-        last.template == "DisableUntrustedLayoutScriptsTemplate"
-        and last.swipe.template == "DisableUntrustedLayoutScriptsTemplate")
-    check("a full row before it: centred on the holder", Spot(charge, -step / 2, 0) and Spot(icons[3], step / 2, 0))
-    -- (The player, 2026-10-23: "Style.lua:619 attempt to perform arithmetic on 'height' (a
-    -- secret number)" - hung off the group, an icon's size is secret in a fight.)
-    secretAnchoring = true
-    check("laid out again in a fight: its size never read while hung there", pcall(NS.Refresh))
-    secretAnchoring = false
-    -- (The player, 2026-10-23: "icons sometimes jump to another position and come back ...
-    -- when a single row has max icons".) A cooldown over: two left, a full row - the buffs
-    -- a row of their own. Gliding there, the group dragged the icons hung off it along.
-    local saved = cooldowns[300]
-    cooldowns[300] = nil
-    Tick(0.2)
-    Tick(Core.Style.FADE_OUT + 0.1)
-    Tick(0.15)
-    check("the row's arrangement changed: the group's anchor there at once, never glided",
-        Spot(anchor, 0, step) and not icons[4]:IsShown())
-    cooldowns[300] = saved
-    Tick(0.15)
-    check("and back as the cooldown returns, at once too", Spot(anchor, step / 2, step) and icons[4].points[2] == group)
-    NS.Unlock()
-    check("placing: every icon on the holder, never on the group (Unlock Mode measures them)",
-        icons[4].points[2] == iconHolder)
-    NS.Lock()
-    DB.iconsPerRow = 3
-    NS.Refresh()
-    check("after a full row: a row of their own, the group hung by its middle (it sizes itself)",
-        group.points[1] == "BOTTOM" and group.points[3] == "BOTTOM" and group.lineSize == 3 * size + 12
-        and Spot(anchor, 0, step))
-    DB.iconsPerRow = 2
-    refuseJoinable = true
-    NS.Refresh()
-    check("a client refusing even those: no icon lost - it keeps its spot, the group carries on the row",
-        Spot(icons[4], 0, step) and group.points[1] == "BOTTOMLEFT" and Spot(anchor, step, step))
-    refuseJoinable = nil
-    DB.iconGrow = "right"
-    NS.Refresh()
-    local seal = tracked.sample
+    check("no group of icons for the game to move about, nor in the bars' group",
+        NS.Durations.groups.icon == nil and (bars == nil or bars.aurasEnabled == false
+            or not bars.auraGroups.tracked.candidateFilters.includeSpellIDs[20375]))
+    local buff = seal.sample
     check("square, a duration's green border; the game runs its time, in one unit, and fades it in",
-        seal.iconRegion ~= nil and seal.iconRegion.allPointsTo == seal and Bordered(seal, Style.DURATION_COLOR)
-        and seal.durationTextOptions.textFormatter == NS.iconAuraFormatter
-        and seal.shownAnimation ~= nil and seal.shownAnimation.animations[1].kind == "Alpha")
+        buff.iconRegion ~= nil and buff.iconRegion.allPointsTo == buff and Bordered(buff, Style.DURATION_COLOR)
+        and buff.durationTextOptions.textFormatter == NS.iconAuraFormatter
+        and buff.shownAnimation ~= nil and buff.shownAnimation.animations[1].kind == "Alpha")
+    -- (The player, 2026-10-23: "there is no GLOW on DURATIONS" - a frame of ours playing it
+    -- on its own OnShow never glowed.) A texture on the button itself, its loop the game's to play.
+    local spin = buff.shownAnimations and buff.shownAnimations[2]
+    local lit, flip = spin and spin.animations[1], spin and spin.animations[2]
+    local glow = flip and flip.target
+    check("glowing: the action buttons' proc loop round it, handed to the game to play as the buff shows",
+        spin ~= nil and spin.looping == "REPEAT" and #buff.shownAnimations == 2
+        and flip.kind == "FlipBook" and glow.atlas == "UI-HUD-ActionBar-Proc-Loop-Flipbook"
+        and glow.parent == buff and glow.layer == "OVERLAY"
+        and glow.points[1] == "BOTTOMRIGHT" and glow.points[2] == buff
+        and glow.points[4] == 6 and glow.points[5] == -6)
+    -- (The player, 2026-10-23: "theres this weird effect sometimes appearing" - the sheet
+    -- shown whole, a grid of little glows, while its loop wasn't playing.)
+    check("its sheet unseen but while the loop plays, which lights it first - as the game's template",
+        glow.alpha == 0 and lit.kind == "Alpha" and lit.target == glow
+        and lit.order == 1 and flip.order == 2 and lit.fromAlpha == 1 and lit.toAlpha == 1)
+    -- (The player, 2026-10-23: "stack number should be larger and easy to see when glow is active".)
+    local _, stackSize = buff.count:GetFont()
+    local _, timeSize = buff.durationText:GetFont()
+    check("its stacks larger than the time, a shadow under the outline, on a frame over the glow",
+        stackSize > timeSize and buff.count.shadowOffset ~= nil and buff.count.parent ~= buff)
     check("its swipe run by the game, darkening the part gone (one that never ends stays clear)",
-        seal.cooldown ~= nil and seal.cooldown.reverse == true and seal.cooldown:GetParent() == seal)
-    check("taking no mouse: the world under the icons stays clickable", seal.mouseEnabled == false)
+        buff.cooldown ~= nil and buff.cooldown.reverse == true and buff.cooldown:GetParent() == buff)
+    check("taking no mouse: the world under the icons stays clickable", buff.mouseEnabled == false)
 
     -- Both: the buff over the entry's own cooldown icon (or bar), shown first.
     DB.tracked[1].buff, DB.tracked[3].buff = true, true
     NS.SetTrack(1, "both")
     NS.SetDisplay(3, "bar")
     NS.SetTrack(3, "both")
-    local overlays
-    for _, f in ipairs(allFrames) do
-        if f.auraSlots and f.auraSlots.icon1 then overlays = f end
-    end
-    local over = overlays and overlays.auraSlots.icon1.sample
+    local over = slots.auraSlots.icon1 and slots.auraSlots.icon1.sample
     check("both, as an icon: one of the game's aura slots, the buff's ranks its filter",
-        over ~= nil and overlays.aurasEnabled == true
-        and overlays.auraSlots.icon1.candidateFilters.includeSpellIDs[100])
+        over ~= nil and slots.aurasEnabled == true
+        and slots.auraSlots.icon1.candidateFilters.includeSpellIDs[100])
     check("covering the cooldown icon exactly, over it: the duration first, the cooldown as it ends",
         over.allPointsTo == charge and over:GetFrameLevel() > charge:GetFrameLevel()
         and Bordered(over, Style.DURATION_COLOR))
-    local overBar = overlays.auraSlots.bar3 and overlays.auraSlots.bar3.sample
+    local overBar = slots.auraSlots.bar3 and slots.auraSlots.bar3.sample
     check("both, as a bar: a buff bar over its own cooldown bar",
         overBar ~= nil and overBar.allPointsTo == rows[3] and overBar.durationBar ~= nil
         and overBar:GetFrameLevel() > rows[3]:GetFrameLevel())
@@ -737,52 +735,62 @@ do
     check("the icons over the bars and whatever covers them",
         iconHolder:GetFrameLevel() > overBar:GetFrameLevel() and charge:GetFrameLevel() > overBar:GetFrameLevel())
     -- (The player, 2026-10-17: the cooldown showed for a moment before its buff.)
-    check("both: the cooldown unseen as it starts, its buff a moment behind the cast",
-        charge:IsShown() and charge:GetAlpha() == 0 and rows[3]:GetAlpha() == 0)
+    check("both: the cooldown not lit as it starts, its buff a moment behind the cast",
+        charge:IsShown() and charge:GetAlpha() == 0.35 and rows[3]:GetAlpha() == 0)
     -- (The player, 2026-10-17: errors in combat - the game denies addons the
     -- buff's frame while auras are secret.)
     over.IsShown = function() error("denied while auras are secret") end
     Tick(0.5)
-    check("then under its buff, hidden by it whole (time and count too), the buff never read",
-        charge:IsShown() and charge:GetAlpha() == 1
-        and over:GetFrameLevel() > charge.front:GetFrameLevel())
+    check("then lit under its buff, hidden by it whole (time and count too), the buff never read",
+        charge:GetAlpha() == 1 and over:GetFrameLevel() > charge.front:GetFrameLevel())
     over.IsShown = nil
     check("neither in a group: one spot each, not a second bar or icon",
-        not group.auraGroups.tracked.candidateFilters.includeSpellIDs[100]
-        and (bars == nil or bars.aurasEnabled == false
-            or not bars.auraGroups.tracked.candidateFilters.includeSpellIDs[200]))
+        bars == nil or bars.aurasEnabled == false
+        or not bars.auraGroups.tracked.candidateFilters.includeSpellIDs[200])
     check("a Both bar's spark hidden: taller than the bar, it poked out round its buff's",
         rows[3].spark:GetAlpha() == 0)
-    -- (The player, 2026-10-22: Both entries' spots kept for good left gaps all through the
-    -- bars - "all over the place, not stacking".)
-    cooldowns[100] = nil
+    check("a Both bar's cooldown running: its buff on its slot, over the bar",
+        slots.auraSlots.bar3.enabled == true)
+    -- (The player, 2026-10-23: a Both buff up past its cooldown, left where its spot had
+    -- been, came under the others moving round it; its spot kept while the buff might be up
+    -- left an empty bottom row in a fight.) The cooldown over: its spot let go at once, its
+    -- buff into the buff bars' group, which closes up over it by itself.
+    local barStep = DB.barHeight + 6 + 2 * Style.BORDER_INSET
+    local anchor = NS.Durations.anchors.bar
+    cooldowns[200] = nil
     Tick(0.2)
-    Tick(Core.Style.FADE_OUT + 0.1)
+    Tick(Style.FADE_OUT + 0.1)
     for _ = 1, 20 do Tick(0.05) end
-    check("a Both entry's cooldown over: no gap left, the rest close up as ever",
-        not charge:IsShown() and Spot(icons[4], 0, 0))
+    local group = NS.Durations.groups.bar
+    check("a Both bar's cooldown over: no spot held, its slot off, its buff in the buff bars' group",
+        not rows[3]:IsShown() and anchor.points[5] == barStep and slots.auraSlots.bar3.enabled == false
+        and group ~= nil and group.aurasEnabled == true
+        and group.auraGroups.tracked.candidateFilters.includeSpellIDs[200] == true)
+    -- (The player, 2026-10-23: a proc came in under a cast buff - the game's default order.)
+    check("the buff bars in the order they came: by aura instance, oldest nearest the cooldowns",
+        group.auraGroups.tracked.options.sortMethod == AuraContainerSortMethod.AuraInstanceIDOnly
+        and group.auraGroups.tracked.options.sortDirection == AuraContainerSortDirection.Normal)
+    cooldowns[200] = { start = now, length = 30 }
+    Tick(0.2)
+    check("its cooldown again: back on its slot, out of the group (nothing else in it: off)",
+        rows[3]:IsShown() and slots.auraSlots.bar3.enabled == true and group.aurasEnabled == false)
+    cooldowns[200] = nil
+    Tick(0.2)
+    Tick(Style.FADE_OUT + 0.1)
+    Tick(12)                                -- Charge's cooldown over too
+    check("a Both icon's cooldown over: still on its spot, faint and grey under its buff",
+        Spot(charge, 0, 0) and charge:GetAlpha() == 0.35)
     cooldowns[100] = { start = now, length = 12 }
     NS.SetTrack(1, "cooldown")
-    check("back to its cooldown only: its slot let go", overlays.auraSlots.icon1.enabled == false)
+    check("back to its cooldown only: its slot let go", slots.auraSlots.icon1.enabled == false)
     NS.SetTrack(3, "cooldown")
     NS.SetDisplay(3, "icon")
     DB.tracked[1].buff, DB.tracked[3].buff = nil, nil
 
-    cooldowns[100] = nil
-    Tick(0.2)
-    Tick(0.05)
-    check("a finished one fades out in its place, with no event",
-        charge:IsShown() and charge:GetAlpha() < 1 and Spot(charge, 0, 0))
-    Tick(Core.Style.FADE_OUT + 0.1)
-    for _ = 1, 20 do Tick(0.05) end
-    check("gone; the next glides onto its place, the rest closing up behind it (the bars' glide)",
-        not charge:IsShown() and Spot(icons[3], 0, 0) and Spot(icons[4], step, 0))
-    check("the duration-only group following: the spot after theirs, a whole row wide",
-        Spot(anchor, 0, step) and group.lineSize == 2 * size + 6)
-
     NS.Unlock()
-    check("unlocked: each entry on its own piece, bars and icons",
+    check("unlocked: each entry on its own piece, bars and icons, in full colour",
         icons[1]:IsShown() and icons[5]:IsShown() and icons[1].icon.texture == "icon100"
+        and sealIcon:GetAlpha() == 1 and sealIcon.icon.desaturated == false
         and rows[2]:IsShown() and not rows[1]:IsShown() and holder:IsShown() and iconHolder:IsShown())
     NS.Lock()
 
@@ -791,10 +799,30 @@ do
         entry ~= nil and entry.frame == iconHolder and Core.Snap.NameOf(entry) == "Cooldown Icons"
         and Core.Snap.NameOf(Core.Snap.EntryById("cooldowns")) == "Cooldown Bars")
 
+    DB.hideIconsOutOfCombat = true
+    NS.Refresh()
+    check("Hide out of combat: out of combat, the icons away, the bars as ever",
+        not iconHolder:IsShown() and holder:IsShown())
+    Fire("PLAYER_REGEN_DISABLED")
+    check("in combat, there", iconHolder:IsShown())
+    Fire("PLAYER_REGEN_ENABLED")
+    check("and away again as it ends", not iconHolder:IsShown())
+    Core.SetUnlocked(true)
+    check("while placing, there to place", iconHolder:IsShown())
+    local Snap, Unlock, hideRow = Core.Snap, Core.Options.Unlock, nil
+    Snap.OpenCog(entry, Snap.movers[entry])
+    for _, row in ipairs(Unlock.menu.block.rows) do
+        if row.label.text == "Hide out of combat" then hideRow = row end
+    end
+    check("its switch in the icons' Unlock Mode menu", hideRow ~= nil)
+    Core.SetUnlocked(false)
+    DB.hideIconsOutOfCombat = false
+    NS.Refresh()
+
     NS.Remove(5)
+    check("no duration-only icon left: its slot let go", seal.enabled == false)
     NS.Remove(4)
-    check("no duration-only icon left: their group off", group.aurasEnabled == false)
-    cooldowns[200], cooldowns[300], itemCooldowns[6948] = nil, nil, nil
+    cooldowns[100], cooldowns[200], cooldowns[300], itemCooldowns[6948] = nil, nil, nil, nil
     DB.iconsPerRow = NS.defaults.iconsPerRow
     NS.SetDisplay(1, "bar")
     NS.SetDisplay(3, "bar")
@@ -1175,12 +1203,13 @@ do
         NS.ShowsCooldown(charge) and NS.ShowsBuff(charge) and charge.track == "both")
     NS.Add("spell", 20375)                   -- so the duration container exists
     local c = Durations.groups.bar
-    check("its buff not a second bar in the duration group: it covers its own cooldown bar (see icons)",
-        not c.auraGroups.tracked.candidateFilters.includeSpellIDs[100])
+    check("its cooldown not running: its buff a bar in the buff bars' group, stacking with the rest",
+        c.auraGroups.tracked.candidateFilters.includeSpellIDs[100] == true)
     cooldowns[100] = { start = now, length = 12 }
     Fire("SPELL_UPDATE_COOLDOWN")
     Tick(0.2)
-    check("and its cooldown bar still shows", NS.rows[1]:IsShown())
+    check("running: its cooldown bar shows, its buff out of the group - over that bar instead (see icons)",
+        NS.rows[1]:IsShown() and c.auraGroups.tracked.candidateFilters.includeSpellIDs[100] == nil)
 
     NS.SetTrack(1, "buff")
     Tick(0.2)

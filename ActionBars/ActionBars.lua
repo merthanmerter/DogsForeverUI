@@ -120,6 +120,34 @@ do -- private scope
         NoMouse(selection)
     end
 
+    -- The game's Leave Vehicle / land-early button, bar 1's child: still seen, and an arrow only -
+    -- the game's art bakes its arrow into a round frame. Its square highlight (the game sets it
+    -- again on each update) unseen; an arrow of ours glows instead, held lit as the game's was
+    -- while a landing is asked for.
+    local LEAVE_ARROW = "NPE_ArrowDown"
+    local LEAVE_PUSHED, LEAVE_GLOW = 0.6, 0.5
+
+    local function LeaveArrow(button)
+        button:SetIgnoreParentAlpha(true)
+        local info = C_Texture.GetAtlasInfo(LEAVE_ARROW)
+        if not info then return end
+        local k = button:GetHeight() / math.max(info.width, info.height)
+        local function Arrow(texture)
+            texture:SetAtlas(LEAVE_ARROW)
+            texture:ClearAllPoints()
+            texture:SetPoint("CENTER")
+            texture:SetSize(info.width * k, info.height * k)
+        end
+        Arrow(button:GetNormalTexture())
+        Arrow(button:GetPushedTexture())
+        button:GetPushedTexture():SetVertexColor(LEAVE_PUSHED, LEAVE_PUSHED, LEAVE_PUSHED)
+        button:GetHighlightTexture():SetAlpha(0)
+        local glow = button:CreateTexture(nil, "HIGHLIGHT")
+        Arrow(glow)
+        glow:SetBlendMode("ADD")
+        glow:SetAlpha(LEAVE_GLOW)
+    end
+
     local function DisposeGameBars()
         for _, info in ipairs(AB.BARS) do
             local bar = _G[info.game]
@@ -138,8 +166,7 @@ do -- private scope
                         NoSelection(bar.EndCaps.RightEndCap)
                     end
                     bar:SetAlpha(0)
-                    -- Its child, the game's Leave Vehicle / land-early button, still seen.
-                    if bar.VehicleLeaveButton then bar.VehicleLeaveButton:SetIgnoreParentAlpha(true) end
+                    if bar.VehicleLeaveButton then LeaveArrow(bar.VehicleLeaveButton) end
                 else
                     pcall(bar.UnregisterAllEvents, bar)
                     bar:SetParent(hidden)

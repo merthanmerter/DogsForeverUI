@@ -1296,7 +1296,7 @@ do -- private scope
         else
             self.healthText:SetText("")
         end
-        if db.showPowerText then
+        if db[self.partyIndex and "partyPowerText" or "showPowerText"] then
             ShowValue(self.powerText, power, UnitPowerPercent(unit, shown, false, scaleTo100))
         else
             self.powerText:SetText("")
@@ -1334,6 +1334,7 @@ do -- private scope
     NS.PartyPets = PartyPets
     PartyPets.AURA_SIZE = 8
     local PET_WIDTH = 0.2             -- of a party frame's width
+    local PET_ROW_HEIGHT = 0.1        -- in a row: of a party frame's width, half as thin
     local PET_AURA_MARGIN = 3         -- the buffs to the box's edges
     local PET_AURA_COUNT = 4
     local PET_GAP = 2 * Style.BORDER_INSET + UnitPlate.PARTY_GAP     -- its border to its owner's
@@ -1342,9 +1343,8 @@ do -- private scope
     -- Its width and height, and whether it is over its owner (a row).
     local function PetSize(db)
         local width, health, power = UnitPlate.Size(db, ANY_PARTY)
-        local narrow = math.max(8, math.floor(width * PET_WIDTH + 0.5))
-        if UnitPlate.InRow(db) then return width, narrow, true end
-        return narrow, health + 1 + power, false
+        if UnitPlate.InRow(db) then return width, math.max(8, math.floor(width * PET_ROW_HEIGHT + 0.5)), true end
+        return math.max(8, math.floor(width * PET_WIDTH + 0.5)), health + 1 + power, false
     end
 
     -- How far left of (in a row: over) its owner a box reaches, border

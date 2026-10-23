@@ -480,8 +480,8 @@ do
     cooldowns.iconSize, cooldowns.iconsPerRow = 30, 8
     db.defaultPlaces = 22
     Places.Update()
-    check("from 22: the cooldown icons over the secondary power, 32 across, 5 to a row",
-        OverThePower() and cooldowns.iconSize == 32 and cooldowns.iconsPerRow == 5,
+    check("from 22: the cooldown icons over the secondary power, 32 across, 6 to a row",
+        OverThePower() and cooldowns.iconSize == 32 and cooldowns.iconsPerRow == 6,
         tostring(F("cooldownicons").left) .. "," .. tostring(F("cooldownicons").bottom))
 
     -- One on version 30: the icons hanging from the bars, growing rightward (the old default).
@@ -511,6 +511,18 @@ do
     Places.Update()
     check("one the player sized stays", cooldowns.iconSize == 40)
     cooldowns.iconSize = 32
+
+    -- One on version 36: the icons 5 to a row, the old default - and one set by the player.
+    -- (The player, 2026-10-23: 6.)
+    cooldowns.iconsPerRow = 5
+    db.defaultPlaces = 36
+    Places.Update()
+    check("icons at the old default 5 to a row: 6 now", cooldowns.iconsPerRow == 6)
+    cooldowns.iconsPerRow = 4
+    db.defaultPlaces = 36
+    Places.Update()
+    check("one the player set stays", cooldowns.iconsPerRow == 4)
+    cooldowns.iconsPerRow = 6
 
     -- One on version 31: the pet bar one row of 20 under Action Bar 2, anchored to it.
     Bars.db.petRows, Bars.db.petSize = 1, 20

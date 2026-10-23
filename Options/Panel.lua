@@ -338,7 +338,7 @@ do -- private scope
     local CHOICE_SEGMENT = 74
     local LOOK_SEGMENT = 48         -- Bar / Icon
     local FIXED_TRACK = { buff = "Duration", cooldown = "Cooldown" }
-    local OTHER_SPEC_ALPHA = 0.45   -- a tracked spell of another spec, in the list
+    local OTHER_SPEC_ALPHA = 0.45   -- a tracked spell not learned in the spec now, in the list
 
     local function Line(parent)
         local line = CreateFrame("Frame", nil, parent)
@@ -459,7 +459,7 @@ do -- private scope
         end
 
         -- `index`, the entry's place in the saved list (the list shows them in another order).
-        -- Another spec's: what it tracks unknown till that spec (the game's Cooldown Manager
+        -- Not learned now: what it tracks unknown till it is (the game's Cooldown Manager
         -- knows only the spec now's) - nothing said that could be wrong, its setting kept.
         local function Fill(line, index)
             local entry = Cooldowns.db.tracked[index]
@@ -477,15 +477,16 @@ do -- private scope
             if choose then
                 line.choice.Refresh()
             elseif not current then
-                line.fixed:SetText("Set in its spec")
+                line.fixed:SetText("Set once learned")
             else
                 line.fixed:SetText(FIXED_TRACK[Cooldowns.TrackOf(entry)] or "Nothing to track")
             end
         end
 
-        -- The spec now's first; after a divider, another spec's, dimmed (still there to set or remove).
+        -- The spec now's first; after a divider, the rest - another spec's, a talent not
+        -- taken - dimmed (still there to set or remove).
         row.divider = W.Text(row, 11, W.MUTED)
-        row.divider:SetText("Not in your current spec")
+        row.divider:SetText("Not learned in your current spec")
         local order = {}
         Register(function()
             wipe(order)

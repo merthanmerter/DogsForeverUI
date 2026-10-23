@@ -1,7 +1,8 @@
 -- MODULE: Cooldowns  (DogsForeverUI.Cooldowns, settings section "cooldowns")
 -- Bars - or square icons in rows, each entry its choice - for spells and items
--- added by ID while they cool down, or a spell's buff while it runs (the game's
--- aura container). Also IDs on tooltips and talent ranks.
+-- added by ID: a bar while it cools down, an icon always on its spot (lit while
+-- it cools down, faint and grey while it doesn't); or a spell's buff while it
+-- runs (the game's aura container). Also IDs on tooltips and talent ranks.
 -- Cooldown numbers are secret in combat: only isActive/isOnGCD (NeverSecret) are read.
 
 DogsForeverUI.Cooldowns = CreateFrame("Frame")
@@ -25,9 +26,10 @@ do -- private scope
         barHeight = 20,          -- the castbar's height
         growDirection = "up",
         iconSize = 32,           -- the icon entries'
-        iconsPerRow = 5,
+        iconsPerRow = 6,
         iconGrow = "center",     -- along a row: "center" (both sides of its middle), "right" or "left"
         iconRowsGrow = "up",     -- the next row: "up" or "down"
+        hideIconsOutOfCombat = true,
         frameStrata = "MEDIUM",
         showTooltipIDs = true,
         tracked = {},            -- { kind, id, track, buff, buffIDs, display }, in order
@@ -156,17 +158,53 @@ do -- private scope
         return Ask("C_Item", "IsEquippedItem", id) == true
     end
 
-    -- Of the spec now (the options list another spec's after, dimmed), as the game's
-    -- spellbook says: on retail it holds the other specs' spells too, marked off-spec
-    -- (FindSpellBookSlotForSpell with and without them; hidden, replaced and not-yet-learnt
-    -- ones searched). Not in it at all - a buff or proc, an item - and all of Forever,
-    -- which has no specs: always. (Guessing from a cooldown or a cast failed: out of its
-    -- spec a spell tells of no cooldown - Holy Word: Serenity looked like a proc.)
+    -- Every spell of the class's talent tree, every spec's and the hero talents (GetTreeNodes:
+    -- "nodes for all class specializations"), read once it has loaded.
+    local talentSpells
+    local function TalentSpells()
+        if talentSpells then return talentSpells end
+        local made = {}
+        local config = Ask("C_ClassTalents", "GetActiveConfigID")
+        local info = Plain(config, "number") and Ask("C_Traits", "GetConfigInfo", config)
+        for _, tree in ipairs(type(info) == "table" and info.treeIDs or {}) do
+            for _, node in ipairs(Ask("C_Traits", "GetTreeNodes", tree) or {}) do
+                local nodeInfo = Ask("C_Traits", "GetNodeInfo", config, node)
+                for _, entryID in ipairs(type(nodeInfo) == "table" and nodeInfo.entryIDs or {}) do
+                    local entryInfo = Ask("C_Traits", "GetEntryInfo", config, entryID)
+                    local definition = type(entryInfo) == "table" and Plain(entryInfo.definitionID, "number")
+                        and Ask("C_Traits", "GetDefinitionInfo", entryInfo.definitionID)
+                    local spell = type(definition) == "table" and definition.spellID
+                    if Plain(spell, "number") then made[spell] = true end
+                end
+            end
+        end
+        if next(made) then talentSpells = made end
+        return made
+    end
+
+    -- Of the spec now (the options list the rest after, dimmed; nothing of it shows): a
+    -- talent only while had (one not taken, or another spec's, is in no spellbook - it
+    -- passed as a proc: Dominate Mind not taken, Benediction out of Holy); any other spell
+    -- as the game's spellbook says - on retail it holds the other specs' spells too, marked
+    -- off-spec (FindSpellBookSlotForSpell with and without them; hidden, replaced and
+    -- not-yet-learnt ones searched). Not in it at all - a buff or proc, an item - and all of
+    -- Forever, which has no specs: always. (Guessing from a cooldown or a cast failed: out of
+    -- its spec a spell tells of no cooldown - Holy Word: Serenity looked like a proc.)
+    local currentNow = setmetatable({}, WEAK)   -- entry -> bool, until a refresh
     function NS.IsCurrent(entry)
         local Find = Core.Api("C_SpellBook", "FindSpellBookSlotForSpell")
         if not Core.RETAIL or entry.kind ~= "spell" or not Find then return true end
-        if Core.Try(Find, entry.id, true, true, true, false) then return true end
-        return not Core.Try(Find, entry.id, true, true, true, true)
+        local current = currentNow[entry]
+        if current == nil then
+            if TalentSpells()[entry.id] and not NS.KnownNow(entry) then
+                current = false
+            else
+                current = Core.Try(Find, entry.id, true, true, true, false) ~= nil
+                    or Core.Try(Find, entry.id, true, true, true, true) == nil
+            end
+            currentNow[entry] = current
+        end
+        return current
     end
 
     ---------------------------------------------------------------------------
@@ -606,20 +644,24 @@ do -- private scope
     ---------------------------------------------------------------------------
     -- The icons: square, the time inside, in rows from the first icon's place
     -- (the icon holder): along a row rightward or leftward, so many to a row,
-    -- the next row above or below.
+    -- the next row above or below. Every icon entry always on its own spot, so
+    -- nothing moves as cooldowns and buffs come and go.
     ---------------------------------------------------------------------------
 
     local ICON_GAP = 6                -- between two icons, their borders clear
     local ICONS_BELOW = -150          -- the first icon's default place, from the screen's middle
     local ICONS_ABOVE = 30            -- levels over the bars' holder
     local TIME_PADDING = 0.3          -- the time's room in the icon, above and below
-    local COUNT_PADDING = 0.35
-    -- The action buttons' border (their corners, a real pixel a line): one line,
-    -- the bars' colours - a cooldown's gold, a duration's green.
-    local function IconBorder(colour)
-        return { radius = Style.DEFAULT_BORDER.radius, gap = 0, lines = { { colour[1], colour[2], colour[3], 1 } } }
-    end
-    local COOLDOWN_BORDER, DURATION_BORDER = IconBorder(Style.COOLDOWN_COLOR), IconBorder(Style.DURATION_COLOR)
+    local COUNT_SHARE = 0.44          -- the charges' and stacks' size, of the icon's: 14 on 32, over the time's 11
+    local IDLE_ALPHA = 0.35           -- an icon with nothing running: faint and grey, border and all (0.15, 0.25 too faint)
+    -- The action buttons' proc glow (ActionButtonSpellAlertTemplate's loop): 1.4 times
+    -- the icon, its flipbook 30 frames a second.
+    local GLOW_ATLAS = "UI-HUD-ActionBar-Proc-Loop-Flipbook"
+    local GLOW_REACH = 0.2            -- of the icon's size, past each edge
+    -- The game's Cooldown Manager icon (Blizzard_CooldownViewer\CooldownViewer.xml), the
+    -- shape that glow is drawn round: its rounded mask and its swipe, rounded to match.
+    local ICON_MASK = "UI-HUD-CoolDownManager-Mask"
+    local ICON_SWIPE = "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe"
 
     local iconHolder = CreateFrame("Frame", "DogsForeverUICooldownIcons", UIParent)
     iconHolder:Hide()
@@ -630,56 +672,114 @@ do -- private scope
     local icons = {}
     NS.icons = icons
 
-    -- A frame that may hang off the game's aura container: once that has a group, only a
-    -- frame opted in to its forbidden aspect may (Blizzard_CustomAuraContainer.lua) - the
-    -- icons sharing a row with the duration icons (Durations.Joins). Plain where the client
-    -- has no such template.
-    local JOINABLE = "DisableUntrustedLayoutScriptsTemplate"
-    local function Joinable(kind, parent)
-        local ok, frame = pcall(CreateFrame, kind, nil, parent, JOINABLE)
-        if ok and frame then return frame end
-        return CreateFrame(kind, nil, parent)
+    -- A buff button's glow: a texture on the button itself, over its picture and border
+    -- (under its swipe and texts), and its loop - handed to the game, which plays it each
+    -- time the buff shows and stops it as it goes (AddAuraShownAnimation; a frame of ours
+    -- playing it on its own OnShow never glowed). As the game's template: the sheet unseen
+    -- (alpha 0) but while its loop plays, which lights it - drawn at 1, a loop not running
+    -- showed the whole sheet, a grid of little glows round the icon.
+    local function AddGlow(frame)
+        local glow = frame:CreateTexture(nil, "OVERLAY")
+        glow:SetAtlas(GLOW_ATLAS)
+        glow:SetAlpha(0)
+        local spin = frame:CreateAnimationGroup()
+        spin:SetLooping("REPEAT")
+        local lit = spin:CreateAnimation("Alpha")
+        lit:SetTarget(glow)
+        lit:SetOrder(1)
+        lit:SetDuration(0.001)
+        lit:SetFromAlpha(1)
+        lit:SetToAlpha(1)
+        local flip = spin:CreateAnimation("FlipBook")
+        flip:SetOrder(2)
+        flip:SetTarget(glow)
+        flip:SetDuration(1)
+        flip:SetFlipBookRows(6)
+        flip:SetFlipBookColumns(5)
+        flip:SetFlipBookFrames(30)
+        flip:SetFlipBookFrameWidth(0)
+        flip:SetFlipBookFrameHeight(0)
+        return glow, spin
+    end
+
+    local function PlaceGlow(frame, glow, size)
+        local reach = math.floor(size * GLOW_REACH + 0.5)
+        glow:ClearAllPoints()
+        glow:SetPoint("TOPLEFT", frame, "TOPLEFT", -reach, reach)
+        glow:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", reach, -reach)
+    end
+
+    -- `texture` cut to the game's rounded icon shape.
+    local function Rounded(frame, texture)
+        local mask = frame:CreateMaskTexture()
+        mask:SetAtlas(ICON_MASK)
+        mask:SetAllPoints(texture)
+        texture:AddMaskTexture(mask)
     end
 
     -- An icon's pieces on `frame`, into `p` (the icon itself, or a buff icon's
     -- own table): the picture, a swipe darkening it as its time runs - a
     -- cooldown's part still to go, a buff's part gone (one that never ends
-    -- stays clear) - the time and charges over both, and the border.
+    -- stays clear) - the time and charges over both, a buff's glow, and the border:
+    -- one real pixel of the bars' colour (a cooldown's gold, a duration's green)
+    -- round the picture, the same shape, so its corners follow the glow's.
     local function MakeIconPieces(frame, p, buff)
+        local colour = buff and Style.DURATION_COLOR or Style.COOLDOWN_COLOR
+        p.border = frame:CreateTexture(nil, "BACKGROUND")
+        p.border:SetTexture(Style.FLAT_TEXTURE)
+        p.border:SetVertexColor(colour[1], colour[2], colour[3], 1)
+        Rounded(frame, p.border)
         p.icon = frame:CreateTexture(nil, "ARTWORK")
         p.icon:SetAllPoints(frame)
         p.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        local swipe = Joinable("Cooldown", frame)
+        Rounded(frame, p.icon)
+        if buff then p.glow, p.spin = AddGlow(frame) end
+        local swipe = CreateFrame("Cooldown", nil, frame)
         swipe:SetAllPoints(frame)
+        -- The swipe file is white: tinted as the game's are, cooldown and buff alike
+        -- (CooldownViewerConstants.ITEM_COOLDOWN_COLOR) - untinted, it covered the icon white.
+        swipe:SetSwipeTexture(ICON_SWIPE)
+        swipe:SetSwipeColor(0, 0, 0, 0.7)
         swipe:SetReverse(buff == true)
         swipe:SetDrawEdge(false)
         swipe:SetDrawBling(false)
         swipe:SetHideCountdownNumbers(true)
         p.swipe = swipe
-        p.front = Joinable("Frame", frame)
+        p.front = CreateFrame("Frame", nil, frame)
         p.front:SetAllPoints(frame)
         p.front:SetFrameLevel(swipe:GetFrameLevel() + 1)
         p.timeText = p.front:CreateFontString(nil, "OVERLAY")
-        p.countText = p.front:CreateFontString(nil, "OVERLAY")   -- a spell's charges
-        p.border = Style.AddBorder(frame, buff and DURATION_BORDER or COOLDOWN_BORDER, false, 1)
+        p.countText = p.front:CreateFontString(nil, "OVERLAY")   -- a spell's charges, a buff's stacks
         return p
     end
 
     local function LayOutIcon(frame, p)
         frame:SetSize(NS.db.iconSize, NS.db.iconSize)
+        if p.glow then PlaceGlow(frame, p.glow, NS.db.iconSize) end
+        local px = Style.OnePixel(frame)
+        p.border:ClearAllPoints()
+        p.border:SetPoint("TOPLEFT", frame, "TOPLEFT", -px, px)
+        p.border:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", px, -px)
         for _, label in ipairs({ p.timeText, p.countText }) do
             label:ClearAllPoints()
             Style.SingleLine(label)
         end
         Style.SetFont(frame, p.timeText, TIME_PADDING)
         p.timeText:SetPoint("CENTER", frame, "CENTER", 0, 0)
-        Style.SetFont(frame, p.countText, COUNT_PADDING)
+        -- Past the bars' largest text (a floor raises it): plain to read, and with a
+        -- shadow under its outline, over the glow too.
+        Style.SetFont(frame, p.countText, nil, math.floor(NS.db.iconSize * COUNT_SHARE))
+        p.countText:SetShadowOffset(1, -1)
+        p.countText:SetShadowColor(0, 0, 0, 1)
         p.countText:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     end
 
     local function NewIcon()
-        local icon = Joinable("Frame", iconHolder)
+        local icon = CreateFrame("Frame", nil, iconHolder)
         icon:Hide()
+        -- Its layers drawn as one before its alpha: faint, the picture still hides the
+        -- border's square under it (each layer faint on its own, it tinted the picture gold).
+        icon:SetFlattensRenderLayers(true)
         MakeIconPieces(icon, icon)
         LayOutIcon(icon, icon)
         return icon
@@ -766,23 +866,10 @@ do -- private scope
         gridFrames[n + 1], gridInstant[n + 1] = frame, instant == true
     end
 
-    -- A part-full last row shared with the game's duration icons (Durations.Joins): ours hung
-    -- off its container's left edge, a gap clear, so the row centres as one. One the game
-    -- refuses to hang there keeps its own spot, and no icon is hung there again.
     local function PlaceGrid(count)
-        local joined, inRow = Durations.Joins(count)
-        local step = NS.db.iconSize + ICON_GAP
         for n = 1, count do
-            local frame, placed = gridFrames[n], false
-            if joined and n > count - inRow then
-                GlideTo(frame, joined, Durations.Corner(), -(count - n + 1) * step, 0, gridInstant[n])
-                placed = frame:GetNumPoints() > 0
-                if not placed then Durations.Refused() end
-            end
-            if not placed then
-                local x, y = GridSpot(n - 1, count)
-                GlideTo(frame, iconHolder, "CENTER", x, y, gridInstant[n])
-            end
+            local x, y = GridSpot(n - 1, count)
+            GlideTo(gridFrames[n], iconHolder, "CENTER", x, y, gridInstant[n])
         end
     end
 
@@ -970,14 +1057,15 @@ do -- private scope
         Core.Call(button, "SetApplicationCount", p.countText)
     end
 
-    -- A buff icon: square like the cooldowns' with a green border, run by the
-    -- game, faded in as it shows; the world under it stays clickable.
-    local iconSizes = setmetatable({}, WEAK)    -- button -> the size it was given
+    -- A buff icon: square like the cooldowns' with a green border, glowing, run by
+    -- the game, faded in as it shows; the world under it stays clickable.
+    local iconPieces = setmetatable({}, WEAK)   -- button -> its pieces, and the size it was given
 
     local function BuildIcon(button)
         local p = MakeIconPieces(button, {}, true)
         LayOutIcon(button, p)
-        iconSizes[button] = NS.db.iconSize
+        p.size = NS.db.iconSize
+        iconPieces[button] = p
         Core.Call(button, "EnableMouse", false)
         local fade = button:CreateAnimationGroup()
         local alpha = fade:CreateAnimation("Alpha")
@@ -991,6 +1079,7 @@ do -- private scope
             NS.iconAuraFormatter and { textFormatter = NS.iconAuraFormatter } or nil)
         Core.Call(button, "SetApplicationCount", p.countText)
         Core.Call(button, "AddAuraShownAnimation", fade)
+        Core.Call(button, "AddAuraShownAnimation", p.spin)
     end
 
     -- A new size for buff bars and icons already made, only while auras aren't
@@ -1011,27 +1100,28 @@ do -- private scope
                 pcall(p.bar.SetSize, p.bar, math.max(1, width - height - p.px), height)
             end
         end
-        for button, was in pairs(iconSizes) do
-            if was ~= db.iconSize then
-                iconSizes[button] = db.iconSize
+        for button, p in pairs(iconPieces) do
+            if p.size ~= db.iconSize then
+                p.size = db.iconSize
                 pcall(button.SetSize, button, db.iconSize, db.iconSize)
+                pcall(PlaceGlow, button, p.glow, db.iconSize)
             end
         end
     end
 
     ---------------------------------------------------------------------------
-    -- Duration only: the game's group of buffs, which closes up by itself
-    -- over a buff not on you (whether one is up is secret, so the addon cannot
-    -- place them). The bars' stack on top of the cooldown bars; the icons'
-    -- carry on the cooldown icons' row (growing both sides: the next row).
+    -- Buff bars: the game's group of buffs, which closes up by itself over a buff
+    -- not on you (whether one is up is secret, so the addon cannot place them),
+    -- stacked on top of the cooldown bars, in the order they came (aura instance
+    -- IDs: the oldest nearest the cooldowns, a new one at the far end). Duration
+    -- entries, and a Both entry's buff while its cooldown isn't running. A
+    -- duration-only icon is a Both one with no cooldown: its buff on its own spot.
     ---------------------------------------------------------------------------
 
-    local anchors = { bar = CreateFrame("Frame", nil, holder), icon = CreateFrame("Frame", nil, iconHolder) }
+    local anchors = { bar = CreateFrame("Frame", nil, holder) }
     anchors.bar:SetSize(1, 1)
     Durations.anchors = anchors
-    local followedBars, followedIcons       -- last followed (nil: not since a refresh)
-    local followedArrangement               -- growing both sides: the duration icons' row, shared or not
-    local iconsBefore = 0                   -- cooldown icons shown ahead of the duration-only ones
+    local followedBars                      -- last followed (nil: not since a refresh)
 
     -- Bars: up (or down) a column from the anchor.
     local function DirectBars(c)
@@ -1045,70 +1135,11 @@ do -- private scope
         Core.Call(c, "SetPoint", point, anchors.bar, point, 0, 0)
     end
 
-    -- Icons: from the anchor's corner, as wide as the columns left in the
-    -- cooldown icons' last row (the game starts every line at that corner).
-    -- Both sides: the container (sized by the game to what it shows, never read) hung
-    -- by its middle - sharing a part-full last row, whose cooldown icons hang off it
-    -- (Durations.Joins: the whole row centred), or after a full one, a row of their own.
-    -- Where the game refuses the sharing: carrying on that row from its corner.
-    local function DirectIcons(c)
-        local db, flow = NS.db, AnchorUtil.FlowDirection
-        local centred, left, down = db.iconGrow == "center", db.iconGrow == "left", db.iconRowsGrow == "down"
-        local edge = down and "TOP" or "BOTTOM"
-        local point = edge .. (left and "RIGHT" or "LEFT")
-        local columns = db.iconsPerRow - iconsBefore % db.iconsPerRow
-        anchors.icon:SetSize(db.iconSize, db.iconSize)
-        Core.Call(c, "SetFlowLayoutAxis", AnchorUtil.FlowLayoutAxis.Horizontal)
-        Core.Call(c, "SetFlowLayoutAnchorPoint", point)
-        Core.Call(c, "SetFlowLayoutGrowthDirection", left and flow.Left or flow.Right, down and flow.Down or flow.Up)
-        Core.Call(c, "SetFlowLayoutMaximumLineSize", columns * (db.iconSize + ICON_GAP) - ICON_GAP)
-        Core.Call(c, "SetAuraGroupLayout", GROUP, { elementSpacing = ICON_GAP, lineSpacing = ICON_GAP })
-        Core.Call(c, "ClearAllPoints")
-        local hung = (centred and (iconsBefore % db.iconsPerRow == 0 or Durations.Joins(iconsBefore))) and edge
-            or point
-        Core.Call(c, "SetPoint", hung, anchors.icon, hung, 0, 0)
-    end
-
-    local GROUPS = {
-        bar = { parent = holder, build = Build, direct = DirectBars },
-        icon = { parent = iconHolder, build = BuildIcon, direct = DirectIcons },
-    }
-    local groups = {}                       -- "bar" / "icon" -> the game's container
+    local groups = {}                       -- "bar" -> the game's container
     Durations.groups = groups
-    -- "bar" / "icon" / a Both slot's key -> the IDs last handed to the game, while on: new
+    -- "bar" / a Both slot's key -> the IDs last handed to the game, while on: new
     -- filters make the game drop and look again, so only what changed is sent.
     local sent = {}
-
-    -- Growing both sides, with duration icons on: the container a part-full last row of
-    -- `count` cooldown icons shares, and how many of ours are in it - so the two centre as
-    -- one. Never while placing (Unlock Mode measures every icon then, and one hung off the
-    -- container takes its size, secret in a fight); never where the game refuses: tried
-    -- first on a spare icon built as ours are (`joinable`, once a session).
-    local joinable              -- nil: not tried yet
-    function Durations.Joins(count)
-        local db, c = NS.db, groups.icon
-        local inRow = count % db.iconsPerRow
-        if db.iconGrow ~= "center" or db.unlocked or inRow == 0 or not (c and sent.icon) then return nil end
-        if joinable == nil then
-            local probe = NewIcon()
-            joinable = pcall(probe.SetPoint, probe, "BOTTOMLEFT", c, "BOTTOMLEFT", 0, 0)
-                and probe:GetNumPoints() > 0
-            probe:ClearAllPoints()
-        end
-        if not joinable then return nil end
-        return c, inRow
-    end
-
-    -- An icon the game would not hang off the container: none is, from now on.
-    function Durations.Refused()
-        joinable = false
-        followedBars, followedIcons = nil, nil
-    end
-
-    -- The corner a row starts from: its foot, growing up; its head, growing down.
-    function Durations.Corner()
-        return NS.db.iconRowsGrow == "down" and "TOPLEFT" or "BOTTOMLEFT"
-    end
 
     local function SameSet(a, b)
         if not b then return false end
@@ -1117,92 +1148,85 @@ do -- private scope
         return true
     end
 
-    -- The `kind` group filled with `ids`; made the first time it has any.
-    local function FillGroup(kind, ids)
-        local c, spec = groups[kind], GROUPS[kind]
+    -- The bars' group filled with `ids`; made the first time it has any.
+    local function FillBars(ids)
+        local c = groups.bar
         if not next(ids) then
             if c then
                 Core.Call(c, "SetEnabled", false)
                 Core.Call(c, "Hide")
             end
-            sent[kind] = nil
+            sent.bar = nil
             return
         end
         if not c then
-            c = CreateFrame("AuraContainer", nil, spec.parent, "CustomAuraContainerTemplate")
+            c = CreateFrame("AuraContainer", nil, holder, "CustomAuraContainerTemplate")
             Core.Call(c, "SetEditModePreviewEnabled", false)
             Core.Call(c, "SetUnit", "player")
+            -- (The game's default order put a proc after a cast buff: a new bar in the middle.)
+            local sort, direction = _G.AuraContainerSortMethod, _G.AuraContainerSortDirection
             Core.Call(c, "AddAuraGroup", GROUP, YOURS, {
                 maxFrameCount = MAX_BARS,
-                initializeFrame = spec.build,
+                initializeFrame = Build,
                 candidateFilters = { includeSpellIDs = ids, isFromPlayerOrPlayerPet = true },
+                sortMethod = sort and sort.AuraInstanceIDOnly,
+                sortDirection = direction and direction.Normal,
             })
-            groups[kind] = c
+            groups.bar = c
         end
-        spec.direct(c)
-        if SameSet(ids, sent[kind]) then return end
-        sent[kind] = ids
+        DirectBars(c)
+        if SameSet(ids, sent.bar) then return end
+        sent.bar = ids
         Core.Call(c, "SetAuraGroupCandidateFilters", GROUP, { includeSpellIDs = ids, isFromPlayerOrPlayerPet = true })
         Core.Call(c, "SetEnabled", true)
         Core.Call(c, "Show")
         Core.Call(c, "UpdateAllAuras")
     end
 
-    -- On top of `bars` cooldown bars, and in the spot after `icons` cooldown
-    -- icons; at once after a refresh.
-    function Durations.Follow(bars, icons)
-        if bars == followedBars and icons == followedIcons then return end
+    -- On top of `bars` cooldown bars; at once after a refresh.
+    function Durations.Follow(bars)
+        if bars == followedBars then return end
         local instant = followedBars == nil
-        followedBars, followedIcons = bars, icons
-        iconsBefore = icons
+        followedBars = bars
         StackAt(anchors.bar, bars, instant)
-        local db = NS.db
-        local x, y = GridSpot(icons, icons + 1)
-        if db.iconGrow == "center" then
-            -- Sharing the last row (Durations.Joins): the container's middle right of the row's
-            -- by the cooldown icons hung off it, so the whole row centres as one - exact while
-            -- a buff shows; with none, the row sits half a gap and the empty container's unit left.
-            -- Not shared: the spot after them, or - none there - a row of their own.
-            local inRow, step = icons % db.iconsPerRow, db.iconSize + ICON_GAP
-            local row, joined = math.floor(icons / db.iconsPerRow), Durations.Joins(icons) ~= nil
-            if joined then
-                x = inRow * step / 2
-            else
-                x = inRow > 0 and (inRow + 1) / 2 * step or 0
-            end
-            y = row * step * (db.iconRowsGrow == "down" and -1 or 1)
-            -- A new arrangement (shared or not, another row): there at once. The icons hung
-            -- off the container go where it is at once, so a gliding one dragged them along
-            -- from the old spot and back - a full row's icons jumped as a cooldown came or went.
-            local arrangement = (joined and "shared" or "apart") .. row
-            instant = instant or arrangement ~= followedArrangement
-            followedArrangement = arrangement
-        end
-        GlideTo(anchors.icon, iconHolder, "CENTER", x, y, instant)
-        if groups.icon then DirectIcons(groups.icon) end
     end
 
     ---------------------------------------------------------------------------
     -- Both: the buff over the entry's own cooldown bar or icon, on one of the
     -- game's aura slots. While it is up the cooldown under it is unseen; as it
-    -- ends, the cooldown shows (ShowCooldown). The cooldown's spot is the
-    -- entry's: a buff up while its spell is not cooling down stays where that
-    -- spot last was.
+    -- ends, the cooldown shows (ShowCooldown, ShowIcon). An icon's spot is always
+    -- its own; a bar's only while its cooldown runs - then its buff is in the buff
+    -- bars' group instead, which closes up over it (PlaceBuffs). (Its spot kept
+    -- while the buff might be up left an empty row in a fight, the buff unread.)
+    -- A Duration icon is the same: its buff over its faint icon.
     ---------------------------------------------------------------------------
 
     local OVER = 10                         -- levels over the bar or icon it covers
     local slotContainer
     local slots = {}                        -- "bar3" / "icon3" -> its frame
+    local slotOn = {}                       -- key -> the game shows its buff there
+    local cooling = setmetatable({}, WEAK)  -- a Both bar entry -> its cooldown runs: its buff on its slot
 
-    -- A Both entry's buff, over its bar or icon.
+    local function SlotOn(key, on)
+        if not slots[key] or slotOn[key] == on then return end
+        slotOn[key] = on
+        Core.Call(slotContainer, "SetAuraSlotEnabled", key, on)
+    end
+
+    -- Whether an entry's buff lies over its bar (Both) or icon (Both or Duration).
+    local function Covered(entry)
+        local track = NS.TrackOf(entry)
+        return track == "both" or (track == "buff" and IsIcon(entry))
+    end
+
     local function CoverOf(index, entry)
-        if NS.TrackOf(entry) == "both" then return slots[(IsIcon(entry) and "icon" or "bar") .. index] end
+        if Covered(entry) then return slots[(IsIcon(entry) and "icon" or "bar") .. index] end
     end
 
     local function Overlays()
         local wanted, changed = {}, false
         for index, entry in ipairs(NS.db.tracked) do
-            if NS.TrackOf(entry) == "both" then
+            if Covered(entry) then
                 local icon = IsIcon(entry)
                 local key = (icon and "icon" or "bar") .. index
                 local over = icon and IconAt(index) or RowAt(index)
@@ -1216,12 +1240,12 @@ do -- private scope
                 if not slots[key] then
                     slots[key] = Core.Call(slotContainer, "AddAuraSlot", key, YOURS,
                         { initializeFrame = icon and BuildIcon or Build, candidateFilters = filters })
-                    sent[key], changed = ranks, true
+                    sent[key], slotOn[key], changed = ranks, true, true
                 elseif not SameSet(ranks, sent[key]) then
                     Core.Call(slotContainer, "SetAuraSlotCandidateFilters", key, filters)
-                    Core.Call(slotContainer, "SetAuraSlotEnabled", key, true)
                     sent[key], changed = ranks, true
                 end
+                if icon then SlotOn(key, true) end      -- a bar's: PlaceBuffs
                 local frame = slots[key]
                 Core.Call(frame, "ClearAllPoints")
                 Core.Call(frame, "SetAllPoints", over)
@@ -1232,7 +1256,7 @@ do -- private scope
         if not slotContainer then return end
         for key in pairs(slots) do
             if not wanted[key] and sent[key] then
-                Core.Call(slotContainer, "SetAuraSlotEnabled", key, false)
+                SlotOn(key, false)
                 sent[key], changed = nil, true
             end
         end
@@ -1241,24 +1265,36 @@ do -- private scope
         if changed then Core.Call(slotContainer, "UpdateAllAuras") end
     end
 
-    -- Ranks, and whether a spell has a cooldown, worked out again; each
-    -- duration-only entry's ranks into its kind's group, each Both its slot.
+    -- Each bar's buff where it shows: a Duration bar's in the buff bars' group; a Both
+    -- bar's on its slot while its cooldown runs, else in the group too.
+    local function PlaceBuffs()
+        local ids = {}
+        for index, entry in ipairs(NS.db.tracked) do
+            local track = NS.TrackOf(entry)
+            if not IsIcon(entry) and (track == "buff" or track == "both") then
+                local onSlot = track == "both" and cooling[entry] == true
+                if not onSlot then
+                    for id in pairs(entryRanks[entry]) do ids[id] = true end
+                end
+                if track == "both" then SlotOn("bar" .. index, onSlot) end
+            end
+        end
+        FillBars(ids)
+    end
+
+    -- Ranks, and whether a spell has a cooldown, worked out again; each bar's buff
+    -- placed, each covered entry its slot.
     function Durations.Refresh()
         for entry in pairs(hasCooldown) do hasCooldown[entry] = nil end
         for entry in pairs(cooldownIDs) do cooldownIDs[entry] = nil end
         for entry in pairs(knownNow) do knownNow[entry] = nil end
+        for entry in pairs(currentNow) do currentNow[entry] = nil end
         viewer = nil
-        followedBars, followedIcons = nil, nil
+        followedBars = nil
         MapRanks()
-        local ids = { bar = {}, icon = {} }
-        for _, entry in ipairs(NS.db.tracked) do
-            if NS.TrackOf(entry) == "buff" then
-                for id in pairs(entryRanks[entry]) do ids[IsIcon(entry) and "icon" or "bar"][id] = true end
-            end
-        end
         Resize()
-        for kind, list in pairs(ids) do FillGroup(kind, list) end
         Overlays()
+        PlaceBuffs()
     end
 
     ---------------------------------------------------------------------------
@@ -1356,6 +1392,7 @@ do -- private scope
                 frame.nameText:SetText(name)
             else
                 frame.swipe:Clear()
+                frame.icon:SetDesaturated(false)
             end
             frame.countText:SetText("")
             frame.timeText:SetText("")
@@ -1368,9 +1405,10 @@ do -- private scope
     local BOTH_WAIT = 0.4                       -- a Both cooldown's wait for its buff, up a moment after the cast
     local started = setmetatable({}, WEAK)      -- a Both entry -> when its cooldown began
 
-    -- `frame` (a bar or an icon) for `entry` on spot `slot`, put there by `Put`;
-    -- `cover`, a Both entry's buff over it. Answers the next spot.
-    local function ShowCooldown(frame, Put, entry, slot, cooldownEvent, instant, cover)
+    -- Whether `entry` cools down now (true, false, or a secret never looked at), its duration
+    -- and a spell's charges. A Both entry's (`cover`) only a moment after it starts, as its
+    -- buff lands then and the cooldown flashed before it; `waiting`, true meanwhile.
+    local function ReadCooldown(entry, cooldownEvent, cover)
         local shown, duration, charges
         if entry.kind == "spell" then
             shown, duration, charges = SpellCooldown(entry, cooldownEvent)
@@ -1378,42 +1416,56 @@ do -- private scope
             shown, duration = ItemCooldown(entry)
         end
         local secret = IsSecret(shown)
-
         if not (secret or shown == true) then
             started[entry] = nil
+        elseif cover and not secret then
+            started[entry] = started[entry] or GetTime()
+            if GetTime() - started[entry] < BOTH_WAIT then return shown, duration, charges, true end
+        end
+        return shown, duration, charges, false
+    end
+
+    local function ShowCount(label, charges)
+        if charges == nil or not pcall(label.SetText, label, charges) then label:SetText("") end
+    end
+
+    local barSince = setmetatable({}, WEAK)     -- entry -> when its bar came: its place, the oldest lowest
+
+    -- A bar for `entry` on spot `slot`; `cover`, a Both entry's buff over it while its
+    -- cooldown runs (`cooling`). Answers the next spot.
+    local function ShowCooldown(frame, entry, slot, cooldownEvent, instant, cover)
+        local shown, duration, charges, waiting = ReadCooldown(entry, cooldownEvent, cover)
+        local secret = IsSecret(shown)
+        if cover then cooling[entry] = secret or shown == true end
+
+        if not (secret or shown == true) then
             -- Fading out keeps its place, so the ones beyond don't slide onto it. Gone, it
-            -- holds no spot: the stack closes up (a Both entry's spot kept for good left
-            -- gaps all through it). A Both entry's frame, its buff hung on it, stays where
-            -- it last was - put on its spot once if it never had one (after a reload).
+            -- holds no spot: the stack closes up (a Both entry's buff, still up, is in the
+            -- buff bars' group by then).
             if not frame:IsShown() then
-                if cover and frame:GetNumPoints() == 0 then Put(frame, slot, true) end
+                barSince[entry] = nil
                 return slot
             end
-            Put(frame, slot)
+            StackAt(frame, slot, instant)
             Style.FadeOut(frame)
             return slot + 1
         end
 
-        Put(frame, slot, instant or not frame:IsShown())
+        barSince[entry] = barSince[entry] or GetTime()
+        StackAt(frame, slot, instant or not frame:IsShown())
         local name, texture = NS.Describe(entry)
         frame.icon:SetTexture(texture)
-        local bar, swipe = frame.bar, frame.swipe
-        if bar then
-            frame.nameText:SetText(name)
-            if duration and pcall(bar.SetTimerDuration, bar, duration, IMMEDIATE, REMAINING) then
-                frame.spark:SetAlpha(1)
-            else
-                bar:SetMinMaxValues(0, 1)
-                bar:SetValue(0)
-                frame.spark:SetAlpha(0)
-            end
-        elseif not (duration and pcall(swipe.SetCooldownFromDurationObject, swipe, duration)) then
-            swipe:Clear()
+        frame.nameText:SetText(name)
+        local bar = frame.bar
+        if duration and pcall(bar.SetTimerDuration, bar, duration, IMMEDIATE, REMAINING) then
+            frame.spark:SetAlpha(1)
+        else
+            bar:SetMinMaxValues(0, 1)
+            bar:SetValue(0)
+            frame.spark:SetAlpha(0)
         end
-        ShowTime(frame.timeText, duration, bar and NS.formatter or NS.iconFormatter)
-        if charges == nil or not pcall(frame.countText.SetText, frame.countText, charges) then
-            frame.countText:SetText("")
-        end
+        ShowTime(frame.timeText, duration, NS.formatter)
+        ShowCount(frame.countText, charges)
         if secret then
             -- Never looked at: the game shows or hides it.
             Style.ShowNow(frame)
@@ -1421,12 +1473,11 @@ do -- private scope
         elseif cover then
             -- Unseen until its buff has had its moment to come; then under it,
             -- hidden while it is up. The buff's frame is never touched: the
-            -- game denies addons it while auras are secret (in combat). A bar's
+            -- game denies addons it while auras are secret (in combat). Its
             -- spark (taller than the bar) would poke out round the buff's.
-            started[entry] = started[entry] or GetTime()
             Style.ShowNow(frame)
-            if bar then frame.spark:SetAlpha(0) end
-            if GetTime() - started[entry] < BOTH_WAIT then frame:SetAlpha(0) end
+            frame.spark:SetAlpha(0)
+            if waiting then frame:SetAlpha(0) end
         elseif instant then
             Style.ShowNow(frame)
         else
@@ -1435,8 +1486,50 @@ do -- private scope
         return slot + 1
     end
 
-    -- Bar entries stack as bars, icon entries fill the icon rows; each piece
-    -- shows while it has one (the bars too while placing an empty list).
+    -- An icon for `entry`, always on spot `slot`: lit while it cools down, faint and grey
+    -- while it doesn't (a Duration icon always: its buff, the game's, glowing, lies over it
+    -- while up, as a Both icon's does - `cover`).
+    local function ShowIcon(icon, entry, slot, cooldownEvent, instant, cover)
+        GridAt(icon, slot, instant)
+        local _, texture = NS.Describe(entry)
+        icon.icon:SetTexture(texture)
+        local shown, duration, charges, waiting = false, nil, nil, false
+        if NS.ShowsCooldown(entry) then shown, duration, charges, waiting = ReadCooldown(entry, cooldownEvent, cover) end
+        local secret = IsSecret(shown)
+        if not secret and (waiting or not shown) then shown, duration = false, nil end
+
+        if not (duration and pcall(icon.swipe.SetCooldownFromDurationObject, icon.swipe, duration)) then
+            icon.swipe:Clear()
+        end
+        ShowTime(icon.timeText, duration, NS.iconFormatter)
+        ShowCount(icon.countText, charges)
+        icon:Show()
+        if secret then
+            -- Never looked at: the game picks.
+            icon:SetAlphaFromBoolean(shown, 1, IDLE_ALPHA)
+            icon.icon:SetDesaturation(C_CurveUtil.EvaluateColorValueFromBoolean(shown, 0, 1))
+        else
+            icon:SetAlpha(shown and 1 or IDLE_ALPHA)
+            icon.icon:SetDesaturated(not shown)
+        end
+        return slot + 1
+    end
+
+    local fighting = false                      -- in combat: the icons shown though Hide out of combat is on
+
+    -- The bars in the order they came (the list's order ties): the oldest lowest, a new
+    -- one on top, the rest closing up as one goes. (In the list's order, one came in the
+    -- middle of the stack.)
+    local barOrder = {}                         -- the bar entries' indexes, each Update
+    local function Older(a, b)
+        local tracked = NS.db.tracked
+        local x, y = barSince[tracked[a]] or math.huge, barSince[tracked[b]] or math.huge
+        if x ~= y then return x < y end
+        return a < b
+    end
+
+    -- Bar entries stack as bars, each while it has a cooldown (and while placing
+    -- an empty list); icon entries fill the icon rows, each on its spot.
     -- `cooldownEvent`: SPELL_UPDATE_COOLDOWN just fired, isOnGCD can be read.
     -- `instant`: a setting changed, bars and icons appear at once.
     function Update(cooldownEvent, instant)
@@ -1448,7 +1541,7 @@ do -- private scope
             if IsIcon(entry) then hasIcon = true else hasBar = true end
         end
         holder:SetShown(hasBar)
-        iconHolder:SetShown(hasIcon)
+        iconHolder:SetShown(hasIcon and (fighting or db.unlocked or not db.hideIconsOutOfCombat))
         if not (hasBar or hasIcon) then
             HideBeyond(0)
             Polling(false)
@@ -1461,23 +1554,35 @@ do -- private scope
         end
 
         local barSlot, iconSlot = 0, 0
+        wipe(barOrder)
         for index, entry in ipairs(tracked) do
-            local isIcon = IsIcon(entry)
-            if not (NS.ShowsCooldown(entry) and NS.KnownNow(entry)) then
-                -- Its buff's is the game's; a spell not had now shows no cooldown.
+            local isIcon, cooldown = IsIcon(entry), NS.ShowsCooldown(entry)
+            -- Not of the spec now (a talent not taken, another spec's spell), nothing; a
+            -- bar's buff alone is the game's group's; a spell not had now shows no cooldown;
+            -- one with neither cooldown nor buff, nothing.
+            if not NS.IsCurrent(entry) or (cooldown and not NS.KnownNow(entry))
+               or not (cooldown or (isIcon and NS.ShowsBuff(entry))) then
                 local frame = (isIcon and icons or rows)[index]
                 if frame then Style.HideNow(frame) end
+                barSince[entry], cooling[entry] = nil, nil
             elseif isIcon then
-                iconSlot = ShowCooldown(IconAt(index), GridAt, entry, iconSlot, cooldownEvent, instant,
-                    CoverOf(index, entry))
+                iconSlot = ShowIcon(IconAt(index), entry, iconSlot, cooldownEvent, instant, CoverOf(index, entry))
             else
-                barSlot = ShowCooldown(RowAt(index), StackAt, entry, barSlot, cooldownEvent, instant,
-                    CoverOf(index, entry))
+                barOrder[#barOrder + 1] = index
             end
         end
+        table.sort(barOrder, Older)
+        local moved = false                     -- a Both bar's buff to or from its slot
+        for _, index in ipairs(barOrder) do
+            local entry = tracked[index]
+            local was = cooling[entry]
+            barSlot = ShowCooldown(RowAt(index), entry, barSlot, cooldownEvent, instant, CoverOf(index, entry))
+            moved = moved or cooling[entry] ~= was
+        end
+        if moved then PlaceBuffs() end
         PlaceGrid(iconSlot)
         HideBeyond(#tracked)
-        Durations.Follow(barSlot, iconSlot)
+        Durations.Follow(barSlot)
 
         -- Polled while anything is tracked: an ending fires no event, and after
         -- a loading screen neither may a cooldown the game reports late.
@@ -1501,10 +1606,6 @@ do -- private scope
             Style.HideNow(row)
         end
         for _, icon in pairs(icons) do
-            -- Let go first: hung off the game's container (sharing its row), its size is
-            -- secret in a fight and the layout reads it. Placed again below (Update).
-            icon:ClearAllPoints()
-            sliding[icon] = nil
             LayOutIcon(icon, icon)
             Style.HideNow(icon)
         end
@@ -1528,7 +1629,8 @@ do -- private scope
     end
 
     for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "SPELL_UPDATE_COOLDOWN", "SPELL_UPDATE_CHARGES",
-                             "BAG_UPDATE_COOLDOWN", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED" }) do
+                             "BAG_UPDATE_COOLDOWN", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED",
+                             "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }) do
         NS:RegisterEvent(event)
     end
     pcall(NS.RegisterEvent, NS, "COOLDOWN_VIEWER_DATA_LOADED")     -- retail: its buffs known
@@ -1551,7 +1653,13 @@ do -- private scope
     end
 
     NS:SetScript("OnEvent", function(_, event, id)
+        if event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
+            fighting = event == "PLAYER_REGEN_DISABLED"
+            Update(false)
+            return
+        end
         if event == "PLAYER_ENTERING_WORLD" then
+            fighting = InCombatLockdown()
             -- The frames are placed now: a guessed spot worked out again, never the player's.
             if NS.db.autoPlaced and fromGuess then Place() end
             Refresh()
